@@ -1,4 +1,6 @@
 import Link from "next/link";
+import Navbar from "../components/navbar";
+import Footer from "../components/footer";
 
 export const metadata = {
   title: "FAQ — SlopMop",
@@ -29,7 +31,9 @@ const faqs = [
 
 export default function FAQPage() {
   return (
-    <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-6 py-24">
+    <div className="flex min-h-screen flex-col bg-white text-foreground dark:bg-black">
+      <Navbar />
+      <main className="mx-auto flex flex-1 flex-col max-w-2xl px-6 py-24">
       <h1 className="text-4xl font-bold tracking-tight">
         Frequently Asked Questions
       </h1>
@@ -46,6 +50,8 @@ export default function FAQPage() {
       <Link href="/" className="mt-12 text-sm text-neutral-500 hover:underline">
         ← Back to home
       </Link>
+      </main>
+      <Footer />
     </div>
   );
 }
