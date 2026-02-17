@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SlopMop — Detect AI Content in Your Feed",
+  title: "SlopMop",
   description:
-    "SlopMop is a browser extension that automatically detects AI-generated content in social media feeds so you can browse with confidence.",
+    "Detect AI-generated content as you scroll.",
 };
 
 export default function RootLayout({
