@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Navbar from "../components/navbar";
-import Footer from "../components/footer";
 
 export const metadata = {
     title: "Sign Up — SlopMop",
@@ -42,7 +41,6 @@ export default function SignUpPage() {
             ← Back to home
         </Link>
       </main>
-      <Footer />
     </div>
   );
 }
