@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Navbar from "../components/navbar";
-import Footer from "../components/footer";
 
 export const metadata = {
   title: "Install — SlopMop",
@@ -36,7 +35,6 @@ export default function InstallPage() {
             ← Back to home
         </Link>
       </main>
-      <Footer />
     </div>
   );
 }
