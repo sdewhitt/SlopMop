@@ -7,17 +7,8 @@ export default function Popup() {
       <header className="flex flex-col items-center justify-center text-white">
         <img src={logo} className="h-36 pointer-events-none animate-spin-slow" alt="logo" />
         <p>
-          Edit <code>src/pages/popup/Popup.jsx</code> and save to reload.
+          Slop Mop
         </p>
-        <a
-          className="text-blue-400"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React!
-        </a>
-        <p>Popup styled with TailwindCSS!</p>
       </header>
     </div>
   );
