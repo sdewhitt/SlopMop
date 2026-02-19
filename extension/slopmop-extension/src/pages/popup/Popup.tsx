@@ -7,18 +7,81 @@ interface Stats {
   aiDetected: number;
 }
 
+interface Settings {
+  sensitivity: 'low' | 'medium' | 'high';
+  highlightStyle: 'badge' | 'border' | 'dim';
+  platforms: {
+    twitter: boolean;
+    reddit: boolean;
+    facebook: boolean;
+    youtube: boolean;
+    linkedin: boolean;
+  };
+  showNotifications: boolean;
+}
+
+const defaultSettings: Settings = {
+  sensitivity: 'medium',
+  highlightStyle: 'badge',
+  platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+  showNotifications: true,
+};
+
+function Toggle({
+  checked,
+  onChange,
+  label,
+  description,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  description?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between py-2.5">
+      <div>
+        <p className="text-sm font-medium text-gray-200">{label}</p>
+        {description && <p className="text-[11px] text-gray-500 mt-0.5">{description}</p>}
+      </div>
+      <button
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
+          checked ? 'bg-blue-600' : 'bg-gray-600'
+        }`}
+      >
+        <span
+          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 translate-y-0.5 ${
+            checked ? 'translate-x-4.5' : 'translate-x-0.5'
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
 export default function Popup() {
+  const [view, setView] = useState<'home' | 'settings'>('home');
   const [enabled, setEnabled] = useState(true);
   const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0 });
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    browser.storage.local.get(['enabled', 'postsScanned', 'aiDetected']).then((result) => {
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
-      setStats({
-        postsScanned: (result.postsScanned as number) || 0,
-        aiDetected: (result.aiDetected as number) || 0,
+    browser.storage.local
+      .get(['enabled', 'postsScanned', 'aiDetected', 'settings'])
+      .then((result) => {
+        if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
+        setStats({
+          postsScanned: (result.postsScanned as number) || 0,
+          aiDetected: (result.aiDetected as number) || 0,
+        });
+        if (result.settings) {
+          setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+        }
       });
-    });
   }, []);
 
   const toggleEnabled = () => {
@@ -27,12 +90,153 @@ export default function Popup() {
     browser.storage.local.set({ enabled: next });
   };
 
-  const openSettings = () => {
-    browser.runtime.openOptionsPage();
+  const flashSaved = () => {
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
   };
 
+  const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+    setSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      browser.storage.local.set({ settings: next });
+      flashSaved();
+      return next;
+    });
+  };
+
+  const updatePlatform = (platform: keyof Settings['platforms'], value: boolean) => {
+    setSettings((prev) => {
+      const next = { ...prev, platforms: { ...prev.platforms, [platform]: value } };
+      browser.storage.local.set({ settings: next });
+      flashSaved();
+      return next;
+    });
+  };
+
+  const resetStats = () => {
+    setStats({ postsScanned: 0, aiDetected: 0 });
+    browser.storage.local.set({ postsScanned: 0, aiDetected: 0 });
+    flashSaved();
+  };
+
+  const resetSettings = () => {
+    setSettings(defaultSettings);
+    browser.storage.local.set({ settings: defaultSettings });
+    flashSaved();
+  };
+
+  // ── Settings view ─────────────────────────────────────────────
+  if (view === 'settings') {
+    return (
+      <div className="w-full bg-gray-900 text-white flex flex-col">
+        {/* Settings header */}
+        <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-gray-800">
+          <button
+            onClick={() => setView('home')}
+            className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+            aria-label="Back"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h2 className="text-sm font-semibold">Settings</h2>
+          <span className={`ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full transition-opacity duration-300 bg-green-500/20 text-green-400 ${
+            saved ? 'opacity-100' : 'opacity-0'
+          }`}>Saved</span>
+        </div>
+
+        <div className="px-4 py-3 space-y-4 overflow-y-auto">
+          {/* Detection */}
+          <section>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detection</p>
+            <div className="bg-gray-800 rounded-lg px-3 space-y-0 divide-y divide-gray-700">
+              <Toggle
+                checked={settings.showNotifications}
+                onChange={(v) => updateSetting('showNotifications', v)}
+                label="Show Notifications"
+                description="Alert when AI content is detected"
+              />
+              <div className="py-2.5">
+                <p className="text-sm font-medium text-gray-200 mb-1.5">Sensitivity</p>
+                <div className="flex gap-1.5">
+                  {(['low', 'medium', 'high'] as const).map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => updateSetting('sensitivity', level)}
+                      className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
+                        settings.sensitivity === level
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="py-2.5">
+                <p className="text-sm font-medium text-gray-200 mb-1.5">Highlight Style</p>
+                <div className="flex gap-1.5">
+                  {(['badge', 'border', 'dim'] as const).map((style) => (
+                    <button
+                      key={style}
+                      onClick={() => updateSetting('highlightStyle', style)}
+                      className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
+                        settings.highlightStyle === style
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                      }`}
+                    >
+                      {style}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Platforms */}
+          <section>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Platforms</p>
+            <div className="bg-gray-800 rounded-lg px-3 divide-y divide-gray-700">
+              {(Object.keys(settings.platforms) as Array<keyof Settings['platforms']>).map((p) => (
+                <Toggle
+                  key={p}
+                  checked={settings.platforms[p]}
+                  onChange={(v) => updatePlatform(p, v)}
+                  label={p.charAt(0).toUpperCase() + p.slice(1)}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* Data */}
+          <section>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Data</p>
+            <div className="flex gap-2">
+              <button
+                onClick={resetStats}
+                className="flex-1 py-2 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+              >
+                Reset Stats
+              </button>
+              <button
+                onClick={resetSettings}
+                className="flex-1 py-2 rounded-lg text-xs font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors cursor-pointer"
+              >
+                Reset All
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Home view ─────────────────────────────────────────────────
   return (
-    <div className="w-full h-full bg-gray-900 text-white p-4 flex flex-col gap-4">
+    <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4">
       {/* Header */}
       <div className="flex items-center gap-3">
         <img src={logo} className="h-9 w-9" alt="SlopMop logo" />
@@ -70,7 +274,7 @@ export default function Popup() {
 
       {/* Footer / Settings link */}
       <button
-        onClick={openSettings}
+        onClick={() => setView('settings')}
         className="mt-auto flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
