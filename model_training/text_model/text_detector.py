@@ -23,5 +23,23 @@ class TextDetectors:
 
     try:
       # Load in the actual tokenizer
+      self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
-  
+      # Load the model
+      self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+      self.model.to(self.device)
+      self.model.eval()
+      print(f"Successfully loaded [{self.model_name}] to [{self.device}]")
+    except Exception as e:
+      print(f"Error loading model [{self.model_name}]")
+
+      print(f"Falling back to [distilbert-base-uncased]")
+      self.model_name = "distilbert-base-uncased"
+      self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+      self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+      self.model.to(self.device)
+
+
+if __name__ == "__main__":
+    detector = TextDetectors()
+    print("Test passed : Detector has been initialized")
