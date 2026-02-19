@@ -57,7 +57,7 @@ for Chrome by default.
 
 1. Clone this repository or click "Use this template"
 2. Change `name` and `description` in `manifest.json`
-3. Run `yarn` or `npm i` (check your node version >= 16)
+3. Run `yarn` or `npm i` (check your node version >= 16) (NOTE FROM SETH: you may need to do `npm i --legacy-peer-deps` because of dependency conflicts)
 4. Run `yarn dev[:chrome|:firefox]`, or `npm run dev[:chrome|:firefox]`
 
 Running a `dev` command will build your extension and watch for changes in the 
