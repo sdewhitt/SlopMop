@@ -23,11 +23,13 @@ function logRedditAdapterScan() {
   const adapter = new RedditAdapter();
   const siteId = adapter.getSiteId();
   const postNodes = adapter.findPostNodes(document);
+  const commentNodes = adapter.findVisibleCommentNodes(document, 20);
 
   console.log(`[SlopMop] ${siteId} adapter scan`, {
     hostname: window.location.hostname,
     url: window.location.href,
     totalPosts: postNodes.length,
+    visibleCommentsCaptured: commentNodes.length,
   });
 
   const sample = postNodes.slice(0, 5).map((node) => {
@@ -39,7 +41,7 @@ function logRedditAdapterScan() {
     return {
       postId,
       permalink,
-      textPreview: text.slice(0, 120),
+      textPreview: text,
       imageCount: images.length,
       tag: node.tagName,
       className: (node as HTMLElement).className || null,
@@ -47,6 +49,23 @@ function logRedditAdapterScan() {
   });
 
   console.table(sample);
+
+  const commentSample = commentNodes.map((node) => {
+    const commentId = adapter.getCommentId(node);
+    const permalink = adapter.getCommentPermalink(node);
+    const text = adapter.getCommentTextNode(node)?.innerText?.trim() ?? '';
+
+    return {
+      commentId,
+      permalink,
+      textPreview: text.slice(0, 160),
+      fullLength: text.length,
+      tag: node.tagName,
+      className: (node as HTMLElement).className || null,
+    };
+  });
+
+  console.table(commentSample);
 }
 
 function main() {

@@ -23,7 +23,7 @@ export class RedditAdapter implements SiteAdapter {
         seen.add(node);
 
         // Keep only nodes that look like real posts.
-        if (this.getPermalink(node) || this.getTextNode(node)) {
+        if (this.getPermalink(node) || this.getStablePostId(node) || this.getTextNode(node)) {
           out.push(node);
         }
       }
@@ -35,6 +35,7 @@ export class RedditAdapter implements SiteAdapter {
   getStablePostId(postNode: Element): string | null {
     // 1) Preferred id-like attributes
     const attrCandidates = [
+      "post-id", // common on shreddit-post (e.g. t3_xxxxx)
       "data-fullname", // often t3_xxxxx
       "data-post-id",
       "data-postid",
@@ -72,6 +73,15 @@ export class RedditAdapter implements SiteAdapter {
   }
 
   getPermalink(postNode: Element): string | null {
+    // Modern Reddit custom elements often expose permalink-like attrs directly.
+    const directAttrCandidates = ["permalink", "content-href", "href"];
+    for (const attr of directAttrCandidates) {
+      const raw = postNode.getAttribute(attr)?.trim();
+      if (!raw) continue;
+      const normalized = this.normalizeUrl(raw);
+      if (normalized && normalized.includes("/comments/")) return normalized;
+    }
+
     const a =
       postNode.querySelector<HTMLAnchorElement>("a[href*='/comments/']") ??
       postNode.querySelector<HTMLAnchorElement>("a[data-click-id='comments']") ??
@@ -80,13 +90,7 @@ export class RedditAdapter implements SiteAdapter {
     const href = a?.getAttribute("href")?.trim();
     if (!href) return null;
 
-    try {
-      const url = new URL(href, window.location.origin);
-      url.hash = "";
-      return url.toString();
-    } catch {
-      return null;
-    }
+    return this.normalizeUrl(href);
   }
 
   getTextNode(postNode: Element): HTMLElement | null {
@@ -94,6 +98,7 @@ export class RedditAdapter implements SiteAdapter {
     return (
       postNode.querySelector<HTMLElement>("[slot='text-body']") ??
       postNode.querySelector<HTMLElement>("[data-click-id='text']") ??
+      postNode.querySelector<HTMLElement>("[slot='title']") ??
       postNode.querySelector<HTMLElement>("h1, h2, h3") ??
       postNode.querySelector<HTMLElement>("p")
     );
@@ -117,11 +122,128 @@ export class RedditAdapter implements SiteAdapter {
     });
   }
 
+  findVisibleCommentNodes(root: ParentNode = document, limit = 20): Element[] {
+    const selectors = [
+      "shreddit-comment",
+      "[data-testid='comment']",
+      "article[data-testid='comment']",
+      "article[id^='t1_']",
+    ];
+
+    const seen = new Set<Element>();
+    const out: Element[] = [];
+
+    for (const sel of selectors) {
+      const nodes = Array.from(root.querySelectorAll(sel));
+      for (const node of nodes) {
+        if (seen.has(node)) continue;
+        seen.add(node);
+
+        if (!this.isElementVisibleInViewport(node)) continue;
+        if (!this.getCommentTextNode(node)) continue;
+
+        out.push(node);
+        if (out.length >= limit) return out;
+      }
+    }
+
+    return out;
+  }
+
+  getCommentId(commentNode: Element): string | null {
+    const attrCandidates = [
+      "comment-id",
+      "data-comment-id",
+      "data-fullname", // often t1_xxxxx
+      "thingid",
+      "id",
+    ];
+
+    for (const attr of attrCandidates) {
+      const raw = commentNode.getAttribute(attr)?.trim();
+      if (raw) return raw;
+    }
+
+    const permalink = this.getCommentPermalink(commentNode);
+    const fromUrl = permalink ? this.parseCommentIdFromPermalink(permalink) : null;
+    if (fromUrl) return fromUrl;
+
+    const text = this.getCommentTextNode(commentNode)?.innerText?.slice(0, 300).trim() ?? "";
+    return text ? `reddit-comment-fallback-${this.fnv1a(text)}` : null;
+  }
+
+  getCommentPermalink(commentNode: Element): string | null {
+    const directAttrCandidates = ["permalink", "href"];
+    for (const attr of directAttrCandidates) {
+      const raw = commentNode.getAttribute(attr)?.trim();
+      if (!raw) continue;
+      const normalized = this.normalizeUrl(raw);
+      if (normalized && normalized.includes("/comments/")) return normalized;
+    }
+
+    const a =
+      commentNode.querySelector<HTMLAnchorElement>("a[href*='/comments/']") ??
+      commentNode.querySelector<HTMLAnchorElement>("a[data-testid='comment_timestamp']") ??
+      commentNode.querySelector<HTMLAnchorElement>("a time")?.closest("a");
+
+    const href = a?.getAttribute("href")?.trim();
+    if (!href) return null;
+
+    return this.normalizeUrl(href);
+  }
+
+  getCommentTextNode(commentNode: Element): HTMLElement | null {
+    return (
+      commentNode.querySelector<HTMLElement>("[slot='comment']") ??
+      commentNode.querySelector<HTMLElement>("[data-testid='comment']") ??
+      commentNode.querySelector<HTMLElement>("[data-test-id='comment']") ??
+      commentNode.querySelector<HTMLElement>("div[slot='comment']") ??
+      commentNode.querySelector<HTMLElement>("p")
+    );
+  }
+
+  private normalizeUrl(rawUrl: string): string | null {
+    try {
+      const url = new URL(rawUrl, window.location.origin);
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+
   private parsePostIdFromPermalink(url: string): string | null {
     // reddit.com/r/{sub}/comments/{postId}/{slug}
-    const m = url.match(/\/comments\/([a-z0-9]+)\//i);
+    const m = url.match(/\/comments\/([a-z0-9]+)(?:\/|$)/i);
     return m?.[1] ?? null;
   }
+
+  private parseCommentIdFromPermalink(url: string): string | null {
+    // reddit.com/r/{sub}/comments/{postId}/{slug}/{commentId}
+    const m = url.match(/\/comments\/[a-z0-9]+\/[^/]*\/([a-z0-9]+)(?:\/|$)/i);
+    return m?.[1] ?? null;
+  }
+
+  private isElementVisibleInViewport(element: Element): boolean {
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+
+    const style = window.getComputedStyle(element as HTMLElement);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+
+    return (
+      rect.bottom > 0 &&
+      rect.right > 0 &&
+      rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
+      rect.left < (window.innerWidth || document.documentElement.clientWidth)
+    );
+  }
+
+
+
+// hash function to get unique identifier for each post node 
 
   private fnv1a(input: string): string {
     let hash = 0x811c9dc5;
