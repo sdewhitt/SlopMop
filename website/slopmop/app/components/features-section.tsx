@@ -7,6 +7,9 @@ export default function FeaturesSection() {
           <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
             Detects as you scroll — no clicks needed.
           </p>
+          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400 font-medium">
+            ⚠️ <strong>Note:</strong> Detection results are probability-based estimates, not definitive determinations.
+          </p>
         </div>
         <div>
           <h3 className="text-lg font-semibold">Privacy First</h3>
