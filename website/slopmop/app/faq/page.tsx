@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Navbar from "../components/navbar";
-import Footer from "../components/footer";
 
 export const metadata = {
   title: "FAQ — SlopMop",
@@ -51,7 +50,6 @@ export default function FAQPage() {
         ← Back to home
       </Link>
       </main>
-      <Footer />
     </div>
   );
 }
