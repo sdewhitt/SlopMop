@@ -5,6 +5,7 @@ import browser from 'webextension-polyfill';
 interface Stats {
   postsScanned: number;
   aiDetected: number;
+  postsProcessing: number;
 }
 
 interface Settings {
@@ -65,18 +66,19 @@ function Toggle({
 export default function Popup() {
   const [view, setView] = useState<'home' | 'settings'>('home');
   const [enabled, setEnabled] = useState(true);
-  const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0 });
+  const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     browser.storage.local
-      .get(['enabled', 'postsScanned', 'aiDetected', 'settings'])
+      .get(['enabled', 'postsScanned', 'aiDetected', 'postsProcessing', 'settings'])
       .then((result) => {
         if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
         setStats({
           postsScanned: (result.postsScanned as number) || 0,
           aiDetected: (result.aiDetected as number) || 0,
+          postsProcessing: (result.postsProcessing as number) || 0,
         });
         if (result.settings) {
           setSettings({ ...defaultSettings, ...(result.settings as Settings) });
@@ -114,8 +116,8 @@ export default function Popup() {
   };
 
   const resetStats = () => {
-    setStats({ postsScanned: 0, aiDetected: 0 });
-    browser.storage.local.set({ postsScanned: 0, aiDetected: 0 });
+    setStats({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
+    browser.storage.local.set({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
     flashSaved();
   };
 
@@ -246,6 +248,16 @@ export default function Popup() {
         }`}>
           {enabled ? 'Active' : 'Paused'}
         </span>
+        <button
+          onClick={() => setView('settings')}
+          className="text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
+          aria-label="Settings"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
       </div>
 
       {/* Toggle */}
@@ -261,10 +273,14 @@ export default function Popup() {
       </button>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <div className="bg-gray-800 rounded-lg p-3 text-center">
           <p className="text-2xl font-bold text-blue-400">{stats.postsScanned}</p>
           <p className="text-[11px] text-gray-400 mt-1">Posts Scanned</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-3 text-center">
+          <p className="text-2xl font-bold text-purple-400">{stats.postsProcessing}</p>
+          <p className="text-[11px] text-gray-400 mt-1">Processing</p>
         </div>
         <div className="bg-gray-800 rounded-lg p-3 text-center">
           <p className="text-2xl font-bold text-amber-400">{stats.aiDetected}</p>
@@ -272,17 +288,7 @@ export default function Popup() {
         </div>
       </div>
 
-      {/* Footer / Settings link */}
-      <button
-        onClick={() => setView('settings')}
-        className="mt-auto flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-        Settings
-      </button>
+
     </div>
   );
 }
