@@ -14,6 +14,7 @@ class DetectRequest(BaseModel):
 class DetectResponse(BaseModel):
     confidence: float  # 0.0 = human, 1.0 = AI
     label: str  # "ai" or "human"
+    explanation: str  # explanation for the detection
 
 
 @app.get("/")
@@ -39,15 +40,27 @@ def score_text(text:str) -> tuple[float, str]:
     label = "ai" if confidence >= 0.6 else "human"
     return confidence, label
 
+def generate_explanation(confidence: float, label: str) -> str:
+    if label == "ai":
+        return (
+            f"Mock heuristic flagged this as AI-like with confidence {confidence}. "
+            "The text contains multiple transition-style phrases commonly seen in generated writing."
+        )
+    return (
+        f"Mock heuristic flagged this as human-like with confidence {confidence}. "
+        "The text contains few AI-style marker phrases based on current rules."
+    )
+
 @app.post("/detect", response_model=DetectResponse)
 def detect(request: DetectRequest):
     # strip spaces from head and tail of text
     clean_text = request.text.strip()
 
-    # Return HTTP 400 if text is empty
+    # return HTTP 400 if text is empty
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text is required")
 
+    # return HTTP 400 if text is too long
     if len(clean_text) > MAX_TEXT_LENGTH:
         raise HTTPException(
             status_code=400,
@@ -56,5 +69,6 @@ def detect(request: DetectRequest):
     
     # connect to model here in week 2 of sprint 1
     confidence, label = score_text(clean_text)
-    return DetectResponse(confidence=confidence, label=label)
+    explanation = generate_explanation(confidence, label)
+    return DetectResponse(confidence=confidence, label=label, explanation=explanation)
     
