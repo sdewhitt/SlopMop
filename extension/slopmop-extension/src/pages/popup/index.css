@@ -10,3 +10,9 @@ body {
   -moz-osx-font-smoothing: grayscale;
   position: relative;
 }
+
+/* Explanation below confidence score: subtle, layout-safe */
+.confidence-explanation {
+  max-height: 5.5em;
+  overflow-wrap: break-word;
+}
