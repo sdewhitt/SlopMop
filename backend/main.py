@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
@@ -20,6 +20,13 @@ def root():
 
 @app.post("/detect", response_model=DetectResponse)
 def detect(request: DetectRequest):
-    """Mock endpoint: returns hardcoded result. Replace with real model later."""
-    # TODO: wire to model_training / exported model
+    # strip spaces from head and tail of text
+    clean_text = request.text.strip()
+
+    # Return HTTP 400 if text is empty
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    
+    # mock endpoint: returns hardcoded result
+    # Connect to model here in week 2 of sprint 1
     return DetectResponse(confidence=0.12, label="human")
