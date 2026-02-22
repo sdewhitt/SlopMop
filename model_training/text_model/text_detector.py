@@ -1,14 +1,20 @@
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import torch # type: ignore[import-untyped]
+from transformers import AutoModelForSequenceClassification, AutoTokenizer # type: ignore[import-untyped]
 
 # for regex (url, emoji) removal
 import re
-import pyshorteners
-import regex
+import regex  # type: ignore[import-untyped]
+
+# for data loading
+from datasets import load_dataset # type: ignore[import-untyped]
+from torch.utils.data import DataLoader # type: ignore[import-untyped]
+
+# for training loop
+from torch.optim import AdamW
 
 def emoji_removal(text):
-    emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
-    return emoji_pattern.sub(r'', text)
+  emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
+  return emoji_pattern.sub(r'', text)
 
 
 def preprocess_text(text):
@@ -56,8 +62,19 @@ def preprocess_text(text):
 
   return re.sub(r'\s+', ' ', clean_up).strip()
 
-  
+def clean_batch(batch):
+  return {"text": [preprocess_text(t) for t in batch["text"]]}
+
+def tokenize_batch(batch, tokenizer):
+  return tokenizer(
+  batch["text"],
+  padding="max_length",
+  truncation=True,
+  max_length=512
+  )
+
 class TextDetectors:
+  
   """
   Implementation of the TextDetector class (design section 3)
   """
@@ -95,108 +112,43 @@ class TextDetectors:
       self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
       self.model.to(self.device)
 
-  def classify(self, text, return_probs=False):
-    """
-    preprocess text, tokenize (model's tokenizer) and run classification.
-    if return_probs=True, returns softmax probabilities.
-    """
-
-    # preprocess text
-    cleaned = preprocess_text(text)
-
-    # tokenize (model's tokenizer)
-    inputs = self.tokenizer(
-      cleaned,
-      # return tensors as pytorch tensors
-      return_tensors="pt",
-      # pad the input to the same length
-      padding=True,
-      # truncate the input to the same length
-      truncation=True,
-      # max length of the input (for now)
-      max_length=512,
-    )
-
-    # move the input to the device
-    inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-    # run the model
-    with torch.no_grad():
-      outputs = self.model(**inputs)
-
-    # get the logits
-    logits = outputs.logits
-
-    # return the probabilities
-    if return_probs:
-      return torch.softmax(logits, dim=-1).cpu() # softmax probabilities
-    return logits.cpu() # logits
-
-
-def _ai_result_tier(ai_prob):
-    pct = ai_prob * 100
-    if pct < 60:
-        return "Human"
-    if pct < 80:
-        return "Mixed"
-    return "AI"
-
-
 if __name__ == "__main__":
     detector = TextDetectors()
     print("Detector initialized.\n")
-    if hasattr(detector.model.config, "id2label"):
-        print("Class meaning (id -> label):", detector.model.config.id2label)
-    # Which class index is "AI" (for Human/Mixed/AI tiers)
-    id2label = getattr(detector.model.config, "id2label", None) or {}
-    ai_class_idx = 1
-    for idx, label in id2label.items():
-        s = str(label).lower() if label else ""
-        if "ai" in s or "generated" in s:
-            ai_class_idx = int(idx)
-            break
-    print(f"Using class {ai_class_idx} as AI probability for Human/Mixed/AI tiers.\n")
 
-    test_cases = [
-        "<shreddit-title> <title>=\"Doctors and nurses of Reddit, what is something patients do that they think is helpful but actually makes your job harder? : <r/AskReddit\"></shreddit-title> ",
-        "The quick brown fox jumps over the lazy dog. Natural language is often repetitive.",
-        "@sfsa11 @fddd OMG 😂 look at this: https://bit.ly/xyz ¯\_(ツ)_/¯ It's crazy 🚀",
-        "In conclusion, the aforementioned considerations suggest a multifaceted approach.",
-        "Is this a scam? www.fake-login.com/auth 🇺🇸 Please help <3 <br>",
-    ]
+    # load the dataset, clean the data, tokenize the data, and set the format
+    dataset = load_dataset('csv', data_files='model_training/text_model/test_dataset.csv', split='train')
+    cleaned_dataset = dataset.map(clean_batch, batched=True, batch_size=1000)
+    tokenized_dataset = cleaned_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer), batched=True, batch_size=1000)
+    tokenized_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    
+    # create the dataloader
+    train_dataloader = DataLoader(tokenized_dataset, batch_size=16, shuffle=True)
 
+    # create the optimizer
+    optimizer = AdamW(detector.model.parameters(), lr=5e-5)
+    # 3 rounds of training
+    epochs = 3
+    
+    print(f"Starting training...\n")
+    print(f"Training for {epochs} epochs")
+    print(f"Using {detector.device} device, {optimizer} optimizer,")
 
-    for i, raw_text in enumerate(test_cases):
-        print(f"\n--- Test {i + 1} ---")
+    # basic training loop
+    for epoch in range(epochs):
+      print(f"Epoch {epoch+1}\n")
+      detector.model.train()
+      # train the model on the training data
+      for batch in train_dataloader:
+        # move the batch, attention mask, and labels to the device
+        input_ids = batch['input_ids'].to(detector.device)
+        attention_mask = batch['attention_mask'].to(detector.device)
+        labels = batch['label'].to(detector.device)
+        
+        # forward pass
+        outputs = detector.model(input_ids, attention_mask=attention_mask)
 
-        # input
-        print("Input:")
-        print(f"  {repr(raw_text)}")
-
-        # preprocess
-        cleaned = preprocess_text(raw_text)
-        print("After preprocess :")
-        print(f"  {repr(cleaned)}")
-
-        # tokenize
-        tok = detector.tokenizer(
-            cleaned,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=512,
-        )
-
-        # classify (returns 2-class probabilities)
-        probs = detector.classify(raw_text, return_probs=True)
-        p = probs.numpy()[0]
-        ai_prob = float(p[ai_class_idx])
-        tier = _ai_result_tier(ai_prob)
-        ai_pct = ai_prob * 100
-        print("Output (class probabilities):")
-        print(f"  probs = {p}")
-        print(f"  -> class 0: {p[0]:.4f}  |  class 1: {p[1]:.4f}")
-        print(f"  -> predicted class: {p.argmax()} (index with highest prob)")
-        print(f"  -> Result: {tier} ({ai_pct:.1f}% AI)  [0–60% Human, 60–80% Mixed, 80%+ AI]")
-
-        print("-" * 60)
+        # print the outputs
+        print("Outputs: \n", outputs.logits, "\n")
+        break
+    print("Training complete.")
