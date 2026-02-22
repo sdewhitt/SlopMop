@@ -30,3 +30,20 @@ def test_detect_success_ai_marker_text():
     data = response.json()
     assert data["label"] == "ai"
     assert data["confidence"] >= 0.6
+
+def test_detect_rejects_whitespace_only_text():
+    response = client.post("/detect", json={"text": "   "})
+    assert response.status_code == 400
+    assert "Text is required" in response.json()["detail"]
+
+
+def test_detect_rejects_missing_text_field():
+    response = client.post("/detect", json={})
+    assert response.status_code == 422  # pydantic validation error
+
+
+def test_detect_rejects_over_max_length_text():
+    long_text = "a" * 5001
+    response = client.post("/detect", json={"text": long_text})
+    assert response.status_code == 400
+    assert "at most 5000 characters" in response.json()["detail"]
