@@ -8,6 +8,10 @@ import regex  # type: ignore[import-untyped]
 # for data loading
 from datasets import load_dataset # type: ignore[import-untyped]
 from torch.utils.data import DataLoader # type: ignore[import-untyped]
+
+# for training loop
+from torch.optim import AdamW
+
 def emoji_removal(text):
   emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
   return emoji_pattern.sub(r'', text)
@@ -112,13 +116,39 @@ if __name__ == "__main__":
     detector = TextDetectors()
     print("Detector initialized.\n")
 
+    # load the dataset, clean the data, tokenize the data, and set the format
     dataset = load_dataset('csv', data_files='model_training/text_model/test_dataset.csv', split='train')
     cleaned_dataset = dataset.map(clean_batch, batched=True, batch_size=1000)
     tokenized_dataset = cleaned_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer), batched=True, batch_size=1000)
     tokenized_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    
+    # create the dataloader
     train_dataloader = DataLoader(tokenized_dataset, batch_size=16, shuffle=True)
 
-    for batch in train_dataloader:
-        print(batch)
+    # create the optimizer
+    optimizer = AdamW(detector.model.parameters(), lr=5e-5)
+    # 3 rounds of training
+    epochs = 3
+    
+    print(f"Starting training...\n")
+    print(f"Training for {epochs} epochs")
+    print(f"Using {detector.device} device, {optimizer} optimizer,")
+
+    # basic training loop
+    for epoch in range(epochs):
+      print(f"Epoch {epoch+1}\n")
+      detector.model.train()
+      # train the model on the training data
+      for batch in train_dataloader:
+        # move the batch, attention mask, and labels to the device
+        input_ids = batch['input_ids'].to(detector.device)
+        attention_mask = batch['attention_mask'].to(detector.device)
+        labels = batch['label'].to(detector.device)
+        
+        # forward pass
+        outputs = detector.model(input_ids, attention_mask=attention_mask)
+
+        # print the outputs
+        print("Outputs: \n", outputs.logits, "\n")
         break
-    print("Training data loaded.")
+    print("Training complete.")
