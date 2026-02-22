@@ -56,20 +56,29 @@ export class RedditAdapter implements SiteAdapter {
     if (fromUrl) return fromUrl;
 
     // 3) Deterministic fallback hash
-    const author =
-      postNode.querySelector<HTMLElement>("[data-testid='post_author_link']")?.innerText?.trim() ??
-      postNode.querySelector<HTMLElement>("a[href^='/user/']")?.innerText?.trim() ??
-      "";
+    const author = this.getAuthorHandle(postNode);
 
-    const timestamp =
-      postNode.querySelector<HTMLElement>("a[data-click-id='timestamp']")?.innerText?.trim() ??
-      postNode.querySelector<HTMLElement>("time")?.getAttribute("datetime")?.trim() ??
-      "";
+    const timestamp = this.getTimestampText(postNode);
 
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
     const base = `${permalink ?? ""}|${author}|${timestamp}|${text}`;
 
     return base ? `reddit-fallback-${this.fnv1a(base)}` : null;
+  }
+
+  getAuthorHandle(postNode: Element): string | null {
+    const author =
+      postNode.querySelector<HTMLElement>("[data-testid='post_author_link']")?.innerText?.trim() ??
+      postNode.querySelector<HTMLElement>("a[href^='/user/']")?.innerText?.trim() ??
+      "";
+    return author;
+  }
+  getTimestampText(postNode: Element): string | null {
+    const timestamp =
+      postNode.querySelector<HTMLElement>("a[data-click-id='timestamp']")?.innerText?.trim() ??
+      postNode.querySelector<HTMLElement>("time")?.getAttribute("datetime")?.trim() ??
+      "";
+      return timestamp;
   }
 
   getPermalink(postNode: Element): string | null {

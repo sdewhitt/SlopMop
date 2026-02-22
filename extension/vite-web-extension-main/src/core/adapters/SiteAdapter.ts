@@ -5,4 +5,6 @@ export interface SiteAdapter {
   getPermalink(postNode: Element): string | null;
   getTextNode(postNode: Element): HTMLElement | null;
   getImageNodes(postNode: Element): HTMLImageElement[];
+  getAuthorHandle(postNode: Element): string | null;
+  getTimestampText(postNode: Element): string | null;
 }
