@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/navbar";
 import { useAuth } from "../context/AuthContext";
 
-export default function SignUpPage() {
-  const { signUp, signInWithGoogle } = useAuth();
+export default function LoginPage() {
+  const { logIn, signInWithGoogle } = useAuth();
   const router = useRouter();
 
   const [email, setEmail] = useState("");
@@ -20,10 +20,10 @@ export default function SignUpPage() {
     setError("");
     setLoading(true);
     try {
-      await signUp(email, password);
+      await logIn(email, password);
       router.push("/");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create account.");
+      setError(err instanceof Error ? err.message : "Failed to log in.");
     } finally {
       setLoading(false);
     }
@@ -43,7 +43,7 @@ export default function SignUpPage() {
     <div className="flex min-h-screen flex-col bg-white text-foreground dark:bg-black">
       <Navbar />
       <main className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-        <h1 className="text-4xl font-bold tracking-tight">Create Your Account</h1>
+        <h1 className="text-4xl font-bold tracking-tight">Welcome Back</h1>
 
         <form onSubmit={handleSubmit} className="mt-10 flex w-full max-w-sm flex-col gap-4">
           <input
@@ -70,7 +70,7 @@ export default function SignUpPage() {
             disabled={loading}
             className="rounded-full bg-foreground px-6 py-3 font-semibold text-background transition hover:opacity-80 disabled:opacity-50"
           >
-            {loading ? "Creating account…" : "Sign Up"}
+            {loading ? "Logging in…" : "Log In"}
           </button>
         </form>
 
@@ -91,9 +91,9 @@ export default function SignUpPage() {
         </div>
 
         <p className="mt-6 text-sm text-neutral-500">
-          Already have an account?{" "}
-          <Link href="/login" className="underline">
-            Log in
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="underline">
+            Sign up
           </Link>
         </p>
 
