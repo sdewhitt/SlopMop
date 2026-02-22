@@ -3,6 +3,9 @@ from pydantic import BaseModel
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
+# constants
+MAX_TEXT_LENGTH = 5000
+
 
 class DetectRequest(BaseModel):
     text: str
@@ -44,6 +47,12 @@ def detect(request: DetectRequest):
     # Return HTTP 400 if text is empty
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text is required")
+
+    if len(clean_text) > MAX_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
+        )
     
     # connect to model here in week 2 of sprint 1
     confidence, label = score_text(clean_text)
