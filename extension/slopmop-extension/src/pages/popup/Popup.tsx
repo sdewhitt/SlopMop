@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import logo from '@assets/img/logo.svg';
 import browser from 'webextension-polyfill';
+import { getConfidenceExplanation } from '@src/utils/confidenceExplanation';
+
+// When score is null, the confidence block is hidden until detection provides a score.
+const confidenceScore: number | null = null;
 
 interface Stats {
   postsScanned: number;
@@ -236,6 +240,8 @@ export default function Popup() {
     );
   }
 
+  const explanation = confidenceScore != null ? getConfidenceExplanation(confidenceScore) : null;
+
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none">
@@ -295,6 +301,17 @@ export default function Popup() {
           Results are probability-based estimates, not definitive determinations.
         </p>
       </div>
+      {/* Detection result: confidence score + explanation (only when a score exists) */}
+      {confidenceScore != null && (
+        <section className="mt-4 text-left">
+          <p className="text-sm font-medium text-gray-200">
+            Confidence: {Math.round(confidenceScore * 100)}%
+          </p>
+          <p className="confidence-explanation mt-1.5 text-xs text-gray-400 leading-snug">
+            {explanation}
+          </p>
+        </section>
+      )}
     </div>
   );
 }
