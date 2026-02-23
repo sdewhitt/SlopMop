@@ -125,30 +125,71 @@ if __name__ == "__main__":
     # create the dataloader
     train_dataloader = DataLoader(tokenized_dataset, batch_size=16, shuffle=True)
 
-    # create the optimizer
-    optimizer = AdamW(detector.model.parameters(), lr=5e-5)
-    # 3 rounds of training
-    epochs = 3
     
-    print(f"Starting training...\n")
-    print(f"Training for {epochs} epochs")
-    print(f"Using {detector.device} device, {optimizer} optimizer,")
+    # create the optimizer and loss function
+    optimizer = AdamW(detector.model.parameters(), lr=5e-5)
 
-    # basic training loop
+    # 4 rounds of training
+    epochs = 4
+
+    # loss function, best loss set to infinity
+    loss_fn = torch.nn.CrossEntropyLoss()
+    best_loss = float('inf')
+
+    # for improving training efficiency
+    early_stopping_patience = 3
+    early_stopping_counter = 0
+    best_model_state = None
+    best_epoch = 0
+
+
+    print(f"Starting training...\n")
+
+    # train the model
     for epoch in range(epochs):
-      print(f"Epoch {epoch+1}\n")
+      total_loss = 0
       detector.model.train()
-      # train the model on the training data
+      # train the model with the training data
       for batch in train_dataloader:
         # move the batch, attention mask, and labels to the device
         input_ids = batch['input_ids'].to(detector.device)
         attention_mask = batch['attention_mask'].to(detector.device)
         labels = batch['label'].to(detector.device)
-        
-        # forward pass
-        outputs = detector.model(input_ids, attention_mask=attention_mask)
 
-        # print the outputs
-        print("Outputs: \n", outputs.logits, "\n")
+        # zero the gradients to avoid accumulation
+        optimizer.zero_grad()
+        # forward pass to get the outputs
+        outputs = detector.model(input_ids, attention_mask=attention_mask)
+        # calculate the loss between the outputs and the labels
+        loss = loss_fn(outputs.logits, labels)
+        # backward pass to update the weights
+        loss.backward()
+        # update the weights
+        optimizer.step()
+        # break the loop after the first batch
         break
+
+      # calculate the average loss for the epoch
+      total_loss += loss.item()
+      avg_loss = total_loss / len(train_dataloader)
+      print(f"Epoch {epoch+1}/{epochs} : Avg loss: {avg_loss:.4f}")
+
+      # check if the loss is the best loss
+      if avg_loss < best_loss:
+        best_loss = avg_loss
+        best_model_state = detector.model.state_dict()
+        best_epoch = epoch
+      else:
+        # increment the early stopping counter
+        early_stopping_counter += 1
+
+      # if early stopping counter is greater than the early stopping patience, break the loop
+      if early_stopping_counter >= early_stopping_patience:
+        print(f"Early stopping triggered at epoch {epoch+1}")
+        break
+
+    # load the best model state if it exists
+    if best_model_state:
+      print(f"Loading best model state from epoch {best_epoch+1}")
+      detector.model.load_state_dict(best_model_state)
     print("Training complete.")
