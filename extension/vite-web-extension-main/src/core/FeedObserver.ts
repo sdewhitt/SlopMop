@@ -1,80 +1,90 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
-import type { NormalizedPostContent, ContentType } from "@src/types/domain";
-import { classify } from "./ContentTypeClassifier";
+import type { NormalizedPostContent, UserSettings } from "@src/types/domain";
+import { PostExtractor } from "./PostExtractor";
 
+const DEBUG_EXTRACTION = true;
 
 export class FeedObserver {
-    // Extracts content using SiteAdapters and returns NormalizedPostContents. 
-    // Returns null if extraction fails for a post
+  private adapter: SiteAdapter;
+  private extractor: PostExtractor;
+  private settings: UserSettings;
+  private observer: MutationObserver | null = null;
+  private seenPostIds = new Set<string>();
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    extract(postNode: Element, adapter: SiteAdapter): NormalizedPostContent | null {
-        const siteId = adapter.getSiteId(); 
-        const postId = adapter.getStablePostId(postNode);
-        if (postId === null) return null;
-        
-        const capturedAtMs = Date.now();
+  constructor(adapter: SiteAdapter, extractor: PostExtractor, settings: UserSettings) {
+    this.adapter = adapter;
+    this.extractor = extractor;
+    this.settings = settings;
+  }
 
-        // get normalizedText
-        // need to better understand role of ? in typescript
-        // ?.innerText is optional chaining. if getTextNode rtns null, whole line evals to undefined
-        // ?.trim() checks if innerText was null and returns trim()
-        // ?? nullish coalescing operator. if first half was null/undefined, then return ''
-        const rawText =  adapter.getTextNode(postNode)?.innerText?.trim() ?? '';
-        if (rawText === null) return null;
-        const normalizedText = this.normalizeText(rawText);
-        if (normalizedText === null) return null;
+  start(): void {
+    // TODO: guard against double start (don't create a second MutationObserver if one exists)
 
-        // TODO: process images into some normalized form after basic functionality is working
-        // convert HTMLImageElement[] into a Array<{imageId, bytesBase64, srcUrl, mimeType}
-        // what is mimeType?
-        const images = adapter.getImageNodes(postNode);
+    //  initial scan  call adapter.findPostNodes(document), loop through them,
+    //       pass each to handleCandidatePost
 
-        // classify ContentType
-        const contentType = classify(normalizedText, images.length);
+    // create a MutationObserver that watches for childList changes on document.body
+    //       its callback should call onDomMutated()
+    //       store it in this.observer so stop() can disconnect it
+  }
 
-        const permalink = adapter.getPermalink(postNode);
-        // TODO: figure out how to get this and what this means
-        const languageHint = "";
-        const authorHandle = adapter.getAuthorHandle(postNode);
-        const timestampText = adapter.getTimestampText(postNode);
+  stop(): void {
+    // TODO: disconnect this.observer if it exists, set it to null
+    // clear this.seenPostIds
+    // clear this.debounceTimer if running
+  }
 
+  private onDomMutated(): void {
+    // : debounce  if this.debounceTimer is already set, clear it
+    //  then set a new timer (e.g. 200ms) that calls scanAndProcess()
+    //  this prevents mutation storms from triggering dozens of scans
+  }
 
+  private scanAndProcess(): void {
+    const nodes = this.adapter.findPostNodes(document);
 
-
-
-
-        return {
-            site: siteId,
-            postId: postId,
-            url: permalink ?? "",
-            capturedAtMs: capturedAtMs,
-            contentType: contentType,
-            text: {
-              plain: normalizedText,
-              languageHint: "",
-            },
-            images: [],
-            domContext: {
-              authorHandle: authorHandle ?? "",
-              timestampText: timestampText ?? "",
-            },
-          };
-    
+    if (DEBUG_EXTRACTION) {
+      console.log(`[FeedObserver] scan found ${nodes.length} candidate nodes`);
     }
-    private normalizeText(raw: string | null): string {
-        if (!raw) return "";
-        let text = raw;
-        // replace whitespace [ \t]+ matches exactly 1 or more space. 
-        // g is global flag to replace all instances
-        text = text.replace(/[ \t]+/g, " ");
-        // normalize paragraph breaks. capture two or more \n and globally
-        text = text.replace(/\n{2,}/g, "\n\n");
-        // replace multiple newlines with single newline
-        text = text.replace(/\n /g, "\n");
-        // trim leading and trailing whitespace
-        text = text.trim();
 
-        return text;
+    for (const node of nodes) {
+      this.handleCandidatePost(node);
     }
+  }
+
+  private handleCandidatePost(node: Element): void {
+    const post = this.extractor.extract(node, this.adapter);
+    if (!post) return;
+
+    if (this.seenPostIds.has(post.postId)) return;
+
+    if (!this.isEligible(post)) {
+      if (DEBUG_EXTRACTION) {
+        console.log(`[FeedObserver] skipped ineligible post ${post.postId}`);
+      }
+      return;
+    }
+
+    this.seenPostIds.add(post.postId);
+
+    if (DEBUG_EXTRACTION) {
+      console.log(`[FeedObserver] new post`, {
+        postId: post.postId,
+        contentType: post.contentType,
+        textLength: post.text.plain.length,
+        author: post.domContext.authorHandle,
+      });
+    }
+
+    // tODO: bus.sendAnalyze(post) once ExtensionMessageBus exists
+  }
+
+  private isEligible(post: NormalizedPostContent): boolean {
+    //  check this.settings.enabled
+    //  check this.settings.whitelist includes post.site (or whitelist is empty = allow all)
+    //  check this.settings.scanText or scanImages based on contentType
+    // return true if all checks pass, false otherwise
+    return true;
+  }
 }
-
