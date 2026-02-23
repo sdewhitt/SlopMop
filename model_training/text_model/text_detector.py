@@ -145,8 +145,13 @@ class TextDetectors:
     # empty container for tokenizor (translator) and model
     self.tokenizer = None
     self.model = None
-    # cuda = NVDIA GPU
-    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # CPU > MPS (Apple Silicon) > CUDA (NVIDIA) for speed
+    if torch.cuda.is_available():
+      self.device = torch.device("cuda")
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+      self.device = torch.device("mps")
+    else:
+      self.device = torch.device("cpu")
 
     self._initialize_model()
 
@@ -284,5 +289,5 @@ if __name__ == "__main__":
       print(f"Loading best model state from epoch {best_epoch+1}")
       detector.model.load_state_dict(best_model_state)
       # save the best model state to a file
-      torch.save(detector.model.state_dict(), "best_text_detector.pt")
+      torch.save(detector.model.state_dict(), "model_training/text_model/best_text_detector.pt")
     print("Training complete.")
