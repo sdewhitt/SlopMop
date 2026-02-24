@@ -1,6 +1,8 @@
 import Navbar from "./components/navbar";
 import FeaturesSection from "./components/features-section";
 import Hero from "./components/hero";
+import FAQSection from "./components/faq-section";
+import Footer from "./components/footer";
 
 export default function Home() {
   return (
@@ -10,6 +12,10 @@ export default function Home() {
         <Hero />
 
         <FeaturesSection />
+
+        <FAQSection />
+
+        <Footer />
     </div>
   );
 }
