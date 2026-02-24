@@ -26,7 +26,7 @@ describe('Home', () => {
         const homeLink = within(navbar).getByRole('link', { name: /SlopMop/i })
 
         expect(installLink).toHaveAttribute('href', '/install')
-        expect(faqLink).toHaveAttribute('href', '/faq')
+        expect(faqLink).toHaveAttribute('href', '/#faq')
         expect(signupLink).toHaveAttribute('href', '/signup')
         expect(homeLink).toHaveAttribute('href', '/')
     })
