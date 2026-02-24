@@ -85,9 +85,9 @@ describe('Home', () => {
         expect(firstQuestion).toHaveAttribute('aria-expanded', 'true')
         expect(secondQuestion).toHaveAttribute('aria-expanded', 'true')
 
-        // Both answers should be visible (when same answer text, getAllByText checks all are present)
-        const answers = screen.getAllByText(firstFaq.a)
-        expect(answers.length).toBeGreaterThanOrEqual(2)
+        // Both answers should be visible
+        expect(screen.getByText(firstFaq.a)).toBeInTheDocument()
+        expect(screen.getByText(secondFaq.a)).toBeInTheDocument()
     })
 
     // TODO: add tests for working install

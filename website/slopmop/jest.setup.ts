@@ -1,4 +1,46 @@
 import '@testing-library/jest-dom'
+import React from 'react'
+
+// Provide a global fetch mock for modules like @firebase/auth that require it
+if (typeof global.fetch === 'undefined') {
+  global.fetch = jest.fn(() =>
+    Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({}),
+    })
+  ) as any;
+}
+
+// Mock the Firebase library to prevent real Firebase calls in tests
+jest.mock('./app/lib/firebase', () => ({
+  auth: undefined,
+  googleProvider: undefined,
+  initFirebase: jest.fn(() => Promise.resolve()),
+}));
+
+// Mock firebase/auth to avoid Node.js compatibility issues in jsdom
+jest.mock('firebase/auth', () => ({
+  getAuth: jest.fn(),
+  GoogleAuthProvider: jest.fn(),
+  onAuthStateChanged: jest.fn(() => jest.fn()),
+  createUserWithEmailAndPassword: jest.fn(),
+  signInWithEmailAndPassword: jest.fn(),
+  signInWithPopup: jest.fn(),
+  signOut: jest.fn(),
+}));
+
+// Mock AuthContext to provide a default logged-out user for component tests
+jest.mock('./app/context/AuthContext', () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
+  useAuth: () => ({
+    user: null,
+    loading: false,
+    signUp: jest.fn(),
+    logIn: jest.fn(),
+    signInWithGoogle: jest.fn(),
+    logOut: jest.fn(),
+  }),
+}));
 
 // Mock IntersectionObserver which is not available in Jest/Node environment
 global.IntersectionObserver = class IntersectionObserver {
