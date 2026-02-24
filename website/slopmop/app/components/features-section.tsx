@@ -1,7 +1,7 @@
 export default function FeaturesSection() {
   return (
     <section className="border-t border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950">
-      <div className="mx-auto grid max-w-5xl gap-10 px-6 py-20 sm:grid-cols-3">
+      <div className="mx-auto grid max-w-5xl gap-10 px-6 pt-44 pb-20 sm:grid-cols-3">
         <div>
           <h3 className="text-lg font-semibold">Real-Time Detection</h3>
           <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
