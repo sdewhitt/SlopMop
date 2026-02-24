@@ -20,6 +20,7 @@ This project is a browser extension used to automatically detect AI-generated co
 
 ### Extension Architecture
 - **Pages**: popup, options, newtab, devtools, content script, background service worker
+  - The UI that users interact with is the popup page, and despite "options" exisitng and having its own .tsx, the user's settings are managed through the popup page when the user clicks on a "Settings" button to change the display.
 - **Build Commands**:
   - `npm run build:chrome` - Build for Chrome
   - `npm run build:firefox` - Build for Firefox
