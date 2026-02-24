@@ -40,6 +40,14 @@ export default defineConfig({
     crxI18n({ localize, src: './src/locales' }),
   ],
   publicDir: resolve(__dirname, 'public'),
+  resolve: {
+    alias: {
+      '@src': resolve(__dirname, 'src'),
+      '@assets': resolve(__dirname, 'src/assets'),
+      '@locales': resolve(__dirname, 'src/locales'),
+      '@pages': resolve(__dirname, 'src/pages'),
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',
