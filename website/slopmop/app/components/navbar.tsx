@@ -19,9 +19,9 @@ export default function Navbar() {
             </Link>
           </li>
           <li>
-            <Link href="/faq" className="hover:underline">
+            <a href="/#faq" className="hover:underline">
               FAQ
-            </Link>
+            </a>
           </li>
           {user ? (
             <li>

@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export default function Hero() {
   return (
-    <main className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+    <main className="flex flex-1 flex-col items-center justify-center px-6 pt-24 text-center">
       <h1 className="max-w-2xl text-5xl font-semibold leading-tight tracking-tight sm:text-6xl">
         AI content detection <span className="font-extrabold">built for convenience</span>
       </h1>
