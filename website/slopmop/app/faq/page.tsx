@@ -1,32 +1,10 @@
 import Link from "next/link";
 import Navbar from "../components/navbar";
+import faqs from "@/app/data/faqs.json";
 
 export const metadata = {
   title: "FAQ — SlopMop",
 };
-
-const faqs = [
-  {
-    q: "sample question1",
-    a: "sample answer",
-  },
-  {
-    q: "sample question2",
-    a: "sample answer",
-  },
-  {
-    q: "sample question3",
-    a: "sample answer",
-  },
-  {
-    q: "sample question4",
-    a: "sample answer",
-  },
-  {
-    q: "sample question5",
-    a: "sample answer",
-  },
-];
 
 export default function FAQPage() {
   return (
