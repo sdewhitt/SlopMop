@@ -1,1 +1,7 @@
 *.venv
+
+# large model weights (do not commit)
+*.pt
+*.pth
+*.bin
+*.safetensors
