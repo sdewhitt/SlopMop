@@ -1,26 +1,26 @@
 [
   {
     "q": "How accurate is SlopMop's detection?",
-    "a": "SlopMop uses a machine learning model trained on AI-generated and human-written content. It is around [INSERT ACCURACY PERCENTAGE] accurate. Keep in mind no AI detector is 100% reliable. We recommend using it as a helpful indicator and not anything definitive.",
+    "a": "SlopMop uses a machine learning model trained on AI-generated and human-written content. It is around [INSERT ACCURACY PERCENTAGE] accurate. Keep in mind no AI detector is 100% reliable. We recommend using it as a helpful indicator and not anything definitive."
   },
   {
     "q": "What data does SlopMop collect?",
-    "a": "SlopMop only processes content that appears in your browser while the extension is active. Detection results are deleted within 24 hours and are never sold or shared with third parties. We do not store your browsing history.",
+    "a": "SlopMop only processes content that appears in your browser while the extension is active. Detection results are deleted within 24 hours and are never sold or shared with third parties. We do not store your browsing history."
   },
   {
     "q": "Which browsers and platforms does SlopMop support?",
-    "a": "[PLACEHOLDER — list supported browsers and platforms here]",
+    "a": "[PLACEHOLDER — list supported browsers and platforms here]"
   },
   {
     "q": "I installed the extension but nothing is happening. What do I do?",
-    "a": "Make sure the extension is enabled by clicking the puzzle icon in your browser toolbar and pinning SlopMop. Then navigate to a social media site that is supported and refresh the page. If the issue stays, try disabling and re-enabling the extension.",
+    "a": "Make sure the extension is enabled by clicking the puzzle icon in your browser toolbar and pinning SlopMop. Then navigate to a social media site that is supported and refresh the page. If the issue stays, try disabling and re-enabling the extension."
   },
   {
     "q": "[PLACEHOLDER — Simple / Accessibility Mode question]",
-    "a": "[PLACEHOLDER — Simple / Accessibility Mode answer]",
+    "a": "[PLACEHOLDER — Simple / Accessibility Mode answer]"
   },
   {
     "q": "SlopMop stopped working after a browser update. How do I fix it?",
-    "a": "Browser updates can sometimes disable extensions. Go to your browser's extension settings, find SlopMop, and make sure it is toggled on. If it was removed, reinstall it from the Chrome Web Store and sign back in to restore settings.",
+    "a": "Browser updates can sometimes disable extensions. Go to your browser's extension settings, find SlopMop, and make sure it is toggled on. If it was removed, reinstall it from the Chrome Web Store and sign back in to restore settings."
   }
 ]
