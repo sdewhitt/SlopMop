@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { ManifestV3Export } from '@crxjs/vite-plugin';
@@ -39,4 +40,18 @@ export default defineConfig({
     crxI18n({ localize, src: './src/locales' }),
   ],
   publicDir: resolve(__dirname, 'public'),
+  resolve: {
+    alias: {
+      '@src': resolve(__dirname, 'src'),
+      '@assets': resolve(__dirname, 'src/assets'),
+      '@locales': resolve(__dirname, 'src/locales'),
+      '@pages': resolve(__dirname, 'src/pages'),
+    },
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.ts'],
+    include: ['src/**/*.{test,spec}.{js,ts,jsx,tsx}'],
+  },
 });
