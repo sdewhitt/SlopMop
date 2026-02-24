@@ -9,7 +9,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { auth, googleProvider } from "../lib/firebase";
+import { auth, googleProvider, initFirebase } from "../lib/firebase";
 
 interface AuthContextType {
   user: User | null;
@@ -27,26 +27,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      setLoading(false);
-    });
-    return unsubscribe;
+    let unsubscribe: (() => void) | undefined;
+
+    initFirebase()
+      .then(() => {
+        if (!auth) {
+          setLoading(false);
+          return;
+        }
+        unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+          setUser(firebaseUser);
+          setLoading(false);
+        });
+      })
+      .catch(() => {
+        setLoading(false);
+      });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const signUp = async (email: string, password: string) => {
+    await initFirebase();
+    if (!auth) throw new Error("Firebase not initialized");
     await createUserWithEmailAndPassword(auth, email, password);
   };
 
   const logIn = async (email: string, password: string) => {
+    await initFirebase();
+    if (!auth) throw new Error("Firebase not initialized");
     await signInWithEmailAndPassword(auth, email, password);
   };
 
   const signInWithGoogle = async () => {
+    await initFirebase();
+    if (!auth || !googleProvider) throw new Error("Firebase not initialized");
     await signInWithPopup(auth, googleProvider);
   };
 
   const logOut = async () => {
+    await initFirebase();
+    if (!auth) throw new Error("Firebase not initialized");
     await signOut(auth);
   };
 
