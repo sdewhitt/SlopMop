@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import logo from '@assets/img/logo.svg';
 import browser from 'webextension-polyfill';
 import { getConfidenceExplanation } from '@src/utils/confidenceExplanation';
+import DisabledWebsitesManager from '@src/pages/options/DisabledWebsitesManager';
 
 // When score is null, the confidence block is hidden until detection provides a score.
 const confidenceScore: number | null = null;
@@ -218,6 +219,9 @@ export default function Popup() {
               ))}
             </div>
           </section>
+
+          {/* Disabled Websites */}
+          <DisabledWebsitesManager />
 
           {/* Data */}
           <section>

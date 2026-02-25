@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
+import DisabledWebsitesManager from './DisabledWebsitesManager';
 
 interface Settings {
   enabled: boolean;
@@ -197,6 +198,9 @@ export default function Options() {
             ))}
           </div>
         </section>
+
+        {/* Disabled Websites */}
+        <DisabledWebsitesManager />
 
         {/* Data */}
         <section className="mb-8">
