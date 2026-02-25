@@ -17,6 +17,9 @@ export default function Footer() {
           <Link href="/install" className="hover:underline">
             Install
           </Link>
+          <Link href="/settings" className="hover:underline">
+            Settings
+          </Link>
           <Link href="/signup" className="hover:underline">
             Sign Up
           </Link>
