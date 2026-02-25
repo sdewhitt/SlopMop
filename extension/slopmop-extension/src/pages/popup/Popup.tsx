@@ -32,6 +32,8 @@ const defaultSettings: Settings = {
   showNotifications: true,
 };
 
+const PLATFORM_KEYS: Array<keyof Settings['platforms']> = ['twitter', 'reddit', 'facebook', 'youtube', 'linkedin'];
+
 function Toggle({
   checked,
   onChange,
@@ -206,7 +208,7 @@ export default function Popup() {
           <section>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Platforms</p>
             <div className="bg-gray-800 rounded-lg px-3 divide-y divide-gray-700">
-              {(Object.keys(settings.platforms) as Array<keyof Settings['platforms']>).map((p) => (
+              {PLATFORM_KEYS.map((p) => (
                 <Toggle
                   key={p}
                   checked={settings.platforms[p]}

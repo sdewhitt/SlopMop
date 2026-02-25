@@ -29,6 +29,8 @@ const defaultSettings: Settings = {
   showNotifications: true,
 };
 
+const PLATFORM_KEYS: Array<keyof Settings['platforms']> = ['twitter', 'reddit', 'facebook', 'youtube', 'linkedin'];
+
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean;
   onChange: (v: boolean) => void;
@@ -185,7 +187,7 @@ export default function Options() {
         <section className="mb-8">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Platforms</h2>
           <div className="bg-gray-900 rounded-xl p-4 divide-y divide-gray-800">
-            {(Object.keys(settings.platforms) as Array<keyof Settings['platforms']>).map((platform) => (
+            {PLATFORM_KEYS.map((platform) => (
               <Toggle
                 key={platform}
                 checked={settings.platforms[platform]}
