@@ -137,7 +137,7 @@ export default function Popup() {
   // ── Settings view ─────────────────────────────────────────────
   if (view === 'settings') {
     return (
-      <div className="w-full bg-gray-900 text-white flex flex-col overflow-hidden">
+      <div className="w-full h-full bg-gray-900 text-white flex flex-col">
         {/* Settings header */}
         <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-gray-800 shrink-0">
           <button
@@ -155,7 +155,7 @@ export default function Popup() {
           }`}>Saved</span>
         </div>
 
-        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-none flex-1">
+        <div className="px-4 py-3 space-y-4 overflow-y-auto flex-1">
           {/* Detection */}
           <section>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detection</p>
@@ -250,7 +250,7 @@ export default function Popup() {
 
   // ── Home view ─────────────────────────────────────────────────
   return (
-    <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none">
+    <div className="w-full h-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-y-auto">
       {/* Header */}
       <div className="flex items-center gap-3">
         <img src={logo} className="h-9 w-9" alt="SlopMop logo" />
