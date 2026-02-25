@@ -1,8 +1,10 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
 
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
+let db: Firestore | undefined;
 let googleProvider: GoogleAuthProvider | undefined;
 let initPromise: Promise<void> | null = null;
 
@@ -35,6 +37,7 @@ export function initFirebase(): Promise<void> {
       app =
         getApps().length === 0 ? initializeApp(config) : getApps()[0];
       auth = getAuth(app);
+      db = getFirestore(app);
       googleProvider = new GoogleAuthProvider();
     })
     .catch((err) => {
@@ -45,4 +48,4 @@ export function initFirebase(): Promise<void> {
   return initPromise;
 }
 
-export { auth, googleProvider };
+export { auth, db, googleProvider };
