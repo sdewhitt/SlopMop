@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import logo from '@assets/img/logo.svg';
 import browser from 'webextension-polyfill';
-import { getConfidenceExplanation } from '@src/utils/confidenceExplanation';
+import { normalizeConfidence, resolveExplanation } from '@src/utils/generateExplanation';
 
-// When score is null, the confidence block is hidden until detection provides a score.
-const confidenceScore: number | null = null;
+type DetectResponse = {
+  confidence?: number;
+  explanation?: string;
+  metadataComplete?: boolean;
+  // Some backends may use alternative field names.
+  confidenceScore?: number;
+  confidence_score?: number;
+} & Record<string, unknown>;
 
 interface Stats {
   postsScanned: number;
@@ -73,10 +79,22 @@ export default function Popup() {
   const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
+  const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
 
   useEffect(() => {
     browser.storage.local
-      .get(['enabled', 'postsScanned', 'aiDetected', 'postsProcessing', 'settings'])
+      .get([
+        'enabled',
+        'postsScanned',
+        'aiDetected',
+        'postsProcessing',
+        'settings',
+        // Most recent backend `/detect` response (if/when written by detection pipeline)
+        'detectResponse',
+        'lastDetectResponse',
+        'lastDetection',
+        'detectionResult',
+      ])
       .then((result) => {
         if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
         setStats({
@@ -87,7 +105,33 @@ export default function Popup() {
         if (result.settings) {
           setSettings({ ...defaultSettings, ...(result.settings as Settings) });
         }
+
+        const raw =
+          (result.lastDetectResponse as unknown) ??
+          (result.detectResponse as unknown) ??
+          (result.lastDetection as unknown) ??
+          (result.detectionResult as unknown);
+        if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
       });
+  }, []);
+
+  // Keep popup updated when detection writes a new `/detect` response to storage.
+  useEffect(() => {
+    const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      const keys = ['lastDetectResponse', 'detectResponse', 'lastDetection', 'detectionResult'] as const;
+      for (const key of keys) {
+        const change = changes[key];
+        if (!change) continue;
+        const raw = change.newValue as unknown;
+        if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
+        else setDetectResponse(null);
+        break;
+      }
+    };
+
+    browser.storage.onChanged.addListener(handler);
+    return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
   const toggleEnabled = () => {
@@ -240,7 +284,19 @@ export default function Popup() {
     );
   }
 
-  const explanation = confidenceScore != null ? getConfidenceExplanation(confidenceScore) : null;
+  const rawConfidence =
+    (detectResponse?.confidence as number | undefined) ??
+    (detectResponse?.confidenceScore as number | undefined) ??
+    (detectResponse?.confidence_score as number | undefined) ??
+    null;
+  const confidence = normalizeConfidence(rawConfidence);
+  const explanation = detectResponse
+    ? resolveExplanation({
+        explanation: detectResponse.explanation as string | undefined,
+        confidence: rawConfidence,
+        metadataComplete: detectResponse.metadataComplete as boolean | undefined,
+      })
+    : null;
 
   // ── Home view ─────────────────────────────────────────────────
   return (
@@ -301,11 +357,11 @@ export default function Popup() {
           Results are probability-based estimates, not definitive determinations.
         </p>
       </div>
-      {/* Detection result: confidence score + explanation (only when a score exists) */}
-      {confidenceScore != null && (
+      {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
+      {detectResponse && (
         <section className="mt-4 text-left">
           <p className="text-sm font-medium text-gray-200">
-            Confidence: {Math.round(confidenceScore * 100)}%
+            Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
           </p>
           <p className="confidence-explanation mt-1.5 text-xs text-gray-400 leading-snug">
             {explanation}
