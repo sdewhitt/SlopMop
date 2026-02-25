@@ -4,39 +4,51 @@ import torch.nn as nn
 from transformers import AutoModel, AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # type: ignore[import-untyped]
 from transformers.modeling_utils import PreTrainedModel  # type: ignore[import-untyped]
 
-# Custom model for desklib/ai-text-detector-v1.01 (single logit + sigmoid, not AutoModelForSequenceClassification)
-class DesklibAIDetectionModel(PreTrainedModel):
-    config_class = AutoConfig
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = AutoModel.from_config(config)
-        self.classifier = nn.Linear(config.hidden_size, 1)
-
-    def forward(self, input_ids, attention_mask=None, labels=None):
-        outputs = self.model(input_ids, attention_mask=attention_mask)
-        last_hidden_state = outputs[0]
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
-        sum_embeddings = torch.sum(last_hidden_state * input_mask_expanded, dim=1)
-        sum_mask = torch.clamp(input_mask_expanded.sum(dim=1), min=1e-9)
-        pooled_output = sum_embeddings / sum_mask
-        logits = self.classifier(pooled_output)
-        loss = None
-        if labels is not None:
-            loss = nn.BCEWithLogitsLoss()(logits.view(-1), labels.float())
-        return {"logits": logits, "loss": loss}
-
 # for regex (url, emoji) removal
 import re
 import regex  # type: ignore[import-untyped]
 
 # for data loading
+import random
 from datasets import load_dataset, Dataset # type: ignore[import-untyped]
 from torch.utils.data import DataLoader # type: ignore[import-untyped]
 
 # for training loop
 from torch.optim import AdamW
 import copy
+
+# for saving the model
+import gzip
+
+# for training progress tracking
+from tqdm.auto import tqdm
+
+# for loss curve visualization
+from torch.utils.tensorboard import SummaryWriter
+
+
+# Custom model for desklib/ai-text-detector-v1.01 (single logit + sigmoid, not AutoModelForSequenceClassification)
+class DesklibAIDetectionModel(PreTrainedModel):
+  config_class = AutoConfig
+
+  def __init__(self, config):
+    super().__init__(config)
+    self.model = AutoModel.from_config(config)
+    self.classifier = nn.Linear(config.hidden_size, 1)
+
+  def forward(self, input_ids, attention_mask=None, labels=None):
+    outputs = self.model(input_ids, attention_mask=attention_mask)
+    last_hidden_state = outputs[0]
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
+    sum_embeddings = torch.sum(last_hidden_state * input_mask_expanded, dim=1)
+    sum_mask = torch.clamp(input_mask_expanded.sum(dim=1), min=1e-9)
+    pooled_output = sum_embeddings / sum_mask
+    logits = self.classifier(pooled_output)
+    loss = None
+    if labels is not None:
+        loss = nn.BCEWithLogitsLoss()(logits.view(-1), labels.float())
+    return {"logits": logits, "loss": loss}
+
 
 def emoji_removal(text):
   emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
@@ -127,6 +139,23 @@ def gsingh1_to_text_label(dataset):
   return Dataset.from_dict({"text": texts, "label": labels})
 
 
+# runing every batch in gsignh1 will take hours, so choose 50 or 100 of each label and 100 of mixed at random per run
+def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
+  rng = random.Random(seed)
+  indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
+  indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
+  rng.shuffle(indices_0)
+  rng.shuffle(indices_1)
+  human_idx = indices_0[:n_human]
+  ai_idx = indices_1[:n_ai]
+  remainder = [i for i in range(len(dataset)) if i not in set(human_idx) | set(ai_idx)]
+  rng.shuffle(remainder)
+  mixed_idx = remainder[:n_mixed]
+  sel = human_idx + ai_idx + mixed_idx
+  rng.shuffle(sel)
+  return dataset.select(sel)
+
+
 def tokenize_batch(batch, tokenizer, text_column="text"):
   return tokenizer(
     batch[text_column],
@@ -185,19 +214,21 @@ if __name__ == "__main__":
     detector = TextDetectors()
 
     # load the best model state from file if it exists
-    best_model_path = os.path.join(os.path.dirname(__file__), "best_text_detector.pt")
-    if os.path.exists(best_model_path):
-        state = torch.load(best_model_path, map_location=detector.device)
-        is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
+    best_model_gzip_path = os.path.join(os.path.dirname(__file__), "best_text_detector.pt.gz")
 
+    if os.path.exists(best_model_gzip_path):
+      with gzip.open(best_model_gzip_path, "rb") as f:
+        state = torch.load(f, map_location=detector.device)
+        is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
         if detector.use_binary_logit and is_desklib_checkpoint:
-            detector.model.load_state_dict(state, strict=True)
-            print(f"Loaded best model weights from {best_model_path}.")
+          detector.model.load_state_dict(state, strict=True)
+          print(f"Loaded best model weights from {best_model_gzip_path}.")
         elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
-            detector.model.load_state_dict(state, strict=True)
-            print(f"Loaded best model weights from {best_model_path}.")
+          detector.model.load_state_dict(state, strict=True)
+          print(f"Loaded best model weights from {best_model_gzip_path}.")
     else:
-        print(f"No saved best model found at {best_model_path}; using freshly loaded weights.")
+      print(f"No saved best model found at {best_model_gzip_path}; using freshly loaded weights.")
+
     print("Detector initialized.\n")
 
     # load the dataset, clean the data, tokenize the data, and set the format
@@ -206,6 +237,9 @@ if __name__ == "__main__":
     # convert to (text, label) if this is gsingh1 format (Human_story + AI columns)
     if "Human_story" in dataset.column_names and "label" not in dataset.column_names:
       dataset = gsingh1_to_text_label(dataset)
+    # use a small random subset (50 human + 50 AI + 50 mixed) per run for faster training
+    dataset = sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None)
+    print(f"Using subset of {len(dataset)} examples for training.\n")
     text_column = get_text_column(dataset)
     cleaned_dataset = dataset.map(lambda ex: clean_example(ex, text_column))
     tokenized_dataset = cleaned_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
@@ -228,18 +262,24 @@ if __name__ == "__main__":
     # for improving training efficiency
     early_stopping_patience = 3
     early_stopping_counter = 0
-    best_model_state = None
+    best_model_state_gz = None
+    best_model_state_fp = None
     best_epoch = 0
 
 
     print(f"Start training...\n")
+
+    # TensorBoard writer (run: tensorboard --logdir=runs)
+    log_dir = os.path.join(os.path.dirname(__file__), "runs")
+    writer = SummaryWriter(log_dir=log_dir)
 
     # train the model
     for epoch in range(epochs):
       total_loss = 0
       detector.model.train()
       # train the model with the training data
-      for batch in train_dataloader:
+      # for batch in train_dataloader:
+      for batch in tqdm(train_dataloader, desc=f"Training", unit="batch"):
         # move the batch, attention mask, and labels to the device
         input_ids = batch['input_ids'].to(detector.device)
         attention_mask = batch['attention_mask'].to(detector.device)
@@ -260,13 +300,12 @@ if __name__ == "__main__":
         loss.backward()
         # update the weights
         optimizer.step()
-        # break the loop after the first batch
-        break
+        total_loss += loss.item()
 
       # calculate the average loss for the epoch
-      total_loss += loss.item()
       avg_loss = total_loss / len(train_dataloader)
-      print(f"Epoch {epoch+1}/{epochs} : Avg loss: {avg_loss:.4f}")
+      writer.add_scalar("Loss/train", avg_loss, epoch)
+      print(f"Epoch {epoch+1}/{epochs} : Avg loss: {avg_loss:.10f}")
 
       # check if the loss is the best loss
       if avg_loss < best_loss:
@@ -290,4 +329,13 @@ if __name__ == "__main__":
       detector.model.load_state_dict(best_model_state)
       # save the best model state to a file
       torch.save(detector.model.state_dict(), "model_training/text_model/best_text_detector.pt")
+
+      best_model_state_fp = detector.model.state_dict()
+      best_model_state_fp16 = {k: v.half() for k, v in best_model_state_fp.items()}
+      torch.save(best_model_state_fp16, "model_training/text_model/best_text_detector_fp16.pt")
+      with gzip.open(best_model_gzip_path, "wb") as f:
+        torch.save(best_model_state_gz, f)
+        torch.save(best_model_state_fp16, f)
+        print(f"Saved best model weights to {best_model_gzip_path}.")
+    writer.close()
     print("Training complete.")
