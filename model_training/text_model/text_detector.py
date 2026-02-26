@@ -26,6 +26,12 @@ from tqdm.auto import tqdm
 # for loss curve visualization
 from torch.utils.tensorboard import SummaryWriter
 
+# for exporting the training progress
+import time
+
+# for validation loop
+import numpy as np
+
 
 # Custom model for desklib/ai-text-detector-v1.01 (single logit + sigmoid, not AutoModelForSequenceClassification)
 class DesklibAIDetectionModel(PreTrainedModel):
@@ -49,12 +55,12 @@ class DesklibAIDetectionModel(PreTrainedModel):
         loss = nn.BCEWithLogitsLoss()(logits.view(-1), labels.float())
     return {"logits": logits, "loss": loss}
 
-
+# remove all emojis
 def emoji_removal(text):
   emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
   return emoji_pattern.sub(r'', text)
 
-
+# preprocess a single text 
 def preprocess_text(text):
   # url pattern so that even the shortened versions also gets removed
   text = re.sub(r'\b(?:https?://|www\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*[a-zA-Z0-9/_-])?', '', text)
@@ -100,10 +106,11 @@ def preprocess_text(text):
 
   return re.sub(r'\s+', ' ', clean_up).strip()
 
-
+# clean a batch of examples
 def clean_batch(batch):
   return {"text": [preprocess_text(t) for t in batch["text"]]}
 
+# clean a single example
 def clean_example(example, text_column="text"):
   example[text_column] = preprocess_text(example[text_column])
   return example
@@ -118,7 +125,7 @@ def get_text_column(dataset):
       return c
   return cols[0] if cols else "text"
 
-
+# convert gsingh1 dataset to (text, label) dataset
 def gsingh1_to_text_label(dataset):
   # convert the dataset to a (text, label) dataset
   human_col = "Human_story"
@@ -140,7 +147,7 @@ def gsingh1_to_text_label(dataset):
 
 
 # runing every batch in gsignh1 will take hours, so choose 50 or 100 of each label and 100 of mixed at random per run
-def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
+def sample_subset(dataset, n_human=2, n_ai=2, n_mixed=0, seed=None):
   rng = random.Random(seed)
   indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
   indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
@@ -155,7 +162,7 @@ def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
   rng.shuffle(sel)
   return dataset.select(sel)
 
-
+# tokenize a batch
 def tokenize_batch(batch, tokenizer, text_column="text"):
   return tokenizer(
     batch[text_column],
@@ -163,6 +170,7 @@ def tokenize_batch(batch, tokenizer, text_column="text"):
     truncation=True,
     max_length=512
   )
+    
 
 class TextDetectors:
   
@@ -238,22 +246,45 @@ if __name__ == "__main__":
     if "Human_story" in dataset.column_names and "label" not in dataset.column_names:
       dataset = gsingh1_to_text_label(dataset)
     # use a small random subset (50 human + 50 AI + 50 mixed) per run for faster training
-    dataset = sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None)
+    dataset = sample_subset(dataset, n_human=5, n_ai=5, n_mixed=0, seed=None)
     print(f"Using subset of {len(dataset)} examples for training.\n")
-    text_column = get_text_column(dataset)
-    cleaned_dataset = dataset.map(lambda ex: clean_example(ex, text_column))
-    tokenized_dataset = cleaned_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
-    tokenized_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-    
-    # create the dataloader
-    train_dataloader = DataLoader(tokenized_dataset, batch_size=16, shuffle=True)
 
+
+    # split for validation
+    n = len(dataset)
+    indices = np.arange(n)
+    # shuffle the indices
+    np.random.seed(42)
+    np.random.shuffle(indices)
+    # get the validation indices
+    val_size = int(0.2 * n)
+    val_indices = indices[:val_size]
+    # get the training indices
+    train_indices = indices[val_size:]
+    train_dataset = dataset.select(train_indices)
+    # get the validation dataset
+    val_dataset = dataset.select(val_indices)
+
+    # get the text column from the dataset, clean, tokenize, and set the format for both training and validation
+    text_column = get_text_column(train_dataset)
+
+    cleaned_train_dataset = train_dataset.map(lambda ex: clean_example(ex, text_column))
+    cleaned_val_dataset = val_dataset.map(lambda ex: clean_example(ex, text_column))
+
+    tokenized_train_dataset = cleaned_train_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
+    tokenized_val_dataset = cleaned_val_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
+
+    tokenized_train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    tokenized_val_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+
+    train_dataloader = DataLoader(tokenized_train_dataset, batch_size=16, shuffle=True)
+    val_dataloader = DataLoader(tokenized_val_dataset, batch_size=16, shuffle=False)
     
     # create the optimizer and loss function
     optimizer = AdamW(detector.model.parameters(), lr=5e-5)
 
     # 10 rounds of training
-    epochs = 1
+    epochs = 2
 
     # loss function (BCE for desklib single-logit, CrossEntropy for 2-class models)
     loss_fn = torch.nn.BCEWithLogitsLoss() if detector.use_binary_logit else torch.nn.CrossEntropyLoss()
@@ -262,9 +293,12 @@ if __name__ == "__main__":
     # for improving training efficiency
     early_stopping_patience = 3
     early_stopping_counter = 0
-    best_model_state_gz = None
-    best_model_state_fp = None
+    best_model_state = None
     best_epoch = 0
+
+    # for export file
+    batch_counter = 0
+    export_file_path = os.path.join(os.path.dirname(__file__), "export.txt")
 
 
     print(f"Start training...\n")
@@ -280,6 +314,9 @@ if __name__ == "__main__":
       # train the model with the training data
       # for batch in train_dataloader:
       for batch in tqdm(train_dataloader, desc=f"Training", unit="batch"):
+        batch_counter += 1
+        start = time.time()
+
         # move the batch, attention mask, and labels to the device
         input_ids = batch['input_ids'].to(detector.device)
         attention_mask = batch['attention_mask'].to(detector.device)
@@ -302,14 +339,64 @@ if __name__ == "__main__":
         optimizer.step()
         total_loss += loss.item()
 
+        end = time.time()
+        time_taken = end - start
+
+        # export batch data to export.txt
+        with open(export_file_path, "a") as f:
+          f.write(f"Batch {batch_counter}: Loss: {loss.item():.10f}\n")
+          f.write(f"s/batch: {time_taken:.10f}\n")
+
       # calculate the average loss for the epoch
       avg_loss = total_loss / len(train_dataloader)
       writer.add_scalar("Loss/train", avg_loss, epoch)
       print(f"Epoch {epoch+1}/{epochs} : Avg loss: {avg_loss:.10f}")
+      # export epoch data to export.txt
+      with open(export_file_path, "a") as f:
+        f.write(f"Epoch {epoch+1}/{epochs}: Loss: {avg_loss:.10f}\n")
+        f.write(f"s/epoch: {time_taken:.10f}\n")
+        f.write(f"avr s/batch: {time_taken / len(train_dataloader):.10f}\n")
+
+      # validate the model
+      detector.model.eval()
+      total_val_loss = 0
+      # disable gradient calculation for validation (no need to update the weights)
+      with torch.no_grad():
+        for batch in val_dataloader:
+          input_ids = batch['input_ids'].to(detector.device)
+          attention_mask = batch['attention_mask'].to(detector.device)
+          labels = batch['label'].to(detector.device)
+          outputs = detector.model(input_ids, attention_mask=attention_mask)
+          logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+          # calculate the validation loss
+          if detector.use_binary_logit:
+            loss = loss_fn(logits.squeeze(-1), labels.float())
+          else:
+            loss = loss_fn(logits, labels)
+          total_val_loss += loss.item()
+      # calculate the average validation loss for the epoch
+      avg_val_loss = total_val_loss / len(val_dataloader)
+      writer.add_scalar("Loss/val", avg_val_loss, epoch)
+
+      print(f"Epoch {epoch+1}/{epochs} : Avg val loss: {avg_val_loss:.10f}")
+      # export validation data to export.txt
+      with open(export_file_path, "a") as f:
+        f.write(f"Epoch {epoch+1}/{epochs}: Avg val loss: {avg_val_loss:.10f}\n")
+
+      # return to training mode
+      detector.model.train()
+
+      # compare train vs validation loss
+      gap = avg_loss - avg_val_loss
+      if gap < -0.1:
+        print(f"Overfitting: train {avg_loss:.4f} vs val {avg_val_loss:.4f}")
 
       # check if the loss is the best loss
-      if avg_loss < best_loss:
-        best_loss = avg_loss
+      if avg_val_loss < best_loss:
+        best_loss = avg_val_loss
+
+        # reset the early stopping counter (no overfitting)
+        early_stopping_counter = 0
 
         # copy the best model state so that we can load it for later runs as well
         best_model_state = copy.deepcopy(detector.model.state_dict())
@@ -328,14 +415,13 @@ if __name__ == "__main__":
       print(f"Loading best model state from epoch {best_epoch+1}")
       detector.model.load_state_dict(best_model_state)
       # save the best model state to a file
-      torch.save(detector.model.state_dict(), "model_training/text_model/best_text_detector.pt")
+      # torch.save(detector.model.state_dict(), "model_training/text_model/best_text_detector.pt")
 
       best_model_state_fp = detector.model.state_dict()
       best_model_state_fp16 = {k: v.half() for k, v in best_model_state_fp.items()}
       torch.save(best_model_state_fp16, "model_training/text_model/best_text_detector_fp16.pt")
       with gzip.open(best_model_gzip_path, "wb") as f:
-        torch.save(best_model_state_gz, f)
-        torch.save(best_model_state_fp16, f)
-        print(f"Saved best model weights to {best_model_gzip_path}.")
+        torch.save(best_model_state, f)
+      print(f"Saved best model weights to {best_model_gzip_path} and best_text_detector_fp16.pt")
     writer.close()
     print("Training complete.")
