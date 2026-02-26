@@ -273,7 +273,7 @@ export default function Popup() {
 
       <DisclaimerBanner />
 
-      {confidenceScore != null && <ConfidenceDisplay confidenceScore={confidenceScore} />}
+      {confidence != null && <ConfidenceDisplay confidenceScore={confidence} />}
 
       <button
         onClick={() => logOut()}
@@ -281,30 +281,6 @@ export default function Popup() {
       >
         Sign Out
       </button>
-
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-gray-800 rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-blue-400">{stats.postsScanned}</p>
-          <p className="text-[11px] text-gray-400 mt-1">Posts Scanned</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-purple-400">{stats.postsProcessing}</p>
-          <p className="text-[11px] text-gray-400 mt-1">Processing</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-amber-400">{stats.aiDetected}</p>
-          <p className="text-[11px] text-gray-400 mt-1">AI Detected</p>
-        </div>
-      </div>
-
-      {/* Disclaimer - Always visible at top */}
-      <div className="mt-4 px-3 py-2 bg-amber-900/30 border border-amber-700/50 rounded text-xs text-amber-200">
-        <p className="font-medium mb-1">ℹ️ Detection Notice</p>
-        <p className="text-amber-300/90">
-          Results are probability-based estimates, not definitive determinations.
-        </p>
-      </div>
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
       {detectResponse && (
         <section className="mt-4 text-left">
