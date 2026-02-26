@@ -1,25 +1,24 @@
 /**
- * React hook providing Firebase Auth state and actions for the extension popup.
+ * React hook providing auth state and actions for the extension popup.
  *
- * Exposes a `useAuth()` hook that tracks the current Firebase user and provides
- * email/password sign-in, sign-up, Google sign-in, and sign-out methods.
+ * All Firebase Auth operations run in the background script (which is
+ * unrestricted by page CSP). This hook communicates with the background
+ * via browser.runtime.sendMessage and reads auth state from
+ * browser.storage.local, which the background keeps in sync via
+ * onAuthStateChanged.
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-  type User,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signInWithCredential,
-  GoogleAuthProvider,
-  signOut,
-} from 'firebase/auth';
 import browser from 'webextension-polyfill';
-import { auth, initFirebase } from '../lib/firebase';
+
+/** Serialisable user data stored in browser.storage.local by the background. */
+export interface SlopMopUser {
+  uid: string;
+  email: string | null;
+}
 
 interface AuthContextType {
-  user: User | null;
+  user: SlopMopUser | null;
   loading: boolean;
   logIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
@@ -30,60 +29,66 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SlopMopUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    initFirebase();
-    if (!auth) {
-      setLoading(false);
-      return;
-    }
-
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
+    // Read initial auth state that the background synced to storage
+    browser.storage.local.get('slopmopUser').then((result) => {
+      if (result.slopmopUser) {
+        setUser(result.slopmopUser as SlopMopUser);
+      }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    // Listen for auth state changes pushed by the background script
+    const onStorageChanged = (
+      changes: Record<string, browser.Storage.StorageChange>,
+    ) => {
+      if ('slopmopUser' in changes) {
+        const newVal = changes.slopmopUser.newValue as SlopMopUser | undefined;
+        setUser(newVal ?? null);
+      }
+    };
+
+    browser.storage.onChanged.addListener(onStorageChanged);
+    return () => browser.storage.onChanged.removeListener(onStorageChanged);
   }, []);
 
   const logIn = async (email: string, password: string) => {
-    initFirebase();
-    if (!auth) throw new Error('Firebase not initialized');
-    await signInWithEmailAndPassword(auth, email, password);
+    const res = (await browser.runtime.sendMessage({
+      type: 'SLOPMOP_LOGIN',
+      email,
+      password,
+    })) as { success: boolean; error?: string };
+
+    if (!res.success) throw new Error(res.error ?? 'Login failed');
   };
 
   const signUp = async (email: string, password: string) => {
-    initFirebase();
-    if (!auth) throw new Error('Firebase not initialized');
-    await createUserWithEmailAndPassword(auth, email, password);
+    const res = (await browser.runtime.sendMessage({
+      type: 'SLOPMOP_SIGNUP',
+      email,
+      password,
+    })) as { success: boolean; error?: string };
+
+    if (!res.success) throw new Error(res.error ?? 'Sign-up failed');
   };
 
   const signInWithGoogle = async () => {
-    initFirebase();
-    if (!auth) throw new Error('Firebase not initialized');
-
-    // Proxy the OAuth flow through the background script so it works
-    // from both extension pages and content scripts (browser.identity
-    // is only available in extension contexts, not content scripts).
-    const idToken = (await browser.runtime.sendMessage({
+    const res = (await browser.runtime.sendMessage({
       type: 'SLOPMOP_GOOGLE_AUTH',
-    })) as string;
+    })) as { success: boolean; error?: string };
 
-    if (!idToken) {
-      throw new Error('No ID token returned from Google');
-    }
-
-    // Sign in to Firebase with the Google credential
-    const credential = GoogleAuthProvider.credential(idToken);
-    await signInWithCredential(auth, credential);
+    if (!res.success) throw new Error(res.error ?? 'Google sign-in failed');
   };
 
   const logOut = async () => {
-    initFirebase();
-    if (!auth) throw new Error('Firebase not initialized');
-    await signOut(auth);
+    const res = (await browser.runtime.sendMessage({
+      type: 'SLOPMOP_LOGOUT',
+    })) as { success: boolean; error?: string };
+
+    if (!res.success) throw new Error(res.error ?? 'Logout failed');
   };
 
   return (
