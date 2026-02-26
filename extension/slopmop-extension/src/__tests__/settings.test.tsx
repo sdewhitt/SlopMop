@@ -25,6 +25,9 @@ vi.mock('webextension-polyfill', () => ({
         'https://mock-extension-id.chromiumapp.org/#id_token=mock-id-token',
       ),
     },
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue('mock-id-token'),
+    },
   },
 }));
 
@@ -121,6 +124,12 @@ describe('Popup Auth Gate', () => {
     expect(screen.queryByText('Sign in to continue')).not.toBeInTheDocument();
   });
 
+  it('should show a close panel button on the sign-in view', async () => {
+    renderPopupSignedOut();
+    expect(await screen.findByText('Sign in to continue')).toBeInTheDocument();
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
+  });
+
   it('should allow toggling between sign-in and sign-up modes', async () => {
     const user = userEvent.setup();
     renderPopupSignedOut();
@@ -160,6 +169,15 @@ describe('Popup Settings Rendering', () => {
     // Check that the settings header is rendered
     const settingsHeader = screen.getByText('Settings');
     expect(settingsHeader).toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the settings view', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
   });
 
   it('should render all settings sections', async () => {
