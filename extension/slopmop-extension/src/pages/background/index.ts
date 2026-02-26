@@ -8,6 +8,13 @@ import {
   GoogleAuthProvider,
   signOut,
 } from 'firebase/auth';
+import {
+  getOrCreateUserSettings,
+  updateDetectionSettings,
+  resetStats,
+  resetSettings,
+} from '@src/lib/firestore';
+import type { DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
 
@@ -64,22 +71,26 @@ browser.runtime.onInstalled.addListener(async () => {
 
 // ── Message handlers ─────────────────────────────────────────────
 
-interface AuthMessage {
+interface BackgroundMessage {
   type: string;
   email?: string;
   password?: string;
+  uid?: string;
+  patch?: Partial<DetectionSettings>;
 }
 
-interface AuthResponse {
+interface MessageResponse {
   success: boolean;
   error?: string;
+  data?: unknown;
 }
 
 browser.runtime.onMessage.addListener((message: unknown) => {
   if (typeof message !== 'object' || message === null) return;
-  const msg = message as AuthMessage;
+  const msg = message as BackgroundMessage;
 
   switch (msg.type) {
+    // ── Auth ──
     case 'SLOPMOP_LOGIN':
       return handleLogin(msg.email!, msg.password!);
     case 'SLOPMOP_SIGNUP':
@@ -88,12 +99,21 @@ browser.runtime.onMessage.addListener((message: unknown) => {
       return handleGoogleAuth();
     case 'SLOPMOP_LOGOUT':
       return handleLogout();
+    // ── Firestore ──
+    case 'SLOPMOP_GET_SETTINGS':
+      return handleGetSettings(msg.uid!);
+    case 'SLOPMOP_UPDATE_DETECTION_SETTINGS':
+      return handleUpdateDetectionSettings(msg.uid!, msg.patch!);
+    case 'SLOPMOP_RESET_STATS':
+      return handleResetStats(msg.uid!);
+    case 'SLOPMOP_RESET_SETTINGS':
+      return handleResetSettings(msg.uid!);
     default:
       return;
   }
 });
 
-async function handleLogin(email: string, password: string): Promise<AuthResponse> {
+async function handleLogin(email: string, password: string): Promise<MessageResponse> {
   try {
     if (!auth) throw new Error('Firebase not initialized');
     await signInWithEmailAndPassword(auth, email, password);
@@ -103,7 +123,7 @@ async function handleLogin(email: string, password: string): Promise<AuthRespons
   }
 }
 
-async function handleSignup(email: string, password: string): Promise<AuthResponse> {
+async function handleSignup(email: string, password: string): Promise<MessageResponse> {
   try {
     if (!auth) throw new Error('Firebase not initialized');
     await createUserWithEmailAndPassword(auth, email, password);
@@ -113,7 +133,7 @@ async function handleSignup(email: string, password: string): Promise<AuthRespon
   }
 }
 
-async function handleGoogleAuth(): Promise<AuthResponse> {
+async function handleGoogleAuth(): Promise<MessageResponse> {
   try {
     if (!auth) throw new Error('Firebase not initialized');
 
@@ -155,10 +175,51 @@ async function handleGoogleAuth(): Promise<AuthResponse> {
   }
 }
 
-async function handleLogout(): Promise<AuthResponse> {
+async function handleLogout(): Promise<MessageResponse> {
   try {
     if (!auth) throw new Error('Firebase not initialized');
     await signOut(auth);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+// ── Firestore handlers ───────────────────────────────────────────
+
+async function handleGetSettings(uid: string): Promise<MessageResponse> {
+  try {
+    const data = await getOrCreateUserSettings(uid);
+    return { success: true, data };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleUpdateDetectionSettings(
+  uid: string,
+  patch: Partial<DetectionSettings>,
+): Promise<MessageResponse> {
+  try {
+    await updateDetectionSettings(uid, patch);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleResetStats(uid: string): Promise<MessageResponse> {
+  try {
+    await resetStats(uid);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleResetSettings(uid: string): Promise<MessageResponse> {
+  try {
+    await resetSettings(uid);
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
