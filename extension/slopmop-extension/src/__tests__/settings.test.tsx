@@ -14,6 +14,10 @@ vi.mock('webextension-polyfill', () => ({
         get: vi.fn().mockResolvedValue({}),
         set: vi.fn().mockResolvedValue(undefined),
       },
+      onChanged: {
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+      },
     },
     identity: {
       getRedirectURL: vi.fn(() => 'https://mock-extension-id.chromiumapp.org/'),
@@ -28,8 +32,8 @@ vi.mock('webextension-polyfill', () => ({
 let authStateCallback: ((user: unknown) => void) | null = null;
 
 vi.mock('firebase/auth', () => {
-  const GoogleAuthProvider = vi.fn(() => ({}));
-  GoogleAuthProvider.credential = vi.fn(() => ({}));
+  const GoogleAuthProvider = vi.fn(function () { return {}; });
+  (GoogleAuthProvider as unknown as Record<string, unknown>).credential = vi.fn(() => ({}));
   return {
     getAuth: vi.fn(() => ({})),
     setPersistence: vi.fn().mockResolvedValue(undefined),
