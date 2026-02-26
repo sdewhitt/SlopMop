@@ -48,16 +48,6 @@ vi.mock('firebase/auth', () => ({
   onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
-vi.mock('firebase/firestore', () => ({
-  getFirestore: vi.fn(() => ({})),
-  doc: vi.fn(),
-  getDoc: vi.fn().mockResolvedValue({ exists: () => false }),
-  setDoc: vi.fn().mockResolvedValue(undefined),
-  updateDoc: vi.fn().mockResolvedValue(undefined),
-  serverTimestamp: vi.fn(() => 'mock-timestamp'),
-}));
-
-import { getDoc } from 'firebase/firestore';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
@@ -220,10 +210,10 @@ describe('Popup Homepage', () => {
   });
 
   it('should display stat values loaded from Firestore', async () => {
-    // Mock Firestore to return a doc with custom stats so loadSettings uses them
-    (getDoc as ReturnType<typeof vi.fn>).mockResolvedValue({
-      exists: () => true,
-      data: () => ({
+    // Mock sendMessage to return Firestore settings via the background proxy
+    (browser.runtime.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
         settings: {
           sensitivity: 'medium',
           highlightStyle: 'badge',
@@ -231,12 +221,12 @@ describe('Popup Homepage', () => {
           platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
         },
         stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
-      }),
+      },
     });
     renderHome();
 
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(await screen.findByText('42')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
   });

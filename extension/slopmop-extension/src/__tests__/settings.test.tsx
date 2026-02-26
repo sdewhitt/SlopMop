@@ -51,15 +51,6 @@ vi.mock('firebase/auth', () => ({
   onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
-vi.mock('firebase/firestore', () => ({
-  getFirestore: vi.fn(() => ({})),
-  doc: vi.fn(),
-  getDoc: vi.fn().mockResolvedValue({ exists: () => false }),
-  setDoc: vi.fn().mockResolvedValue(undefined),
-  updateDoc: vi.fn().mockResolvedValue(undefined),
-  serverTimestamp: vi.fn(() => 'mock-timestamp'),
-}));
-
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
 import React from 'react';
