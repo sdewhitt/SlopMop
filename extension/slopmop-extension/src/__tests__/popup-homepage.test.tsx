@@ -5,15 +5,21 @@ import browser from 'webextension-polyfill';
 
 // ── Mocks ────────────────────────────────────────────────────────
 
+// Track the storage.onChanged listener so tests can simulate auth changes
+let storageChangedCallback: ((changes: Record<string, unknown>) => void) | null = null;
+
 vi.mock('webextension-polyfill', () => ({
   default: {
     storage: {
       local: {
         get: vi.fn().mockResolvedValue({}),
         set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
       },
       onChanged: {
-        addListener: vi.fn(),
+        addListener: vi.fn((cb: (changes: Record<string, unknown>) => void) => {
+          storageChangedCallback = cb;
+        }),
         removeListener: vi.fn(),
       },
     },
@@ -24,35 +30,22 @@ vi.mock('webextension-polyfill', () => ({
       ),
     },
     runtime: {
-      sendMessage: vi.fn().mockResolvedValue('mock-id-token'),
+      sendMessage: vi.fn().mockResolvedValue({ success: true }),
     },
   },
 }));
 
-let authStateCallback: ((user: unknown) => void) | null = null;
-
-vi.mock('firebase/auth', () => {
-  const GoogleAuthProvider = vi.fn(function () { return {}; });
-  (GoogleAuthProvider as unknown as Record<string, unknown>).credential = vi.fn(() => ({}));
-  return {
-    getAuth: vi.fn(() => ({})),
-    setPersistence: vi.fn().mockResolvedValue(undefined),
-    browserLocalPersistence: {},
-    GoogleAuthProvider,
-    onAuthStateChanged: vi.fn((_auth: unknown, cb: (user: unknown) => void) => {
-      authStateCallback = cb;
-      return vi.fn();
-    }),
-    signInWithEmailAndPassword: vi.fn().mockResolvedValue({}),
-    createUserWithEmailAndPassword: vi.fn().mockResolvedValue({}),
-    signInWithCredential: vi.fn().mockResolvedValue({}),
-    signOut: vi.fn().mockResolvedValue(undefined),
-  };
-});
-
 vi.mock('firebase/app', () => ({
   initializeApp: vi.fn(() => ({})),
   getApps: vi.fn(() => []),
+}));
+
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  setPersistence: vi.fn().mockResolvedValue(undefined),
+  indexedDBLocalPersistence: {},
+  GoogleAuthProvider: vi.fn(),
+  onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
 vi.mock('firebase/firestore', () => ({
@@ -74,21 +67,32 @@ import React from 'react';
 
 /** Render Popup signed in with default (empty) storage. */
 function renderHome() {
+  // Return slopmopUser from storage.local.get to simulate signed-in
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+  });
+
   const result = render(
     <AuthProvider>
       <Popup />
     </AuthProvider>,
   );
-  act(() => {
-    authStateCallback?.({ uid: 'test-uid', email: 'test@example.com' });
-  });
   return result;
 }
 
 /** Render Popup signed in with custom storage values returned by browser.storage.local.get. */
 function renderHomeWithStorage(storageValues: Record<string, unknown>) {
-  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue(storageValues);
-  return renderHome();
+  // Merge slopmopUser with custom storage values
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    ...storageValues,
+  });
+  const result = render(
+    <AuthProvider>
+      <Popup />
+    </AuthProvider>,
+  );
+  return result;
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -96,7 +100,17 @@ function renderHomeWithStorage(storageValues: Record<string, unknown>) {
 describe('Popup Homepage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authStateCallback = null;
+    storageChangedCallback = null;
+    // Default: signed-in user for most tests
+    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    });
+    // Re-capture storage listener
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
   });
 
   // ── Header ──────────────────────────────────────────────────
@@ -129,9 +143,6 @@ describe('Popup Homepage', () => {
         </AuthProvider>
       </PanelProvider>,
     );
-    act(() => {
-      authStateCallback?.({ uid: 'test-uid', email: 'test@example.com' });
-    });
 
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
