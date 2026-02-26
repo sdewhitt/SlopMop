@@ -39,7 +39,7 @@ export default function FAQSection() {
     <section
       ref={sectionRef}
       id="faq"
-      className={`border-t border-neutral-200 dark:border-neutral-800 transition-opacity duration-[1500ms] ${
+      className={`border-t border-neutral-200 dark:border-neutral-800 transition-opacity duration-1500 ${
         isVisible ? "opacity-100" : "opacity-0"
       }`}
     >
