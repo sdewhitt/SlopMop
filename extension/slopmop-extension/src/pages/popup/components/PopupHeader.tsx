@@ -1,5 +1,6 @@
 import React from 'react';
 import logo from '@assets/img/logo.svg';
+import CloseButton from './CloseButton';
 
 interface PopupHeaderProps {
   enabled: boolean;
@@ -39,6 +40,7 @@ export default function PopupHeader({ enabled, onSettingsClick }: PopupHeaderPro
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       </button>
+      <CloseButton />
     </div>
   );
 }

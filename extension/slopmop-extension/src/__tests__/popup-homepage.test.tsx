@@ -23,6 +23,9 @@ vi.mock('webextension-polyfill', () => ({
         'https://mock-extension-id.chromiumapp.org/#id_token=mock-id-token',
       ),
     },
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue('mock-id-token'),
+    },
   },
 }));
 
@@ -64,6 +67,7 @@ vi.mock('firebase/firestore', () => ({
 import { getDoc } from 'firebase/firestore';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
+import { PanelProvider } from '@pages/popup/PanelContext';
 import React from 'react';
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -107,6 +111,32 @@ describe('Popup Homepage', () => {
     renderHome();
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(screen.getByLabelText('Settings')).toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the home view', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
+  });
+
+  it('should call closePanel from context when close button is clicked', async () => {
+    const closeFn = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PanelProvider closePanel={closeFn}>
+        <AuthProvider>
+          <Popup />
+        </AuthProvider>
+      </PanelProvider>,
+    );
+    act(() => {
+      authStateCallback?.({ uid: 'test-uid', email: 'test@example.com' });
+    });
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Close panel'));
+    expect(closeFn).toHaveBeenCalled();
   });
 
   it('should display "Active" status badge when detection is enabled', async () => {

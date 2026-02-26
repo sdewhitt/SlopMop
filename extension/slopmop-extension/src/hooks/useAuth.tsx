@@ -64,33 +64,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initFirebase();
     if (!auth) throw new Error('Firebase not initialized');
 
-    // Use Firebase's OAuth client ID (from Firebase Console > Auth > Google Sign-In)
-    const clientId = import.meta.env.VITE_FIREBASE_OAUTH_CLIENT_ID;
-    if (!clientId) {
-      throw new Error(
-        'Google sign-in not configured. Add VITE_FIREBASE_OAUTH_CLIENT_ID to .env',
-      );
-    }
+    // Proxy the OAuth flow through the background script so it works
+    // from both extension pages and content scripts (browser.identity
+    // is only available in extension contexts, not content scripts).
+    const idToken = (await browser.runtime.sendMessage({
+      type: 'SLOPMOP_GOOGLE_AUTH',
+    })) as string;
 
-    const redirectUrl = browser.identity.getRedirectURL();
-    const scopes = ['openid', 'email', 'profile'];
-    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    authUrl.searchParams.set('client_id', clientId);
-    authUrl.searchParams.set('response_type', 'id_token');
-    authUrl.searchParams.set('redirect_uri', redirectUrl);
-    authUrl.searchParams.set('scope', scopes.join(' '));
-    authUrl.searchParams.set('nonce', Math.random().toString(36).substring(2));
-
-    // Launch OAuth flow in a new window
-    const responseUrl = await browser.identity.launchWebAuthFlow({
-      url: authUrl.toString(),
-      interactive: true,
-    });
-
-    // Extract the ID token from the redirect URL fragment
-    const url = new URL(responseUrl);
-    const params = new URLSearchParams(url.hash.substring(1));
-    const idToken = params.get('id_token');
     if (!idToken) {
       throw new Error('No ID token returned from Google');
     }

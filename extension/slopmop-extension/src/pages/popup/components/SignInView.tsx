@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import logo from '@assets/img/logo.svg';
+import CloseButton from './CloseButton';
 
 export default function SignInView() {
   const { logIn, signUp, signInWithGoogle } = useAuth();
@@ -55,6 +56,8 @@ export default function SignInView() {
       <div className="flex items-center gap-3 w-full">
         <img src={logo} className="h-9 w-9" alt="SlopMop logo" />
         <h1 className="text-lg font-bold tracking-tight">SlopMop</h1>
+        <span className="ml-auto" />
+        <CloseButton />
       </div>
 
       {/* Title */}
