@@ -2,6 +2,10 @@
 
 # large model weights (do not commit)
 *.pt
+*.pt.gz
 *.pth
 *.bin
 *.safetensors
+
+# TensorBoard logs
+model_training/text_model/runs/
