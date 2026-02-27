@@ -11,7 +11,7 @@ import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   setPersistence,
-  browserLocalPersistence,
+  indexedDBLocalPersistence,
   GoogleAuthProvider,
   type Auth,
 } from 'firebase/auth';
@@ -43,8 +43,9 @@ export function initFirebase(): void {
   db = getFirestore(app);
   googleProvider = new GoogleAuthProvider();
 
-  // Ensure auth state persists across popup opens/closes
-  setPersistence(auth, browserLocalPersistence).catch(console.error);
+  // indexedDBLocalPersistence works in both service workers (background script)
+  // and regular contexts, unlike browserLocalPersistence which requires localStorage.
+  setPersistence(auth, indexedDBLocalPersistence).catch(console.error);
 }
 
 export { app, auth, db, googleProvider };

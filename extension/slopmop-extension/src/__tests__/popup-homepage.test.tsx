@@ -5,15 +5,21 @@ import browser from 'webextension-polyfill';
 
 // ── Mocks ────────────────────────────────────────────────────────
 
+// Track the storage.onChanged listener so tests can simulate auth changes
+let storageChangedCallback: ((changes: Record<string, unknown>) => void) | null = null;
+
 vi.mock('webextension-polyfill', () => ({
   default: {
     storage: {
       local: {
         get: vi.fn().mockResolvedValue({}),
         set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
       },
       onChanged: {
-        addListener: vi.fn(),
+        addListener: vi.fn((cb: (changes: Record<string, unknown>) => void) => {
+          storageChangedCallback = cb;
+        }),
         removeListener: vi.fn(),
       },
     },
@@ -23,68 +29,60 @@ vi.mock('webextension-polyfill', () => ({
         'https://mock-extension-id.chromiumapp.org/#id_token=mock-id-token',
       ),
     },
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue({ success: true }),
+    },
   },
 }));
-
-let authStateCallback: ((user: unknown) => void) | null = null;
-
-vi.mock('firebase/auth', () => {
-  const GoogleAuthProvider = vi.fn(function () { return {}; });
-  (GoogleAuthProvider as unknown as Record<string, unknown>).credential = vi.fn(() => ({}));
-  return {
-    getAuth: vi.fn(() => ({})),
-    setPersistence: vi.fn().mockResolvedValue(undefined),
-    browserLocalPersistence: {},
-    GoogleAuthProvider,
-    onAuthStateChanged: vi.fn((_auth: unknown, cb: (user: unknown) => void) => {
-      authStateCallback = cb;
-      return vi.fn();
-    }),
-    signInWithEmailAndPassword: vi.fn().mockResolvedValue({}),
-    createUserWithEmailAndPassword: vi.fn().mockResolvedValue({}),
-    signInWithCredential: vi.fn().mockResolvedValue({}),
-    signOut: vi.fn().mockResolvedValue(undefined),
-  };
-});
 
 vi.mock('firebase/app', () => ({
   initializeApp: vi.fn(() => ({})),
   getApps: vi.fn(() => []),
 }));
 
-vi.mock('firebase/firestore', () => ({
-  getFirestore: vi.fn(() => ({})),
-  doc: vi.fn(),
-  getDoc: vi.fn().mockResolvedValue({ exists: () => false }),
-  setDoc: vi.fn().mockResolvedValue(undefined),
-  updateDoc: vi.fn().mockResolvedValue(undefined),
-  serverTimestamp: vi.fn(() => 'mock-timestamp'),
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  setPersistence: vi.fn().mockResolvedValue(undefined),
+  indexedDBLocalPersistence: {},
+  GoogleAuthProvider: vi.fn(),
+  onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
-import { getDoc } from 'firebase/firestore';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
+import { PanelProvider } from '@pages/popup/PanelContext';
 import React from 'react';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
 /** Render Popup signed in with default (empty) storage. */
 function renderHome() {
+  // Return slopmopUser from storage.local.get to simulate signed-in
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+  });
+
   const result = render(
     <AuthProvider>
       <Popup />
     </AuthProvider>,
   );
-  act(() => {
-    authStateCallback?.({ uid: 'test-uid', email: 'test@example.com' });
-  });
   return result;
 }
 
 /** Render Popup signed in with custom storage values returned by browser.storage.local.get. */
 function renderHomeWithStorage(storageValues: Record<string, unknown>) {
-  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue(storageValues);
-  return renderHome();
+  // Merge slopmopUser with custom storage values
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    ...storageValues,
+  });
+  const result = render(
+    <AuthProvider>
+      <Popup />
+    </AuthProvider>,
+  );
+  return result;
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -92,7 +90,17 @@ function renderHomeWithStorage(storageValues: Record<string, unknown>) {
 describe('Popup Homepage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authStateCallback = null;
+    storageChangedCallback = null;
+    // Default: signed-in user for most tests
+    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    });
+    // Re-capture storage listener
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
   });
 
   // ── Header ──────────────────────────────────────────────────
@@ -107,6 +115,29 @@ describe('Popup Homepage', () => {
     renderHome();
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(screen.getByLabelText('Settings')).toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the home view', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
+  });
+
+  it('should call closePanel from context when close button is clicked', async () => {
+    const closeFn = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PanelProvider closePanel={closeFn}>
+        <AuthProvider>
+          <Popup />
+        </AuthProvider>
+      </PanelProvider>,
+    );
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Close panel'));
+    expect(closeFn).toHaveBeenCalled();
   });
 
   it('should display "Active" status badge when detection is enabled', async () => {
@@ -179,10 +210,10 @@ describe('Popup Homepage', () => {
   });
 
   it('should display stat values loaded from Firestore', async () => {
-    // Mock Firestore to return a doc with custom stats so loadSettings uses them
-    (getDoc as ReturnType<typeof vi.fn>).mockResolvedValue({
-      exists: () => true,
-      data: () => ({
+    // Mock sendMessage to return Firestore settings via the background proxy
+    (browser.runtime.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
         settings: {
           sensitivity: 'medium',
           highlightStyle: 'badge',
@@ -190,12 +221,12 @@ describe('Popup Homepage', () => {
           platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
         },
         stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
-      }),
+      },
     });
     renderHome();
 
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(await screen.findByText('42')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
   });
