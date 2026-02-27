@@ -1,5 +1,8 @@
 ## Slop Mop - Backend
 
+### Render deployment url
+https://slopmop.onrender.com
+
 This backend provides a FastAPI detection API used by the extension.
 
 Current status:
