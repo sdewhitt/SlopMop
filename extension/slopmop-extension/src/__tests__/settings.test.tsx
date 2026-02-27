@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import browser from 'webextension-polyfill';
 
 // TODO: Revise once the placeholder fields have been modified
 
+// ── Mocks ────────────────────────────────────────────────────────
+
+// Track the storage.onChanged listener so tests can simulate auth changes
+let storageChangedCallback: ((changes: Record<string, unknown>) => void) | null = null;
 
 // Mock webextension-polyfill before importing Popup
 vi.mock('webextension-polyfill', () => ({
@@ -12,21 +17,137 @@ vi.mock('webextension-polyfill', () => ({
       local: {
         get: vi.fn().mockResolvedValue({}),
         set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
       },
+      onChanged: {
+        addListener: vi.fn((cb: (changes: Record<string, unknown>) => void) => {
+          storageChangedCallback = cb;
+        }),
+        removeListener: vi.fn(),
+      },
+    },
+    identity: {
+      getRedirectURL: vi.fn(() => 'https://mock-extension-id.chromiumapp.org/'),
+      launchWebAuthFlow: vi.fn().mockResolvedValue(
+        'https://mock-extension-id.chromiumapp.org/#id_token=mock-id-token',
+      ),
+    },
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue({ success: true }),
     },
   },
 }));
 
+vi.mock('firebase/app', () => ({
+  initializeApp: vi.fn(() => ({})),
+  getApps: vi.fn(() => []),
+}));
+
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  setPersistence: vi.fn().mockResolvedValue(undefined),
+  indexedDBLocalPersistence: {},
+  GoogleAuthProvider: vi.fn(),
+  onAuthStateChanged: vi.fn(() => vi.fn()),
+}));
+
 import Popup from '@pages/popup/Popup';
+import { AuthProvider } from '../hooks/useAuth';
+import React from 'react';
+
+/** Render Popup wrapped with AuthProvider and simulate a signed-in user via storage. */
+function renderPopupSignedIn() {
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+  });
+  const result = render(
+    <AuthProvider>
+      <Popup />
+    </AuthProvider>,
+  );
+  return result;
+}
+
+/** Render Popup wrapped with AuthProvider (no user). */
+function renderPopupSignedOut() {
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  const result = render(
+    <AuthProvider>
+      <Popup />
+    </AuthProvider>,
+  );
+  return result;
+}
+
+// ── Tests ────────────────────────────────────────────────────────
+
+describe('Popup Auth Gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storageChangedCallback = null;
+    // Re-capture storage listener after clearAllMocks
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
+  });
+
+  it('should show sign-in view when user is not authenticated', async () => {
+    renderPopupSignedOut();
+    expect(await screen.findByText('Sign in to continue')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Email')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Password')).toBeInTheDocument();
+  });
+
+  it('should show the home view when user is authenticated', async () => {
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.queryByText('Sign in to continue')).not.toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the sign-in view', async () => {
+    renderPopupSignedOut();
+    expect(await screen.findByText('Sign in to continue')).toBeInTheDocument();
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
+  });
+
+  it('should allow toggling between sign-in and sign-up modes', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedOut();
+
+    // Wait for sign-in view
+    expect(await screen.findByText('Sign in to continue')).toBeInTheDocument();
+
+    // Switch to sign-up
+    const signUpLink = screen.getByText('Sign up');
+    await user.click(signUpLink);
+    expect(screen.getByText('Create your account')).toBeInTheDocument();
+
+    // Switch back to sign-in
+    const signInLink = screen.getByText('Sign in');
+    await user.click(signInLink);
+    expect(screen.getByText('Sign in to continue')).toBeInTheDocument();
+  });
+});
 
 describe('Popup Settings Rendering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    storageChangedCallback = null;
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
   });
 
   it('should render settings view when settings button is clicked', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+
+    // Wait for home view
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Find and click the settings button
     const settingsButton = screen.getByLabelText('Settings');
@@ -36,10 +157,20 @@ describe('Popup Settings Rendering', () => {
     const settingsHeader = screen.getByText('Settings');
     expect(settingsHeader).toBeInTheDocument();
   });
-  
+
+  it('should show a close panel button on the settings view', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
+  });
+
   it('should render all settings sections', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
@@ -49,11 +180,13 @@ describe('Popup Settings Rendering', () => {
     expect(screen.getByText(/Detection/i)).toBeInTheDocument();
     expect(screen.getByText(/Platforms/i)).toBeInTheDocument();
     expect(screen.getByText(/Data/i)).toBeInTheDocument();
+    expect(screen.getByText(/Account/i)).toBeInTheDocument();
   });
 
   it('should render notification toggle in settings', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
@@ -66,7 +199,8 @@ describe('Popup Settings Rendering', () => {
 
   it('should render sensitivity options', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
@@ -81,7 +215,8 @@ describe('Popup Settings Rendering', () => {
 
   it('should render highlight style options', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
@@ -96,7 +231,8 @@ describe('Popup Settings Rendering', () => {
 
   it('should render platform toggles', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
@@ -112,7 +248,8 @@ describe('Popup Settings Rendering', () => {
 
   it('should render reset buttons in data section', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
@@ -123,9 +260,24 @@ describe('Popup Settings Rendering', () => {
     expect(screen.getByRole('button', { name: /Reset All/i })).toBeInTheDocument();
   });
 
+  it('should render sign-out button and user email in settings', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    // Navigate to settings
+    const settingsButton = screen.getByLabelText('Settings');
+    await user.click(settingsButton);
+
+    // Check for account section
+    expect(screen.getByText('test@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sign Out/i })).toBeInTheDocument();
+  });
+
   it('should navigate back to home view when back button is clicked', async () => {
     const user = userEvent.setup();
-    render(<Popup />);
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
 
     // Navigate to settings
     const settingsButton = screen.getByLabelText('Settings');
