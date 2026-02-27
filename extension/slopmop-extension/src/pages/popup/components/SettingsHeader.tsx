@@ -1,4 +1,5 @@
 import React from 'react';
+import CloseButton from './CloseButton';
 
 interface SettingsHeaderProps {
   saved: boolean;
@@ -32,6 +33,7 @@ export default function SettingsHeader({ saved, onBack }: SettingsHeaderProps) {
       >
         Saved
       </span>
+      <CloseButton />
     </div>
   );
 }

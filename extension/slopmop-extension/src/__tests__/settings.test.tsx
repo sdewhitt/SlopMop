@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import browser from 'webextension-polyfill';
 
 // TODO: Revise once the placeholder fields have been modified
 
 // ── Mocks ────────────────────────────────────────────────────────
+
+// Track the storage.onChanged listener so tests can simulate auth changes
+let storageChangedCallback: ((changes: Record<string, unknown>) => void) | null = null;
 
 // Mock webextension-polyfill before importing Popup
 vi.mock('webextension-polyfill', () => ({
@@ -13,9 +17,12 @@ vi.mock('webextension-polyfill', () => ({
       local: {
         get: vi.fn().mockResolvedValue({}),
         set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
       },
       onChanged: {
-        addListener: vi.fn(),
+        addListener: vi.fn((cb: (changes: Record<string, unknown>) => void) => {
+          storageChangedCallback = cb;
+        }),
         removeListener: vi.fn(),
       },
     },
@@ -25,78 +32,50 @@ vi.mock('webextension-polyfill', () => ({
         'https://mock-extension-id.chromiumapp.org/#id_token=mock-id-token',
       ),
     },
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue({ success: true }),
+    },
   },
 }));
-
-// Track the auth callback so tests can simulate signed-in / signed-out state
-let authStateCallback: ((user: unknown) => void) | null = null;
-
-vi.mock('firebase/auth', () => {
-  const GoogleAuthProvider = vi.fn(function () { return {}; });
-  (GoogleAuthProvider as unknown as Record<string, unknown>).credential = vi.fn(() => ({}));
-  return {
-    getAuth: vi.fn(() => ({})),
-    setPersistence: vi.fn().mockResolvedValue(undefined),
-    browserLocalPersistence: {},
-    GoogleAuthProvider,
-    onAuthStateChanged: vi.fn((_auth: unknown, cb: (user: unknown) => void) => {
-      authStateCallback = cb;
-      return vi.fn(); // unsubscribe
-    }),
-    signInWithEmailAndPassword: vi.fn().mockResolvedValue({}),
-    createUserWithEmailAndPassword: vi.fn().mockResolvedValue({}),
-    signInWithCredential: vi.fn().mockResolvedValue({}),
-    signOut: vi.fn().mockResolvedValue(undefined),
-  };
-});
 
 vi.mock('firebase/app', () => ({
   initializeApp: vi.fn(() => ({})),
   getApps: vi.fn(() => []),
 }));
 
-vi.mock('firebase/firestore', () => ({
-  getFirestore: vi.fn(() => ({})),
-  doc: vi.fn(),
-  getDoc: vi.fn().mockResolvedValue({ exists: () => false }),
-  setDoc: vi.fn().mockResolvedValue(undefined),
-  updateDoc: vi.fn().mockResolvedValue(undefined),
-  serverTimestamp: vi.fn(() => 'mock-timestamp'),
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  setPersistence: vi.fn().mockResolvedValue(undefined),
+  indexedDBLocalPersistence: {},
+  GoogleAuthProvider: vi.fn(),
+  onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
 import React from 'react';
 
-/** Render Popup wrapped with AuthProvider and simulate a signed-in user. */
+/** Render Popup wrapped with AuthProvider and simulate a signed-in user via storage. */
 function renderPopupSignedIn() {
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+  });
   const result = render(
     <AuthProvider>
       <Popup />
     </AuthProvider>,
   );
-  // Simulate Firebase resolving auth with a user
-  act(() => {
-    if (authStateCallback) {
-      authStateCallback({ uid: 'test-uid', email: 'test@example.com' });
-    }
-  });
   return result;
 }
 
 /** Render Popup wrapped with AuthProvider (no user). */
 function renderPopupSignedOut() {
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({});
   const result = render(
     <AuthProvider>
       <Popup />
     </AuthProvider>,
   );
-  // Simulate Firebase resolving auth without a user
-  act(() => {
-    if (authStateCallback) {
-      authStateCallback(null);
-    }
-  });
   return result;
 }
 
@@ -105,7 +84,13 @@ function renderPopupSignedOut() {
 describe('Popup Auth Gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authStateCallback = null;
+    storageChangedCallback = null;
+    // Re-capture storage listener after clearAllMocks
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
   });
 
   it('should show sign-in view when user is not authenticated', async () => {
@@ -119,6 +104,12 @@ describe('Popup Auth Gate', () => {
     renderPopupSignedIn();
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(screen.queryByText('Sign in to continue')).not.toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the sign-in view', async () => {
+    renderPopupSignedOut();
+    expect(await screen.findByText('Sign in to continue')).toBeInTheDocument();
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
   });
 
   it('should allow toggling between sign-in and sign-up modes', async () => {
@@ -143,7 +134,12 @@ describe('Popup Auth Gate', () => {
 describe('Popup Settings Rendering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authStateCallback = null;
+    storageChangedCallback = null;
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
   });
 
   it('should render settings view when settings button is clicked', async () => {
@@ -160,6 +156,15 @@ describe('Popup Settings Rendering', () => {
     // Check that the settings header is rendered
     const settingsHeader = screen.getByText('Settings');
     expect(settingsHeader).toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the settings view', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
   });
 
   it('should render all settings sections', async () => {

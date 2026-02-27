@@ -8,7 +8,7 @@ import {
   updateDetectionSettings,
   resetStats as firestoreResetStats,
   resetSettings as firestoreResetSettings,
-} from '../../lib/firestore';
+} from '../../lib/firestoreProxy';
 import { defaultUserSettings } from '../../utils/userSettings';
 import PopupHeader from './components/PopupHeader';
 import DetectionToggle from './components/DetectionToggle';
