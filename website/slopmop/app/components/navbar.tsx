@@ -24,14 +24,21 @@ export default function Navbar() {
             </a>
           </li>
           {user ? (
-            <li>
-              <button
-                onClick={() => logOut()}
-                className="rounded-full bg-foreground px-4 py-1.5 text-background transition hover:opacity-80"
-              >
-                Sign Out
-              </button>
-            </li>
+            <>
+              <li>
+                <Link href="/settings" className="hover:underline">
+                  Settings
+                </Link>
+              </li>
+              <li>
+                <button
+                  onClick={() => logOut()}
+                  className="rounded-full bg-foreground px-4 py-1.5 text-background transition hover:opacity-80"
+                >
+                  Sign Out
+                </button>
+              </li>
+            </>
           ) : (
             <li>
               <Link
