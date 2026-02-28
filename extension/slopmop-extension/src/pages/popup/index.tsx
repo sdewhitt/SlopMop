@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import '@pages/popup/index.css';
 import '@assets/styles/tailwind.css';
+import '@assets/styles/accessibility-mode.css';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../../hooks/useAuth';
 import { PanelProvider } from './PanelContext';
