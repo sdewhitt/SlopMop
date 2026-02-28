@@ -36,6 +36,28 @@ export interface UserSettings {
     };
 } 
 
+export const DEFAULT_SETTINGS: UserSettings = {
+    enabled: true,
+    whitelist: [],                    // empty = allow all sites
+    retainHistoryHours: 24,
+    cacheTtlHours: 24,
+    scanText: true,
+    scanImages: false,                // Phase 1: text only
+    scanComments: "off",
+    uiMode: "simple",
+    accessibility: {
+      highContrast: false,
+      largeText: false,
+    },
+    privacy: {
+      sendRawText: true,
+      sendImages: false,
+      allowTelemetry: false,
+    },
+    rateLimit: {
+      maxRequestsPerMinute: 10,
+    },
+  };
 
 export interface NormalizedPostContent {
     site: SiteId;
