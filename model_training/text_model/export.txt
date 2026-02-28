@@ -1,0 +1,12 @@
+Batch 1: Loss: 3.9491524696
+s/batch: 156.1479539871
+Epoch 1/2: Loss: 3.9491524696
+s/epoch: 156.1479539871
+avr s/batch: 156.1479539871
+Epoch 1/2: Avg val loss: 0.0008653186
+Batch 2: Loss: 0.0011049631
+s/batch: 217.7351849079
+Epoch 2/2: Loss: 0.0011049631
+s/epoch: 217.7351849079
+avr s/batch: 217.7351849079
+Epoch 2/2: Avg val loss: 1.3416107893
