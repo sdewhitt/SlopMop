@@ -1,0 +1,27 @@
+/**
+ * Accessibility Mode (Story 21)
+ * Applied via .accessibility-mode on root container.
+ * Increases base font size and improves contrast for low-vision users.
+ * Does not redesign layout.
+ */
+.accessibility-mode {
+  font-size: 1.125rem; /* 18px base, up from 16px */
+}
+
+/* Improve contrast: lighter text on dark backgrounds for better readability */
+.accessibility-mode .text-gray-400,
+.accessibility-mode .text-gray-500 {
+  color: rgb(209 213 219); /* gray-300 */
+}
+
+.accessibility-mode .text-gray-300 {
+  color: rgb(243 244 246); /* gray-100 */
+}
+
+.accessibility-mode .text-amber-300\/90 {
+  color: rgb(253 230 138); /* amber-200 */
+}
+
+.accessibility-mode .text-amber-200 {
+  color: rgb(254 243 199); /* amber-100 */
+}
