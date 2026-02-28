@@ -64,6 +64,7 @@ browser.runtime.onInstalled.addListener(async () => {
           linkedin: true,
         },
         showNotifications: true,
+        accessibilityMode: false,
       },
     });
   }
