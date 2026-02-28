@@ -147,7 +147,7 @@ def gsingh1_to_text_label(dataset):
 
 
 # runing every batch in gsignh1 will take hours, so choose 50 or 100 of each label and 100 of mixed at random per run
-def sample_subset(dataset, n_human=2, n_ai=2, n_mixed=0, seed=None):
+def sample_subset(dataset, n_human=32, n_ai=32, n_mixed=32 , seed=None):
   rng = random.Random(seed)
   indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
   indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
@@ -162,6 +162,7 @@ def sample_subset(dataset, n_human=2, n_ai=2, n_mixed=0, seed=None):
   rng.shuffle(sel)
   return dataset.select(sel)
 
+
 # tokenize a batch
 def tokenize_batch(batch, tokenizer, text_column="text"):
   return tokenizer(
@@ -170,13 +171,45 @@ def tokenize_batch(batch, tokenizer, text_column="text"):
     truncation=True,
     max_length=512
   )
-    
+
+# for calculating confidence score 
+def calculate_confidence(self, text: str, clean: bool = True):
+  # clean the text if needed
+  if clean:
+    text = preprocess_text(text)
+
+  # tokenize the text
+  enc = self.tokenizer(
+    text,
+    padding="max_length",
+    truncation=True,
+    max_length=512,
+    return_tensors="pt"
+  )
+
+  # move the text to the device
+  enc = {k: v.to(self.device) for k, v in enc.items()}
+  # evaluation mode
+  self.model.eval()
+  # output, no weights are updated
+  with torch.no_grad():
+    outputs = self.model(**enc)
+
+  # get the logits from the outputs
+  logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+  # get the logit from the logits
+  logit = logits.squeeze(-1).item() if self.use_binary_logit else logits[0, 1].item()
+  # get the probability from the logit
+  prob = torch.sigmoid(torch.tensor(logit)).item()
+  # return the probability
+  return prob
 
 class TextDetectors:
-  
   """
   Implementation of the TextDetector class (design section 3)
   """
+
+  # initialize the model
   def __init__(self):
     self.model_name = "desklib/ai-text-detector-v1.01"
     # empty container for tokenizor (translator) and model
@@ -192,6 +225,7 @@ class TextDetectors:
 
     self._initialize_model()
 
+  # initialize the model
   def _initialize_model(self):
     """
     Load the pre-trained transformer.
@@ -210,8 +244,11 @@ class TextDetectors:
       self.model.eval()
       print(f"Successfully loaded [{self.model_name}] to [{self.device}]")
     except Exception as e:
+      # if error, fall back to distilbert-base-uncased
       print(f"Error loading model [{self.model_name}]: {e}")
       print("Falling back to [distilbert-base-uncased]")
+
+
       self.model_name = "distilbert-base-uncased"
       self.use_binary_logit = False
       self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
@@ -303,13 +340,22 @@ if __name__ == "__main__":
 
     print(f"Start training...\n")
 
+    with open(export_file_path, "a") as f:
+      f.write(f"\n\n ------------------------------------- \n")
+
     # TensorBoard writer (run: tensorboard --logdir=runs)
     log_dir = os.path.join(os.path.dirname(__file__), "runs")
     writer = SummaryWriter(log_dir=log_dir)
 
+    # for accuracy tracking
+    epoch_train_accuracies = []
+    epoch_val_accuracies = []
+
     # train the model
     for epoch in range(epochs):
       total_loss = 0
+      total_train_correct = 0
+      total_train_samples = 0
       detector.model.train()
       # train the model with the training data
       # for batch in train_dataloader:
@@ -333,6 +379,20 @@ if __name__ == "__main__":
           loss = loss_fn(logits.squeeze(-1), labels.float())
         else:
           loss = loss_fn(logits, labels)
+
+        # confidence and accuracy (pred = AI if prob >= 0.5)
+        if detector.use_binary_logit:
+          probs = torch.sigmoid(logits.squeeze(-1))
+        else:
+          probs = torch.softmax(logits, dim=1)[:, 1]
+        preds = (probs >= 0.5).long()
+        correct = (preds == labels).sum().item()
+        batch_size = labels.size(0)
+        batch_accuracy_pct = (correct / batch_size) * 100
+        confidence_pct = probs.mean().item() * 100
+
+        print(f"Batch {batch_counter}: Loss: {loss.item():.4f} | Confidence: {confidence_pct:.2f}% | Accuracy: {batch_accuracy_pct:.2f}% | Labels: {labels[0].item()}")
+
         # backward pass to update the weights
         loss.backward()
         # update the weights
@@ -342,46 +402,60 @@ if __name__ == "__main__":
         end = time.time()
         time_taken = end - start
 
+        total_train_correct += correct
+        total_train_samples += batch_size
+
         # export batch data to export.txt
         with open(export_file_path, "a") as f:
-          f.write(f"Batch {batch_counter}: Loss: {loss.item():.10f}\n")
-          f.write(f"s/batch: {time_taken:.10f}\n")
+          f.write(f"    Batch {batch_counter}: Loss: {loss.item():.10f} | Confidence: {confidence_pct:.2f}% | Accuracy: {batch_accuracy_pct:.2f}% | s/batch: {time_taken:.10f}\n")
 
       # calculate the average loss for the epoch
       avg_loss = total_loss / len(train_dataloader)
       writer.add_scalar("Loss/train", avg_loss, epoch)
-      print(f"Epoch {epoch+1}/{epochs} : Avg loss: {avg_loss:.10f}")
-      # export epoch data to export.txt
-      with open(export_file_path, "a") as f:
-        f.write(f"Epoch {epoch+1}/{epochs}: Loss: {avg_loss:.10f}\n")
-        f.write(f"s/epoch: {time_taken:.10f}\n")
-        f.write(f"avr s/batch: {time_taken / len(train_dataloader):.10f}\n")
 
       # validate the model
       detector.model.eval()
+
       total_val_loss = 0
-      # disable gradient calculation for validation (no need to update the weights)
+      total_val_correct = 0
+      total_val_samples = 0
+
+      # w/o weights
       with torch.no_grad():
         for batch in val_dataloader:
+          # move the batch, attention mask, and labels to the device
           input_ids = batch['input_ids'].to(detector.device)
           attention_mask = batch['attention_mask'].to(detector.device)
           labels = batch['label'].to(detector.device)
           outputs = detector.model(input_ids, attention_mask=attention_mask)
           logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
-          # calculate the validation loss
+          # get the loss and probabilities
           if detector.use_binary_logit:
             loss = loss_fn(logits.squeeze(-1), labels.float())
+            probs = torch.sigmoid(logits.squeeze(-1))
           else:
             loss = loss_fn(logits, labels)
+            probs = torch.softmax(logits, dim=1)[:, 1]
           total_val_loss += loss.item()
+          # get the predictions
+          preds = (probs >= 0.5).long()
+          total_val_correct += (preds == labels).sum().item()
+          total_val_samples += labels.size(0)
       # calculate the average validation loss for the epoch
       avg_val_loss = total_val_loss / len(val_dataloader)
-      writer.add_scalar("Loss/val", avg_val_loss, epoch)
+      epoch_train_accuracy_pct = (total_train_correct / total_train_samples) * 100 if total_train_samples else 0
+      epoch_val_accuracy_pct = (total_val_correct / total_val_samples) * 100 if total_val_samples else 0
+      epoch_train_accuracies.append(epoch_train_accuracy_pct)
+      epoch_val_accuracies.append(epoch_val_accuracy_pct)
 
-      print(f"Epoch {epoch+1}/{epochs} : Avg val loss: {avg_val_loss:.10f}")
-      # export validation data to export.txt
+      writer.add_scalar("Loss/val", avg_val_loss, epoch)
+      writer.add_scalar("Accuracy/train", epoch_train_accuracy_pct, epoch)
+      writer.add_scalar("Accuracy/val", epoch_val_accuracy_pct, epoch)
+
+      print(f"Epoch {epoch+1}/{epochs} : Avg loss: {avg_loss:.4f} | Val loss: {avg_val_loss:.4f} | Train acc: {epoch_train_accuracy_pct:.2f}% | Val acc: {epoch_val_accuracy_pct:.2f}%")
       with open(export_file_path, "a") as f:
-        f.write(f"Epoch {epoch+1}/{epochs}: Avg val loss: {avg_val_loss:.10f}\n")
+        f.write(f"Epoch {epoch+1}/{epochs} [SUMMARY]: Loss: {avg_loss:.4f} | Val loss: {avg_val_loss:.4f} | Train acc: {epoch_train_accuracy_pct:.2f}% | Val acc: {epoch_val_accuracy_pct:.2f}%\n")
+        f.write(f"  s/epoch: {time_taken:.4f} | avr s/batch: {time_taken / len(train_dataloader):.4f}\n")
 
       # return to training mode
       detector.model.train()
@@ -409,6 +483,19 @@ if __name__ == "__main__":
       if early_stopping_counter >= early_stopping_patience:
         print(f"Early stopping triggered at epoch {epoch+1}")
         break
+
+    # session summary
+    avg_train_accuracy = sum(epoch_train_accuracies) / len(epoch_train_accuracies) if epoch_train_accuracies else 0
+    avg_val_accuracy = sum(epoch_val_accuracies) / len(epoch_val_accuracies) if epoch_val_accuracies else 0
+    print(f"\n--- Training Session Summary ---")
+    print(f"Avg train accuracy: {avg_train_accuracy:.2f}%")
+    print(f"Avg val accuracy: {avg_val_accuracy:.2f}%")
+    print(f"Best model from epoch: {best_epoch + 1}")
+    with open(export_file_path, "a") as f:
+      f.write(f"\n--- SESSION SUMMARY ---\n")
+      f.write(f"Avg train accuracy: {avg_train_accuracy:.2f}%\n")
+      f.write(f"Avg val accuracy: {avg_val_accuracy:.2f}%\n")
+      f.write(f"Best model from epoch: {best_epoch + 1}\n")
 
     # load the best model state if it exists
     if best_model_state:
