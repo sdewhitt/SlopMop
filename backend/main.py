@@ -1,7 +1,18 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
+
+# allow all origins, credentials, methods, and headers 
+# CORS so we can access the API from the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # constants
 MAX_TEXT_LENGTH = 5000
