@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
 # allow all origins, credentials, methods, and headers 
-# CORS so we can access the API from the frontend
+# CORS so the extension can access the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,7 +14,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# constants
 MAX_TEXT_LENGTH = 5000
 
 
