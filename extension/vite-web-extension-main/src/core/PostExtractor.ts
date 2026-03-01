@@ -11,6 +11,11 @@ export class PostExtractor {
         const siteId = adapter.getSiteId(); 
         const postId = adapter.getStablePostId(postNode);
         if (postId === null) return null;
+        // if (postId === null) {
+        //   // log failure to extract postId, classname tag is first 80 chars if classname exists
+        //   console.log(`[PostExtractor] BAIL: no postId`, { tag: postNode.tagName, className: (postNode as HTMLElement).className?.slice(0, 80) });
+        //   return null;
+        // }
         
         const capturedAtMs = Date.now();
 
@@ -27,7 +32,7 @@ export class PostExtractor {
         // TODO: process images into some normalized form after basic functionality is working
         // convert HTMLImageElement[] into a Array<{imageId, bytesBase64, srcUrl, mimeType}
         // mimeType means file format
-        // const images = adapter.getImageNodes(postNode);
+        const images = adapter.getImageNodes(postNode);
         // for (let img in images) {
         //     const srcUrl = img.currentSrc || img.src;
         //     const imageId = this.fnv1a(srcUrl);
@@ -90,6 +95,8 @@ export class PostExtractor {
         return text;
     }
     private mimeTypeFromUrl(url: string): string {
+        // mimetype is just image filetype
+        // not sure what how this line works
         const ext = url.split("?")[0].split("#")[0].split(".").pop()?.toLowerCase();
         const map: Record<string, string> = {
             jpg: "image/jpeg",
@@ -102,7 +109,7 @@ export class PostExtractor {
         };
         return (ext && map[ext]) || "image/jpeg";
     }
-
+    // hash function for unique postId
     private fnv1a(input: string): string {
         let hash = 0x811c9dc5;
         for (let i = 0; i < input.length; i++) {

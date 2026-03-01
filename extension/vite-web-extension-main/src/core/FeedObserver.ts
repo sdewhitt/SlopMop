@@ -89,6 +89,11 @@ export class FeedObserver {
         // instead, we reset a timer on every mutation. the scan only
         // runs once the mutations have been quiet for DEBOUNCE_MS.
 
+        // if (DEBUG_EXTRACTION) {
+        //     // Log mutations to see if we're detecting scrolling. 
+        //     console.log(`[FeedObserver] DOM mutation detected`);
+        // }
+
         // if a timer is already running, cancel it
         if (this.debounceTimer !== null) {
             clearTimeout(this.debounceTimer);
