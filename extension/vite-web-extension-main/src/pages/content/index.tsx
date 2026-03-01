@@ -1,6 +1,7 @@
 import { RedditAdapter } from "../../core/adapters/RedditAdapter";
 import { PostExtractor } from "../../core/PostExtractor";
 import { FeedObserver } from "../../core/FeedObserver";
+import { OverlayRenderer } from "@src/core/OverlayRenderer";
 import { DEFAULT_SETTINGS } from "@src/types/domain";
 import { renderDebugBadge } from "./debug";
 import "./style.css";
@@ -25,7 +26,8 @@ function main() {
 
   const adapter = new RedditAdapter();
   const extractor = new PostExtractor();
-  const observer = new FeedObserver(adapter, extractor, settings);
+  const overlay = new OverlayRenderer(adapter, settings);
+  const observer = new FeedObserver(adapter, extractor, overlay, settings);
 
   observer.start();
   console.log("[SlopMop] FeedObserver started");

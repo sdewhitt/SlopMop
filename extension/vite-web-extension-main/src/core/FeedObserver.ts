@@ -1,6 +1,7 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent, UserSettings, ContentType } from "@src/types/domain";
 import { PostExtractor } from "./PostExtractor";
+import { OverlayRenderer } from "./OverlayRenderer";
 
 const DEBUG_EXTRACTION = true;
 // debounce wait time in ms. mutations that fire within this window
@@ -15,6 +16,7 @@ export class FeedObserver {
     private adapter: SiteAdapter;
     private extractor: PostExtractor;
     private settings: UserSettings;
+    private overlay: OverlayRenderer;
     // MutationObserver instance, null when not running
     private observer: MutationObserver | null = null;
     // tracks postIds we've already processed so we don't extract twice
@@ -24,10 +26,11 @@ export class FeedObserver {
     // which is number in browsers and NodeJS.Timeout in node
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    constructor(adapter: SiteAdapter, extractor: PostExtractor, settings: UserSettings) {
+    constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, settings: UserSettings) {
         // store dependencies on the instance so all methods can use them via this.*
         this.adapter = adapter;
         this.extractor = extractor;
+        this.overlay = overlay;
         this.settings = settings;
     }
 
@@ -160,20 +163,72 @@ export class FeedObserver {
 
         // TODO: this.bus.sendAnalyze(post) once ExtensionMessageBus exists
         // that will send the post to the background script for AI detection
+        
+        // render pending for all posts.
+        this.overlay.renderPending(post.postId);
+
+        // DEBUG: simulate responses to test renderResult and renderError
+        if (DEBUG_EXTRACTION) {
+            const roll = Math.random();
+            setTimeout(() => { // wait 1.5 seconds then render random result
+                if (roll < 0.4) {
+                    this.overlay.renderResult(post.postId, {
+                        requestId: "debug-req",
+                        postId: post.postId,
+                        verdict: "likely_ai",
+                        confidence: 0.92,
+                        explanation: {
+                            summary: "Repetitive phrasing and low perplexity",
+                            model: { name: "debug", version: "0.0" },
+                            cache: { hit: false, ttlRemainingMs: 0 },
+                            timing: { totalMs: 0, inferenceMs: 0 },
+                        },
+                    });
+                } else if (roll < 0.7) {
+                    this.overlay.renderResult(post.postId, {
+                        requestId: "debug-req",
+                        postId: post.postId,
+                        verdict: "likely_human",
+                        confidence: 0.78,
+                        explanation: {
+                            summary: "Natural variance and typos detected",
+                            model: { name: "debug", version: "0.0" },
+                            cache: { hit: false, ttlRemainingMs: 0 },
+                            timing: { totalMs: 0, inferenceMs: 0 },
+                        },
+                    });
+                } else if (roll < 0.9) {
+                    this.overlay.renderResult(post.postId, {
+                        requestId: "debug-req",
+                        postId: post.postId,
+                        verdict: "unknown",
+                        confidence: 0.5,
+                        explanation: {
+                            summary: "Insufficient signal",
+                            model: { name: "debug", version: "0.0" },
+                            cache: { hit: false, ttlRemainingMs: 0 },
+                            timing: { totalMs: 0, inferenceMs: 0 },
+                        },
+                    });
+                } else {
+                    this.overlay.renderError(post.postId, "Network timeout (simulated)");
+                }
+            }, 1500);
+        }
     }
 
     private isEligible(post: NormalizedPostContent): boolean {
-        // gate 1: is the extension turned on at all?
+        // check 1: is the extension turned on at all?
         if (!this.settings.enabled) return false;
 
-        // gate 2: is this site in the whitelist?
+        // check 2: is this site in the whitelist?
         // empty whitelist means "allow all sites"
         if (this.settings.whitelist.length > 0
             && !this.settings.whitelist.includes(post.site)) {
             return false;
         }
 
-        // gate 3: does the content type match what the user wants to scan?
+        // check 3: does the content type match what the user wants to scan?
         // if scanText is false and this is a TEXT post, skip it
         // if scanImages is false and this is an IMAGE post, skip it
         // MIXED requires at least one of scanText or scanImages
