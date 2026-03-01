@@ -5,6 +5,7 @@ import { OverlayRenderer } from "@src/core/OverlayRenderer";
 import { DEFAULT_SETTINGS } from "@src/types/domain";
 import { renderDebugBadge } from "./debug";
 import "./style.css";
+import { ExtensionMessageBus } from "@src/core/ExtensionMessageBus";
 
 function main() {
   renderDebugBadge(); // show debug badge
@@ -27,7 +28,13 @@ function main() {
   const adapter = new RedditAdapter();
   const extractor = new PostExtractor();
   const overlay = new OverlayRenderer(adapter, settings);
-  const observer = new FeedObserver(adapter, extractor, overlay, settings);
+  const bus = new ExtensionMessageBus();
+  const observer = new FeedObserver(adapter, extractor, overlay, bus, settings);
+
+  // register overlay.renderResult() as the handler function when bus receives a DetectionResponse from chrome
+  bus.onDetectionResponse((res) => {
+    overlay.renderResult(res.postId, res);
+});
 
   observer.start();
   console.log("[SlopMop] FeedObserver started");

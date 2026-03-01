@@ -2,6 +2,7 @@ import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent, UserSettings, ContentType } from "@src/types/domain";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
+import { ExtensionMessageBus } from "./ExtensionMessageBus";
 
 const DEBUG_EXTRACTION = true;
 // debounce wait time in ms. mutations that fire within this window
@@ -17,27 +18,26 @@ export class FeedObserver {
     private extractor: PostExtractor;
     private settings: UserSettings;
     private overlay: OverlayRenderer;
-    // MutationObserver instance, null when not running
+    private bus: ExtensionMessageBus;
     private observer: MutationObserver | null = null;
-    // tracks postIds we've already processed so we don't extract twice
+
+    // tracks postIds already processed to prevent duplication
     private seenPostIds = new Set<string>();
     // timer handle for debouncing mutation bursts
     // ReturnType<typeof setTimeout> resolves to the return type of setTimeout
     // which is number in browsers and NodeJS.Timeout in node
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, settings: UserSettings) {
-        // store dependencies on the instance so all methods can use them via this.*
+    constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: UserSettings) {
         this.adapter = adapter;
         this.extractor = extractor;
         this.overlay = overlay;
+        this.bus = bus;
         this.settings = settings;
     }
 
     start(): void {
-        // guard: if observer already exists, we've already started. 
-        // calling start() twice would create a second MutationObserver
-        // and we'd get duplicate scans on every DOM change
+        // check for duplicate
         if (this.observer) return;
 
         // initial scan: extract posts that are already on the page
@@ -161,60 +161,10 @@ export class FeedObserver {
             });
         }
 
-        // TODO: this.bus.sendAnalyze(post) once ExtensionMessageBus exists
-        // that will send the post to the background script for AI detection
-        
         // render pending for all posts.
         this.overlay.renderPending(post.postId);
-
-        // DEBUG: simulate responses to test renderResult and renderError
-        if (DEBUG_EXTRACTION) {
-            const roll = Math.random();
-            setTimeout(() => { // wait 1.5 seconds then render random result
-                if (roll < 0.4) {
-                    this.overlay.renderResult(post.postId, {
-                        requestId: "debug-req",
-                        postId: post.postId,
-                        verdict: "likely_ai",
-                        confidence: 0.92,
-                        explanation: {
-                            summary: "Repetitive phrasing and low perplexity",
-                            model: { name: "debug", version: "0.0" },
-                            cache: { hit: false, ttlRemainingMs: 0 },
-                            timing: { totalMs: 0, inferenceMs: 0 },
-                        },
-                    });
-                } else if (roll < 0.7) {
-                    this.overlay.renderResult(post.postId, {
-                        requestId: "debug-req",
-                        postId: post.postId,
-                        verdict: "likely_human",
-                        confidence: 0.78,
-                        explanation: {
-                            summary: "Natural variance and typos detected",
-                            model: { name: "debug", version: "0.0" },
-                            cache: { hit: false, ttlRemainingMs: 0 },
-                            timing: { totalMs: 0, inferenceMs: 0 },
-                        },
-                    });
-                } else if (roll < 0.9) {
-                    this.overlay.renderResult(post.postId, {
-                        requestId: "debug-req",
-                        postId: post.postId,
-                        verdict: "unknown",
-                        confidence: 0.5,
-                        explanation: {
-                            summary: "Insufficient signal",
-                            model: { name: "debug", version: "0.0" },
-                            cache: { hit: false, ttlRemainingMs: 0 },
-                            timing: { totalMs: 0, inferenceMs: 0 },
-                        },
-                    });
-                } else {
-                    this.overlay.renderError(post.postId, "Network timeout (simulated)");
-                }
-            }, 1500);
-        }
+        // call background service to get post's DetectionResponse
+        this.bus.sendAnalyze(post);
     }
 
     private isEligible(post: NormalizedPostContent): boolean {

@@ -53,7 +53,7 @@ export class OverlayRenderer {
         // style the overlay object
         Object.assign(overlay.style, {
             position: "absolute", // places it on the post
-            top: "8px",
+            bottom: "8px",
             right: "8px",
             padding: "4px 8px",
             borderRadius: "4px",

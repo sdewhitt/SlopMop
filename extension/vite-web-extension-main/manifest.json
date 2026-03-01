@@ -32,6 +32,10 @@
       ]
     }
   ],
+  "background": {
+    "service_worker": "src/pages/background/index.ts",
+    "type": "module"
+  },
   "devtools_page": "src/pages/devtools/index.html",
   "web_accessible_resources": [
     {
