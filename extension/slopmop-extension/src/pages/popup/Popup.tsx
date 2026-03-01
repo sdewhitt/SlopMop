@@ -82,6 +82,9 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
+  const [detectTextInput, setDetectTextInput] = useState('');
+  const [detectLoading, setDetectLoading] = useState(false);
+  const [detectError, setDetectError] = useState<string | null>(null);
 
   useEffect(() => {
     browser.storage.local
@@ -175,6 +178,32 @@ export default function Popup() {
     setSettings(defaultSettings);
     browser.storage.local.set({ settings: defaultSettings });
     flashSaved();
+  };
+
+  const handleDetectNow = async () => {
+    const text = detectTextInput.trim();
+    if (!text) return;
+    setDetectError(null);
+    setDetectLoading(true);
+    try {
+      const res = (await browser.runtime.sendMessage({
+        type: 'SLOPMOP_DETECT',
+        text,
+      })) as { success: boolean; data?: unknown; error?: string } | undefined;
+      if (res?.success) {
+        // Background already wrote to storage; storage listener will update detectResponse
+        // Optional: setDetectResponse(res.data) to show immediately without waiting for storage
+        if (res.data && typeof res.data === 'object') {
+          setDetectResponse(res.data as DetectResponse);
+        }
+      } else {
+        setDetectError(res?.error ?? 'Detection failed');
+      }
+    } catch (e) {
+      setDetectError((e as Error).message ?? 'Connection error');
+    } finally {
+      setDetectLoading(false);
+    }
   };
 
   // ── Settings view ─────────────────────────────────────────────
@@ -347,6 +376,34 @@ export default function Popup() {
       >
         {enabled ? 'Pause Detection' : 'Enable Detection'}
       </button>
+
+
+      {/* Detect Now (mock: input your own text) */}
+      <section className="space-y-2">
+        <label className="block text-xs font-medium text-gray-400">
+          Input your own text (mock)
+        </label>
+        <textarea
+          value={detectTextInput}
+          onChange={(e) => setDetectTextInput(e.target.value)}
+          placeholder="Paste or type text to detect..."
+          rows={3}
+          className="w-full px-3 py-2 rounded-lg bg-gray-800 text-gray-200 text-sm placeholder-gray-500 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none"
+          disabled={detectLoading}
+        />
+        <button
+          type="button"
+          onClick={handleDetectNow}
+          disabled={detectLoading || !detectTextInput.trim()}
+          className="w-full py-2.5 rounded-lg font-semibold text-sm bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+        >
+          {detectLoading ? 'Detecting…' : 'Detect Now'}
+        </button>
+        {detectError && (
+          <p className="text-xs text-red-400">{detectError}</p>
+        )}
+      </section>
+
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">

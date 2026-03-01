@@ -24,21 +24,22 @@ console.log('background script loaded');
 // All Firebase Auth operations run here in the background script
 // where network requests are unrestricted (no page CSP).
 // The content script communicates via runtime.sendMessage.
-
-initFirebase();
-
-// Sync the current Firebase user to browser.storage.local so the
-// content-script React tree can read auth state reactively.
-if (auth) {
-  onAuthStateChanged(auth, (firebaseUser) => {
-    if (firebaseUser) {
-      browser.storage.local.set({
-        slopmopUser: { uid: firebaseUser.uid, email: firebaseUser.email },
-      });
-    } else {
-      browser.storage.local.remove('slopmopUser');
-    }
-  });
+// Wrapped in try/catch so the message listener below still registers if Firebase is not configured.
+try {
+  initFirebase();
+  if (auth) {
+    onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        browser.storage.local.set({
+          slopmopUser: { uid: firebaseUser.uid, email: firebaseUser.email },
+        });
+      } else {
+        browser.storage.local.remove('slopmopUser');
+      }
+    });
+  }
+} catch (e) {
+  console.warn('Firebase init skipped or failed:', e);
 }
 
 // Disable the default popup so that action.onClicked fires.
