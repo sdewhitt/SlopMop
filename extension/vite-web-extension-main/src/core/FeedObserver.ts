@@ -162,7 +162,8 @@ export class FeedObserver {
         }
 
         // render pending for all posts.
-        this.overlay.renderPending(post.postId);
+        // pass post.text.plain so the overlay can show highlighted excerpts later
+        this.overlay.renderPending(post.postId, post.text.plain);
         // call background service to get post's DetectionResponse
         this.bus.sendAnalyze(post);
     }

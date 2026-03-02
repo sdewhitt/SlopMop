@@ -17,6 +17,12 @@
   "permissions": [
     "activeTab"
   ],
+  "host_permissions": [
+    "https://i.redd.it/*",
+    "https://preview.redd.it/*",
+    "https://external-preview.redd.it/*",
+    "https://i.imgur.com/*"
+  ],  
   "content_scripts": [
     {
       "matches": [

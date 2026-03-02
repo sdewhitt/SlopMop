@@ -9,6 +9,9 @@ export class OverlayRenderer {
     private mapToOverlay = new Map<PostId, HTMLElement>()
     // map each postId to its DetectionResponse so the tooltip can read it later
     private mapToResponse = new Map<PostId, DetectionResponse>()
+    // map each postId to the original plain text that was analyzed.
+    // needed so createTooltip can slice out highlighted spans using start/end offsets
+    private mapToPostText = new Map<PostId, string>()
     // used to get DOM node from postId
     private adapter: SiteAdapter;
     private settings: UserSettings;
@@ -47,29 +50,36 @@ export class OverlayRenderer {
             overlay.textContent += ` — ${res.explanation.summary}`;
         }
 
-        // --- hover tooltip ---
+        // hover tooltip 
         // tooltip is null when not visible. we track it in a closure
         // so mouseenter/mouseleave can create and destroy it
         let tooltip: HTMLElement | null = null;
+
+        // look up the original text so we can render highlight excerpts in the tooltip.
+        // falls back to "" if no text was stored
+        const postText = this.mapToPostText.get(postId) ?? "";
 
         // mouseenter: build the tooltip and append it as a child of the badge.
         // because the badge is position:absolute, the tooltip positions relative to it
         overlay.addEventListener("mouseenter", () => {
             // guard: don't create a second tooltip if one already exists
             if (tooltip) return;
-            tooltip = this.createTooltip(res);
+            tooltip = this.createTooltip(res, postText);
             overlay.appendChild(tooltip);
         });
 
         // mouseleave: tear down the tooltip so it doesn't linger
         overlay.addEventListener("mouseleave", () => {
-            tooltip?.remove(); // ?. optional chaining: if tooltip is null, skip
+            tooltip?.remove(); // ?. optional chaining: if tooltip is already null, skip
             tooltip = null;
         });
     }
 
-    // renders Pending badge for the user
-    renderPending(postId: PostId): void {
+    // renders Pending badge for the user.
+    // plainText is the extracted post text from PostExtractor.
+    // we store it so createTooltip can slice out highlighted spans later
+    renderPending(postId: PostId, plainText: string): void {
+        this.mapToPostText.set(postId, plainText);
         const postNode = this.findPostNode(postId);
         if (postNode === null) return;
         const overlay = document.createElement("div");
@@ -99,40 +109,51 @@ export class OverlayRenderer {
         overlay.textContent = `Error - ${message}`;
 
     }
-    // removes a DOM element and its entry from mapToOverlay and mapToResponse
+    // removes a DOM element and its entry from all three maps
     clear(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
         overlay.remove();
         this.mapToOverlay.delete(postId);
         this.mapToResponse.delete(postId);
+        this.mapToPostText.delete(postId);
     }
 
     // builds the tooltip DOM element that appears when the user hovers over a badge.
-    // returns an HTMLElement positioned above the badge with the full explanation.
+    // postText is the original analyzed text so we can slice out highlighted spans.
     // pointerEvents: "none" prevents the tooltip from stealing the mouse,
     // which would cause the badge's mouseleave to fire and flicker the tooltip
-    private createTooltip(res: DetectionResponse): HTMLElement {
+    private createTooltip(res: DetectionResponse, postText: string): HTMLElement {
+        const highlights = res.explanation.highlights ?? [];
+        // if there are highlights to show, use a wider tooltip to fit quoted excerpts.
+        // otherwise keep it compact. height is always auto so it grows with content
+        const hasHighlights = highlights.length > 0 && postText.length > 0;
+
         const tip = document.createElement("div");
-        // style the tooltip container
+        // style the tooltip container.
+        // minWidth/maxWidth instead of fixed width so it scales with content volume.
+        // maxHeight + overflowY: "auto" prevents it from growing taller than the viewport
         Object.assign(tip.style, {
             position: "absolute",
             bottom: "calc(100% + 8px)", // float above the badge with 8px gap
             right: "0", // right-align with the badge so it doesn't overflow offscreen
-            width: "280px",
+            minWidth: hasHighlights ? "320px" : "240px",
+            maxWidth: hasHighlights ? "420px" : "300px",
+            maxHeight: "400px",
+            overflowY: "auto", // scroll if the highlights make the tooltip very tall
             padding: "12px",
             borderRadius: "8px",
-            backgroundColor: "#1f2937", // dark slate, check with https://www.peekcolor.app/
+            backgroundColor: "#1f2937", // dark slate
             color: "#f3f4f6", // near-white text
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             zIndex: "10000", // one layer above the badge's 9999
-            pointerEvents: "none", // see docstring above
+            pointerEvents: "none",
         });
 
-        // --- header row: confidence + verdict label ---
-        // human-readable labels instead of the raw enum values
+        // header row: confidence and verdict label 
+        // human readable labels instead of the raw enum values
         const verdictLabel: Record<DetectionResponse["verdict"], string> = {
             likely_ai: "Likely AI-generated",
             likely_human: "Likely human-written",
@@ -147,13 +168,71 @@ export class OverlayRenderer {
         header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
         tip.appendChild(header);
 
-        // --- body: explanation summary from the model ---
+        //  body: explanation summary from the model 
         const summary = document.createElement("div");
         Object.assign(summary.style, { marginBottom: "8px" });
         summary.textContent = res.explanation.summary;
         tip.appendChild(summary);
 
-        // --- footer: model name, version, timing, cache hit ---
+        // highlights section 
+        // each highlight has start/end character offsets into postText and a reason.
+        // we slice the original text to show the flagged excerpt, then show the reason below it
+        if (hasHighlights) {
+            const highlightsContainer = document.createElement("div");
+            Object.assign(highlightsContainer.style, {
+                borderTop: "1px solid #374151", // subtle divider above highlights
+                paddingTop: "8px",
+                marginBottom: "8px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px", // space between each highlight entry
+            });
+
+            for (const hl of highlights) {
+                const entry = document.createElement("div");
+
+                // slice the flagged text span using the start/end offsets.
+                // clamp to postText.length so a bad offset doesn't throw
+                const excerpt = postText.slice(
+                    Math.max(0, hl.start),
+                    Math.min(postText.length, hl.end),
+                );
+
+                // quoted excerpt: the actual text the model flagged.
+                const quoteEl = document.createElement("div");
+                Object.assign(quoteEl.style, {
+                    backgroundColor: "rgba(245, 158, 11, 0.15)", // amber tint ,semi transparent
+                    borderLeft: "3px solid #f59e0b", // amber left border like a blockquote
+                    padding: "4px 8px",
+                    borderRadius: "2px",
+                    fontStyle: "italic",
+                    fontSize: "11px",
+                    color: "#fbbf24", // amber text for the excerpt
+                    wordBreak: "break-word", // wrap long unbroken strings
+                });
+                // show up to 200 chars of the excerpt. if longer, truncate with ellipsis
+                quoteEl.textContent = excerpt.length > 200
+                    ? `"${excerpt.slice(0, 200)}…"`
+                    : `"${excerpt}"`;
+                entry.appendChild(quoteEl);
+
+                // reason: the model's explanation for why this span was flagged
+                const reasonEl = document.createElement("div");
+                Object.assign(reasonEl.style, {
+                    fontSize: "11px",
+                    color: "#d1d5db", // light grey, slightly dimmer than body text
+                    marginTop: "2px",
+                });
+                reasonEl.textContent = hl.reason;
+                entry.appendChild(reasonEl);
+
+                highlightsContainer.appendChild(entry);
+            }
+
+            tip.appendChild(highlightsContainer);
+        }
+
+        // footer: model name, version, timing, cache hit 
         // separated from the body by a subtle border so it feels like metadata
         const meta = document.createElement("div");
         Object.assign(meta.style, {
