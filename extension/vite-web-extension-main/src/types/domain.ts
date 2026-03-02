@@ -42,8 +42,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
     retainHistoryHours: 24,
     cacheTtlHours: 24,
     scanText: true,
-    scanImages: false,                // Phase 1: text only
-    scanComments: "off",
+    scanImages: false,                // phase 1: text only
+    scanComments: "auto_top_n",
     uiMode: "simple",
     accessibility: {
       highContrast: false,
@@ -143,4 +143,12 @@ export interface FeedbackReport {
     };
     contentSnippet: string;
   }
+// standardized message from content script to background script. used by ExtensionMessageBus.ts
+export type ContentToBackgroundMessage = // union type
+    | { type: "ANALYZE_POST"; payload: NormalizedPostContent } 
+    | { type: "SUBMIT_FEEDBACK"; payload: FeedbackReport };
+    // add more message types here as needed
+// similar idea, but from background script to content script
+export type BackgroundToContentMessage =
+    | { type: "DETECTION_RESULT"; payload: DetectionResponse };
   

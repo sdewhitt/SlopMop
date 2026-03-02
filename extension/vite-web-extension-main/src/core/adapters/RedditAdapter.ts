@@ -6,7 +6,7 @@ export class RedditAdapter implements SiteAdapter {
   }
 
   findPostNodes(root: ParentNode = document): Element[] {
-    // Prefer stable-ish structural selectors over class names.
+    // stable-ish structural selectors over class names.
     const selectors = [
       "shreddit-post",
       "[data-testid='post-container']",
@@ -22,7 +22,7 @@ export class RedditAdapter implements SiteAdapter {
         if (seen.has(node)) continue;
         seen.add(node);
 
-        // Keep only nodes that look like real posts.
+        // keep only nodes that look like real posts.
         if (this.getPermalink(node) || this.getStablePostId(node) || this.getTextNode(node)) {
           out.push(node);
         }

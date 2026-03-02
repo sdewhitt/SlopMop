@@ -144,7 +144,7 @@ export class OverlayRenderer {
             padding: "12px",
             borderRadius: "8px",
             backgroundColor: "#1f2937", // dark slate
-            color: "#f3f4f6", // near-white text
+            color: "#f3f4f6", // near white text
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
@@ -256,8 +256,13 @@ export class OverlayRenderer {
     // scan DOM tree for the postNode given a postId. 
     // returns the postNode, or null if not found
     private findPostNode(postId: PostId): HTMLElement | null {
+        // check posts
         for (const node of this.adapter.findPostNodes(document)) {
             if (this.adapter.getStablePostId(node) === postId) return node as HTMLElement;
+        }
+        // check comments
+        for (const node of this.adapter.findVisibleCommentNodes(document)) {
+            if (this.adapter.getCommentId(node) === postId) return node as HTMLElement;
         }
         return null;
     }

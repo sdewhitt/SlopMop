@@ -112,60 +112,71 @@ export class FeedObserver {
     }
 
     private scanAndProcess(): void {
-        // ask the adapter for all post nodes currently in the DOM
-        // findPostNodes returns Element[] of candidate post containers
+        // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
-
-        if (DEBUG_EXTRACTION) {
-            console.log(`[FeedObserver] scan found ${nodes.length} candidate nodes`);
-        }
-
-        // for...of iterates over each element in the array
         // each node is one post container on the page
         for (const node of nodes) {
-            this.handleCandidatePost(node);
+            this.handleCandidatePost(node, "post");
         }
+        let numComments = 0;
+        // Scan for comments
+        if (this.settings.scanComments !== "off") {
+            // TODO: add limit to settings and read limit from settings
+            const maxComments = 20
+            const commentNodes = this.adapter.findVisibleCommentNodes(document, maxComments);
+            numComments = commentNodes.length;
+            for (const node of commentNodes) {
+                this.handleCandidatePost(node, "comment");
+            }
+
+        }
+        
+
+        if (DEBUG_EXTRACTION) {
+            console.log(`[FeedObserver] scan found ${nodes.length+numComments} candidate nodes`);
+        }
+
     }
 
-    private handleCandidatePost(node: Element): void {
+
+    private handleCandidatePost(node: Element, type: "post" | "comment"): void {
         // step 1: extract. turn raw DOM node into clean NormalizedPostContent
         // returns null if the node is missing critical data (no postId, etc.)
-        const post = this.extractor.extract(node, this.adapter);
-        // !post is true when post is null. bail out, don't mark as seen
+        const extracted = this.extractor.extract(node, this.adapter, type);
+        // !extracted is true when extraction fails. bail out, don't mark as seen
         // so it can be retried on the next scan if the DOM updates
-        if (!post) return;
+        if (!extracted) return;
 
         // step 2: dedupe. Set.has() is O(1) lookup.
         // most posts on a re-scan are ones we've already processed
-        if (this.seenPostIds.has(post.postId)) return;
+        if (this.seenPostIds.has(extracted.postId)) return;
 
         // step 3: eligibility. check user settings
-        // e.g. is the extension enabled? is this site whitelisted?
-        if (!this.isEligible(post)) {
+        if (!this.isEligible(extracted)) {
             if (DEBUG_EXTRACTION) {
-                console.log(`[FeedObserver] skipped ineligible post ${post.postId}`);
+                console.log(`[FeedObserver] skipped ineligible post ${extracted.postId}`);
             }
             return;
         }
 
         // only mark as seen AFTER extraction succeeded + passed eligibility.
         // if we marked it earlier and extraction failed, we'd never retry
-        this.seenPostIds.add(post.postId);
+        this.seenPostIds.add(extracted.postId);
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] new post`, {
-                postId: post.postId,
-                contentType: post.contentType,
-                textLength: post.text.plain.length,
-                author: post.domContext.authorHandle,
+                postId: extracted.postId,
+                contentType: extracted.contentType,
+                textLength: extracted.text.plain.length,
+                author: extracted.domContext.authorHandle,
             });
         }
 
         // render pending for all posts.
         // pass post.text.plain so the overlay can show highlighted excerpts later
-        this.overlay.renderPending(post.postId, post.text.plain);
+        this.overlay.renderPending(extracted.postId, extracted.text.plain);
         // call background service to get post's DetectionResponse
-        this.bus.sendAnalyze(post);
+        this.bus.sendAnalyze(extracted);
     }
 
     private isEligible(post: NormalizedPostContent): boolean {

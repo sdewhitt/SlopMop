@@ -7,15 +7,14 @@ export class PostExtractor {
     // Extracts content using SiteAdapters and returns NormalizedPostContents. 
     // Returns null if extraction fails for a post
 
-    extract(postNode: Element, adapter: SiteAdapter): NormalizedPostContent | null {
+    extract(node: Element, adapter: SiteAdapter, type: "post" | "comment"): NormalizedPostContent | null {
         const siteId = adapter.getSiteId(); 
-        const postId = adapter.getStablePostId(postNode);
-        if (postId === null) return null;
-        // if (postId === null) {
-        //   // log failure to extract postId, classname tag is first 80 chars if classname exists
-        //   console.log(`[PostExtractor] BAIL: no postId`, { tag: postNode.tagName, className: (postNode as HTMLElement).className?.slice(0, 80) });
-        //   return null;
-        // }
+        // post or comment id
+        const id = type === "post" 
+            ? adapter.getStablePostId(node) 
+            : adapter.getCommentId(node);
+        
+        if (id === null) return null;
         
         const capturedAtMs = Date.now();
 
@@ -24,46 +23,47 @@ export class PostExtractor {
         // ?.innerText is optional chaining. if getTextNode rtns null, whole line evals to undefined
         // ?.trim() checks if innerText was null and returns trim()
         // ?? nullish coalescing operator. if first half was null/undefined, then return ''
-        const rawText =  adapter.getTextNode(postNode)?.innerText?.trim() ?? '';
-        if (rawText === null) return null;
+        const textNode = type === "post"
+            ? adapter.getTextNode(node)
+            : adapter.getCommentTextNode(node);
+
+        const rawText = textNode?.innerText?.trim() ?? '';
+        if (!rawText) return null;
         const normalizedText = this.normalizeText(rawText);
-        if (normalizedText === null) return null;
+        if (!normalizedText) return null;
 
         // TODO: process images into some normalized form after basic functionality is working
         // convert HTMLImageElement[] into a Array<{imageId, bytesBase64, srcUrl, mimeType}
         // mimeType means file format
-        const images = adapter.getImageNodes(postNode);
-        // for (let img in images) {
-        //     const srcUrl = img.currentSrc || img.src;
-        //     const imageId = this.fnv1a(srcUrl);
-        //     // call helper to get filetype
-
-        //     // convert pixel data to base64 encoded string
-        //     document.createElement("canvas");
-        //     canvas.width = img.naturalWidth;
-        //     canvas.height = img.naturalHeight;
-        //     ctx.drawImage(img, 0, 0);
-        //     const whole = canvas.toDataUrl("image/png");
-        //     const bytesBase64 = whole.split(",")[1];
-
-
-
-        // }
+        // for now, we only grab images from main posts. comments rarely have inline images we care about yet
+        const imageNodes = type === "post" ? adapter.getImageNodes(node) : [];
+        const images = imageNodes.map((img) => {
+            const srcUrl = img.currentSrc || img.src;
+            return {
+                imageId: this.fnv1a(srcUrl),
+                bytesBase64: "",            // background will fill bytes in
+                srcUrl,
+                mimeType: this.mimeTypeFromUrl(srcUrl),
+            };
+        });
 
         // classify ContentType
         const contentType = classify(normalizedText, images.length);
 
-        const permalink = adapter.getPermalink(postNode);
+        const permalink = type === "post"
+            ? adapter.getPermalink(node)
+            : adapter.getCommentPermalink(node);
+
         // TODO: figure out how to get this and what this means
         const languageHint = "";
-        const authorHandle = adapter.getAuthorHandle(postNode);
-        const timestampText = adapter.getTimestampText(postNode);
-
-
+        
+        // author and timestamp are currently only implemented for posts in the adapter
+        const authorHandle = type === "post" ? adapter.getAuthorHandle(node) : "";
+        const timestampText = type === "post" ? adapter.getTimestampText(node) : "";
 
         return {
             site: siteId,
-            postId: postId,
+            postId: id,
             url: permalink ?? "",
             capturedAtMs: capturedAtMs,
             contentType: contentType,
@@ -71,7 +71,7 @@ export class PostExtractor {
               plain: normalizedText,
               languageHint: "",
             },
-            images: [],
+            images: images,
             domContext: {
               authorHandle: authorHandle ?? "",
               timestampText: timestampText ?? "",
