@@ -1,4 +1,4 @@
-Batch 1: Loss: 3.9491524696
+llBatch 1: Loss: 3.9491524696
 s/batch: 156.1479539871
 Epoch 1/2: Loss: 3.9491524696
 s/epoch: 156.1479539871
@@ -10,3 +10,141 @@ Epoch 2/2: Loss: 0.0011049631
 s/epoch: 217.7351849079
 avr s/batch: 217.7351849079
 Epoch 2/2: Avg val loss: 1.3416107893
+Batch 1: Loss: 0.0002642540
+s/batch: 106.1640179157
+Epoch 1/2: Loss: 0.0002642540
+s/epoch: 106.1640179157
+avr s/batch: 106.1640179157
+Epoch 1/2: Avg val loss: 1.5246922970
+Batch 2: Loss: 1.2090170383
+s/batch: 110.2751007080
+Epoch 2/2: Loss: 1.2090170383
+s/epoch: 110.2751007080
+avr s/batch: 110.2751007080
+Epoch 2/2: Avg val loss: 0.0000193713
+    Batch 1: Loss: 0.0000629652 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 109.9840860367
+Epoch 1/2 [SUMMARY]: Loss: 0.0001 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 109.9841 | avr s/batch: 109.9841
+    Batch 2: Loss: 0.0000104904 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 112.0939018726
+Epoch 2/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 112.0939 | avr s/batch: 112.0939
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 100.00%
+Avg val accuracy: 100.00%
+Best model from epoch: 2
+    Batch 1: Loss: 0.0000101327 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 164.2684080601
+Epoch 1/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 164.2684 | avr s/batch: 164.2684
+    Batch 2: Loss: 0.0025256409 | Confidence: 49.75% | Accuracy: 100.00% | s/batch: 184.5008218288
+Epoch 2/2 [SUMMARY]: Loss: 0.0025 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 184.5008 | avr s/batch: 184.5008
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 100.00%
+Avg val accuracy: 100.00%
+Best model from epoch: 2
+    Batch 1: Loss: 0.0000036061 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 241.1513133049
+    Batch 2: Loss: 0.1533671319 | Confidence: 62.15% | Accuracy: 90.00% | s/batch: 149.5540750027
+Epoch 1/2 [SUMMARY]: Loss: 0.0767 | Val loss: 0.0000 | Train acc: 96.15% | Val acc: 100.00%
+  s/epoch: 149.5541 | avr s/batch: 74.7770
+    Batch 3: Loss: 0.9406474233 | Confidence: 67.91% | Accuracy: 75.00% | s/batch: 249.8276040554
+    Batch 4: Loss: 0.0000041008 | Confidence: 80.00% | Accuracy: 100.00% | s/batch: 169.6620967388
+Epoch 2/2 [SUMMARY]: Loss: 0.4703 | Val loss: 0.0000 | Train acc: 84.62% | Val acc: 100.00%
+  s/epoch: 169.6621 | avr s/batch: 84.8310
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 90.38%
+Avg val accuracy: 100.00%
+Best model from epoch: 1
+    Batch 1: Loss: 1.7858129740 | Confidence: 81.70% | Accuracy: 81.25% | s/batch: 248.3564312458
+    Batch 2: Loss: 0.9626153708 | Confidence: 50.00% | Accuracy: 90.00% | s/batch: 160.8870029449
+Epoch 1/2 [SUMMARY]: Loss: 1.3742 | Val loss: 0.0000 | Train acc: 84.62% | Val acc: 100.00%
+  s/epoch: 160.8870 | avr s/batch: 80.4435
+    Batch 3: Loss: 0.6249620318 | Confidence: 56.17% | Accuracy: 93.75% | s/batch: 243.6319658756
+    Batch 4: Loss: 0.0113650113 | Confidence: 58.92% | Accuracy: 100.00% | s/batch: 150.8500969410
+Epoch 2/2 [SUMMARY]: Loss: 0.3182 | Val loss: 0.0001 | Train acc: 96.15% | Val acc: 100.00%
+  s/epoch: 150.8501 | avr s/batch: 75.4250
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 90.38%
+Avg val accuracy: 100.00%
+Best model from epoch: 1
+    Batch 1: Loss: 0.8491618037 | Confidence: 44.08% | Accuracy: 81.25% | s/batch: 217.9767551422
+    Batch 2: Loss: 0.3224972486 | Confidence: 79.61% | Accuracy: 90.00% | s/batch: 133.3102509975
+Epoch 1/2 [SUMMARY]: Loss: 0.5858 | Val loss: 3.1264 | Train acc: 84.62% | Val acc: 66.67%
+  s/epoch: 133.3103 | avr s/batch: 66.6551
+    Batch 3: Loss: 0.4810768664 | Confidence: 74.65% | Accuracy: 81.25% | s/batch: 225.0643250942
+    Batch 4: Loss: 0.1024300605 | Confidence: 86.65% | Accuracy: 90.00% | s/batch: 146.6518170834
+Epoch 2/2 [SUMMARY]: Loss: 0.2918 | Val loss: 0.0297 | Train acc: 84.62% | Val acc: 100.00%
+  s/epoch: 146.6518 | avr s/batch: 73.3259
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 84.62%
+Avg val accuracy: 83.33%
+Best model from epoch: 2
+    Batch 1: Loss: 0.0049472796 | Confidence: 56.73% | Accuracy: 100.00% | s/batch: 258.1932411194
+    Batch 2: Loss: 0.0001490599 | Confidence: 69.99% | Accuracy: 100.00% | s/batch: 143.7770888805
+Epoch 1/2 [SUMMARY]: Loss: 0.0025 | Val loss: 1.5663 | Train acc: 100.00% | Val acc: 83.33%
+  s/epoch: 143.7771 | avr s/batch: 71.8885
+    Batch 3: Loss: 0.1368554831 | Confidence: 49.71% | Accuracy: 93.75% | s/batch: 252.1285400391
+    Batch 4: Loss: 0.0001793198 | Confidence: 69.98% | Accuracy: 100.00% | s/batch: 144.8580150604
+Epoch 2/2 [SUMMARY]: Loss: 0.0685 | Val loss: 0.0156 | Train acc: 96.15% | Val acc: 100.00%
+  s/epoch: 144.8580 | avr s/batch: 72.4290
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 98.08%
+Avg val accuracy: 91.67%
+Best model from epoch: 2
+    Batch 1: Loss: 0.0014835368 | Confidence: 62.43% | Accuracy: 100.00% | s/batch: 252.8297340870
+    Batch 2: Loss: 0.0096894708 | Confidence: 70.92% | Accuracy: 100.00% | s/batch: 157.9090831280
+Epoch 1/2 [SUMMARY]: Loss: 0.0056 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 157.9091 | avr s/batch: 78.9545
+    Batch 3: Loss: 0.0001873900 | Confidence: 62.48% | Accuracy: 100.00% | s/batch: 277.0592229366
+    Batch 4: Loss: 0.0000958426 | Confidence: 69.99% | Accuracy: 100.00% | s/batch: 156.3570170403
+Epoch 2/2 [SUMMARY]: Loss: 0.0001 | Val loss: 1.0574 | Train acc: 100.00% | Val acc: 83.33%
+  s/epoch: 156.3570 | avr s/batch: 78.1785
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 100.00%
+Avg val accuracy: 91.67%
+Best model from epoch: 1
+    Batch 1: Loss: 0.0000085830 | Confidence: 62.50% | Accuracy: 100.00% | s/batch: 270.7552132607
+    Batch 2: Loss: 0.0000037908 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 180.2680807114
+Epoch 1/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 180.2681 | avr s/batch: 90.1340
+    Batch 3: Loss: 0.0000022650 | Confidence: 56.25% | Accuracy: 100.00% | s/batch: 253.2918767929
+    Batch 4: Loss: 0.0000019550 | Confidence: 60.00% | Accuracy: 100.00% | s/batch: 152.3186838627
+Epoch 2/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 152.3187 | avr s/batch: 76.1593
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 100.00%
+Avg val accuracy: 100.00%
+Best model from epoch: 2
+    Batch 1: Loss: 0.0000052749 | Confidence: 68.75% | Accuracy: 100.00% | s/batch: 238.3944919109
+    Batch 2: Loss: 0.0000010729 | Confidence: 80.00% | Accuracy: 100.00% | s/batch: 153.3506119251
+Epoch 1/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.3117 | Train acc: 100.00% | Val acc: 83.33%
+  s/epoch: 153.3506 | avr s/batch: 76.6753
+    Batch 3: Loss: 0.6215026975 | Confidence: 87.50% | Accuracy: 93.75% | s/batch: 259.2923772335
+    Batch 4: Loss: 0.0000010729 | Confidence: 60.00% | Accuracy: 100.00% | s/batch: 155.5265929699
+Epoch 2/2 [SUMMARY]: Loss: 0.3108 | Val loss: 0.0000 | Train acc: 96.15% | Val acc: 100.00%
+  s/epoch: 155.5266 | avr s/batch: 77.7633
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 98.08%
+Avg val accuracy: 91.67%
+Best model from epoch: 2
+    Batch 1: Loss: 0.8102983832 | Confidence: 56.25% | Accuracy: 93.75% | s/batch: 255.2009489536
+    Batch 2: Loss: 0.0000017524 | Confidence: 70.00% | Accuracy: 100.00% | s/batch: 162.1061890125
+Epoch 1/2 [SUMMARY]: Loss: 0.4052 | Val loss: 1.0591 | Train acc: 96.15% | Val acc: 83.33%
+  s/epoch: 162.1062 | avr s/batch: 81.0531
+    Batch 3: Loss: 0.1839174032 | Confidence: 84.40% | Accuracy: 87.50% | s/batch: 320.4996087551
+    Batch 4: Loss: 0.0000069498 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 193.7152500153
+Epoch 2/2 [SUMMARY]: Loss: 0.0920 | Val loss: 0.0000 | Train acc: 92.31% | Val acc: 100.00%
+  s/epoch: 193.7153 | avr s/batch: 96.8576
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 94.23%
+Avg val accuracy: 91.67%
+Best model from epoch: 2

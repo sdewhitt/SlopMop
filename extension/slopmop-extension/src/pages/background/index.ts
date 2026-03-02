@@ -14,6 +14,8 @@ import {
   resetStats,
   resetSettings,
 } from '@src/lib/firestore';
+import { detectText } from '@src/lib/api';
+
 import type { DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
@@ -64,6 +66,7 @@ browser.runtime.onInstalled.addListener(async () => {
           linkedin: true,
         },
         showNotifications: true,
+        accessibilityMode: false,
       },
     });
   }
@@ -77,6 +80,7 @@ interface BackgroundMessage {
   password?: string;
   uid?: string;
   patch?: Partial<DetectionSettings>;
+  text?: string;
 }
 
 interface MessageResponse {
@@ -108,6 +112,8 @@ browser.runtime.onMessage.addListener((message: unknown) => {
       return handleResetStats(msg.uid!);
     case 'SLOPMOP_RESET_SETTINGS':
       return handleResetSettings(msg.uid!);
+    case 'SLOPMOP_DETECT':
+      return handleDetect(msg.text ?? '');
     default:
       return;
   }
@@ -221,6 +227,19 @@ async function handleResetSettings(uid: string): Promise<MessageResponse> {
   try {
     await resetSettings(uid);
     return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleDetect(text: string): Promise<MessageResponse> {
+  try {
+    const result = await detectText(text);
+    await browser.storage.local.set({
+      detectResponse: result,
+      lastDetectResponse: result,
+    });
+    return { success: true, data: result };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
   }
