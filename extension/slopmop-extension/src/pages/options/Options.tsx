@@ -13,6 +13,7 @@ interface Settings {
     linkedin: boolean;
   };
   showNotifications: boolean;
+  accessibilityMode: boolean;
 }
 
 const defaultSettings: Settings = {
@@ -27,6 +28,7 @@ const defaultSettings: Settings = {
     linkedin: true,
   },
   showNotifications: true,
+  accessibilityMode: false,
 };
 
 function Toggle({ checked, onChange, label, description }: {
@@ -106,7 +108,7 @@ export default function Options() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className={`min-h-screen bg-gray-950 text-white ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}>
       <div className="max-w-2xl mx-auto px-6 py-10">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
@@ -131,6 +133,12 @@ export default function Options() {
               onChange={(v) => update('showNotifications', v)}
               label="Show Notifications"
               description="Display a notification when AI content is detected"
+            />
+            <Toggle
+              checked={settings.accessibilityMode}
+              onChange={(v) => update('accessibilityMode', v)}
+              label="Accessibility Mode"
+              description="Larger text and higher contrast for low-vision users"
             />
           </div>
         </section>
