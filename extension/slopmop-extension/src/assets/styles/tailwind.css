@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Use class-based dark mode (apply .dark on html) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
     --animate-spin-slow: spin 20s linear infinite;
 
