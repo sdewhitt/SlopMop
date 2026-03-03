@@ -32,6 +32,8 @@ import time
 # for validation loop
 import numpy as np
 
+# for stress testing
+from stress_test_generator import StressTestGenerator
 
 # Custom model for desklib/ai-text-detector-v1.01 (single logit + sigmoid, not AutoModelForSequenceClassification)
 class DesklibAIDetectionModel(PreTrainedModel):
@@ -147,7 +149,7 @@ def gsingh1_to_text_label(dataset):
 
 
 # runing every batch in gsignh1 will take hours, so choose 50 or 100 of each label and 100 of mixed at random per run
-def sample_subset(dataset, n_human=32, n_ai=32, n_mixed=32 , seed=None):
+def sample_subset(dataset, n_human=128, n_ai=128, n_mixed=128, seed=None):
   rng = random.Random(seed)
   indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
   indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
@@ -287,36 +289,58 @@ if __name__ == "__main__":
     print(f"Using subset of {len(dataset)} examples for training.\n")
 
 
-    # split for validation
+    # split for validation, training, and testing
     n = len(dataset)
     indices = np.arange(n)
+
     # shuffle the indices
     np.random.seed(42)
     np.random.shuffle(indices)
+
+    # get the testing indices
+    test_size = int(0.2 * n)
+    test_indices = indices[test_size:]
     # get the validation indices
     val_size = int(0.2 * n)
     val_indices = indices[:val_size]
     # get the training indices
     train_indices = indices[val_size:]
     train_dataset = dataset.select(train_indices)
+
+
     # get the validation dataset
     val_dataset = dataset.select(val_indices)
+    # get the testing dataset
+    test_dataset = dataset.select(test_indices)
+    n_test = len(test_dataset)
+    half = n_test // 2
+    # split the testing dataset into normal and stress test datasets
+    test_normal_dataset = test_dataset.select(range(half))
+    test_stress_dataset = test_dataset.select(range(half, n_test))
 
     # get the text column from the dataset, clean, tokenize, and set the format for both training and validation
     text_column = get_text_column(train_dataset)
 
     cleaned_train_dataset = train_dataset.map(lambda ex: clean_example(ex, text_column))
     cleaned_val_dataset = val_dataset.map(lambda ex: clean_example(ex, text_column))
+    cleaned_test_normal_dataset = test_normal_dataset.map(lambda ex: clean_example(ex, text_column))
+    cleaned_test_stress_dataset = test_stress_dataset.map(lambda ex: clean_example(ex, text_column))
 
     tokenized_train_dataset = cleaned_train_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
     tokenized_val_dataset = cleaned_val_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
+    tokenized_test_normal_dataset = cleaned_test_normal_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
+    tokenized_test_stress_dataset = cleaned_test_stress_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
 
     tokenized_train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
     tokenized_val_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    tokenized_test_normal_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    tokenized_test_stress_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
 
     train_dataloader = DataLoader(tokenized_train_dataset, batch_size=16, shuffle=True)
     val_dataloader = DataLoader(tokenized_val_dataset, batch_size=16, shuffle=False)
-    
+    test_normal_dataloader = DataLoader(tokenized_test_normal_dataset, batch_size=16, shuffle=False)
+    test_stress_dataloader = DataLoader(tokenized_test_stress_dataset, batch_size=16, shuffle=False)
+
     # create the optimizer and loss function
     optimizer = AdamW(detector.model.parameters(), lr=5e-5)
 
@@ -512,3 +536,82 @@ if __name__ == "__main__":
       print(f"Saved best model weights to {best_model_gzip_path} and best_text_detector_fp16.pt")
     writer.close()
     print("Training complete.")
+
+    print("Start testing...")
+    # test the model
+    detector.model.eval()
+    total_test_loss = 0.0
+    total_test_correct = 0
+    total_test_samples = 0
+
+
+    with torch.no_grad():
+      for batch in test_normal_dataloader:
+        input_ids = batch["input_ids"].to(detector.device)
+        attention_mask = batch["attention_mask"].to(detector.device)
+        labels = batch["label"].to(detector.device)
+
+        outputs = detector.model(input_ids, attention_mask=attention_mask)
+        logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+
+        if detector.use_binary_logit:
+          loss = loss_fn(logits.squeeze(-1), labels.float())
+          probs = torch.sigmoid(logits.squeeze(-1))
+        else:
+          loss = loss_fn(logits, labels)
+          probs = torch.softmax(logits, dim=1)[:, 1]
+
+        total_test_loss += loss.item()
+
+        preds = (probs >= 0.5).long()
+        total_test_correct += (preds == labels).sum().item()
+        total_test_samples += labels.size(0)
+
+    avg_test_loss = total_test_loss / len(test_normal_dataloader)
+    test_accuracy_pct = (total_test_correct / total_test_samples) * 100 if total_test_samples else 0.0
+    print(f"Test loss: {avg_test_loss:.4f} | Test accuracy: {test_accuracy_pct:.2f}%")
+    with open(export_file_path, "a") as f:
+      f.write(f"Test loss: {avg_test_loss:.4f} | Test accuracy: {test_accuracy_pct:.2f}%\n")
+    print("Testing complete.")
+
+    print("Start stress testing...")
+    # stress test the model
+
+    tester = StressTestGenerator()
+
+    stress_test_dataset = tester.generate_stress_test_dataset(test_stress_dataset)
+    stress_test_dataloader = DataLoader(stress_test_dataset, batch_size=16, shuffle=False)
+
+    detector.model.eval()
+    total_stress_test_loss = 0.0
+    total_stress_test_correct = 0
+    total_stress_test_samples = 0
+
+    with torch.no_grad():
+      for batch in test_stress_dataloader:
+        input_ids = batch["input_ids"].to(detector.device)
+        attention_mask = batch["attention_mask"].to(detector.device)
+        labels = batch["label"].to(detector.device)
+
+        outputs = detector.model(input_ids, attention_mask=attention_mask)
+        logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+
+        if detector.use_binary_logit:
+          loss = loss_fn(logits.squeeze(-1), labels.float())
+          probs = torch.sigmoid(logits.squeeze(-1))
+        else:
+          loss = loss_fn(logits, labels)
+          probs = torch.softmax(logits, dim=1)[:, 1]
+
+        total_stress_test_loss += loss.item()
+
+        preds = (probs >= 0.5).long()
+        total_stress_test_correct += (preds == labels).sum().item()
+        total_stress_test_samples += labels.size(0)
+
+    avg_stress_test_loss = total_stress_test_loss / len(test_stress_dataloader)
+    stress_test_accuracy_pct = (total_stress_test_correct / total_stress_test_samples) * 100 if total_stress_test_samples else 0.0
+    print(f"Stress test loss: {avg_stress_test_loss:.4f} | Stress test accuracy: {stress_test_accuracy_pct:.2f}%")
+    with open(export_file_path, "a") as f:
+      f.write(f"Stress test loss: {avg_stress_test_loss:.4f} | Stress test accuracy: {stress_test_accuracy_pct:.2f}%\n")
+    print("Stress testing complete.")

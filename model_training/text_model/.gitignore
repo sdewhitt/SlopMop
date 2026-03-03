@@ -7,5 +7,10 @@
 *.bin
 *.safetensors
 
+*.onnx
+
 # TensorBoard logs
 model_training/text_model/runs/
+
+
+node_modules
