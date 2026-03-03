@@ -1,0 +1,320 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, act, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import browser from 'webextension-polyfill';
+
+// ── Mocks ────────────────────────────────────────────────────────
+
+// Track the storage.onChanged listener so tests can simulate auth changes
+let storageChangedCallback: ((changes: Record<string, unknown>) => void) | null = null;
+
+vi.mock('webextension-polyfill', () => ({
+  default: {
+    storage: {
+      local: {
+        get: vi.fn().mockResolvedValue({}),
+        set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+      },
+      onChanged: {
+        addListener: vi.fn((cb: (changes: Record<string, unknown>) => void) => {
+          storageChangedCallback = cb;
+        }),
+        removeListener: vi.fn(),
+      },
+    },
+    identity: {
+      getRedirectURL: vi.fn(() => 'https://mock-extension-id.chromiumapp.org/'),
+      launchWebAuthFlow: vi.fn().mockResolvedValue(
+        'https://mock-extension-id.chromiumapp.org/#id_token=mock-id-token',
+      ),
+    },
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue({ success: true }),
+    },
+  },
+}));
+
+vi.mock('firebase/app', () => ({
+  initializeApp: vi.fn(() => ({})),
+  getApps: vi.fn(() => []),
+}));
+
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  setPersistence: vi.fn().mockResolvedValue(undefined),
+  indexedDBLocalPersistence: {},
+  GoogleAuthProvider: vi.fn(),
+  onAuthStateChanged: vi.fn(() => vi.fn()),
+}));
+
+import Popup from '@pages/popup/Popup';
+import { AuthProvider } from '../hooks/useAuth';
+import { PanelProvider } from '@pages/popup/PanelContext';
+import React from 'react';
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+/** Render Popup signed in with default (empty) storage. */
+function renderHome() {
+  // Return slopmopUser from storage.local.get to simulate signed-in
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+  });
+
+  const result = render(
+    <AuthProvider>
+      <Popup />
+    </AuthProvider>,
+  );
+  return result;
+}
+
+/** Render Popup signed in with custom storage values returned by browser.storage.local.get. */
+function renderHomeWithStorage(storageValues: Record<string, unknown>) {
+  // Merge slopmopUser with custom storage values
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    ...storageValues,
+  });
+  const result = render(
+    <AuthProvider>
+      <Popup />
+    </AuthProvider>,
+  );
+  return result;
+}
+
+// ── Tests ────────────────────────────────────────────────────────
+
+describe('Popup Homepage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storageChangedCallback = null;
+    // Default: signed-in user for most tests
+    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    });
+    // Re-capture storage listener
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>) => void) => {
+        storageChangedCallback = cb;
+      },
+    );
+  });
+
+  // ── Header ──────────────────────────────────────────────────
+
+  it('should render the SlopMop title and logo', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByAltText('SlopMop logo')).toBeInTheDocument();
+  });
+
+  it('should show the settings gear button', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByLabelText('Settings')).toBeInTheDocument();
+  });
+
+  it('should show a close panel button on the home view', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByLabelText('Close panel')).toBeInTheDocument();
+  });
+
+  it('should call closePanel from context when close button is clicked', async () => {
+    const closeFn = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PanelProvider closePanel={closeFn}>
+        <AuthProvider>
+          <Popup />
+        </AuthProvider>
+      </PanelProvider>,
+    );
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Close panel'));
+    expect(closeFn).toHaveBeenCalled();
+  });
+
+  it('should display "Active" status badge when detection is enabled', async () => {
+    renderHome();
+    expect(await screen.findByText('Active')).toBeInTheDocument();
+  });
+
+  it('should display "Paused" status badge after pausing detection', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    expect(await screen.findByText('Active')).toBeInTheDocument();
+
+    const pauseButton = screen.getByRole('button', { name: /Pause Detection/i });
+    await user.click(pauseButton);
+
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+  });
+
+  // ── Detection Toggle ────────────────────────────────────────
+
+  it('should render the "Pause Detection" button when enabled', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Pause Detection/i })).toBeInTheDocument();
+  });
+
+  it('should switch to "Enable Detection" after clicking pause', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    const pauseBtn = screen.getByRole('button', { name: /Pause Detection/i });
+    await user.click(pauseBtn);
+
+    expect(screen.getByRole('button', { name: /Enable Detection/i })).toBeInTheDocument();
+  });
+
+  it('should persist the toggle state to browser.storage.local', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    const pauseBtn = screen.getByRole('button', { name: /Pause Detection/i });
+    await user.click(pauseBtn);
+
+    expect(browser.storage.local.set).toHaveBeenCalledWith({ enabled: false });
+
+    const enableBtn = screen.getByRole('button', { name: /Enable Detection/i });
+    await user.click(enableBtn);
+
+    expect(browser.storage.local.set).toHaveBeenCalledWith({ enabled: true });
+  });
+
+  // ── Stats Grid ──────────────────────────────────────────────
+
+  it('should render all three stat cards with zero values by default', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    expect(screen.getByText('Posts Scanned')).toBeInTheDocument();
+    expect(screen.getByText('Processing')).toBeInTheDocument();
+    expect(screen.getByText('AI Detected')).toBeInTheDocument();
+
+    // Default stats are all zero
+    const zeroes = screen.getAllByText('0');
+    expect(zeroes.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('should display stat values loaded from Firestore', async () => {
+    // Mock sendMessage to return Firestore settings via the background proxy
+    (browser.runtime.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
+        settings: {
+          sensitivity: 'medium',
+          highlightStyle: 'badge',
+          showNotifications: true,
+          platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+        },
+        stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
+      },
+    });
+    renderHome();
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(await screen.findByText('42')).toBeInTheDocument();
+    expect(screen.getByText('7')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  // ── Disclaimer Banner ───────────────────────────────────────
+
+  it('should render the detection disclaimer', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByText(/Detection Notice/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/probability-based estimates, not definitive determinations/),
+    ).toBeInTheDocument();
+  });
+
+  // ── Sign Out Button ─────────────────────────────────────────
+
+  it('should render a Sign Out button on the home view', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sign Out/i })).toBeInTheDocument();
+  });
+
+  // ── Confidence Display ──────────────────────────────────────
+
+  it('should not show confidence section when no detection response exists', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(screen.queryByText(/Confidence:/)).not.toBeInTheDocument();
+  });
+
+  it('should show confidence when a detection response is in storage', async () => {
+    renderHomeWithStorage({
+      lastDetectResponse: { confidence: 0.85 },
+    });
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    // ConfidenceDisplay + inline section both render confidence text
+    const confidenceEls = screen.getAllByText(/Confidence:\s*85\s*%/);
+    expect(confidenceEls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('should show confidence from alternative field names', async () => {
+    renderHomeWithStorage({
+      detectResponse: { confidenceScore: 0.62 },
+    });
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    const confidenceEls = screen.getAllByText(/Confidence:\s*62\s*%/);
+    expect(confidenceEls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('should render an explanation alongside the confidence score', async () => {
+    renderHomeWithStorage({
+      lastDetectResponse: { confidence: 0.85, explanation: 'High AI likelihood detected.' },
+    });
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    const confidenceEls = screen.getAllByText(/Confidence:\s*85\s*%/);
+    expect(confidenceEls.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('High AI likelihood detected.')).toBeInTheDocument();
+  });
+
+  // ── Navigation to Settings ──────────────────────────────────
+
+  it('should navigate to settings view when the settings button is clicked', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+
+    // Settings header appears, home-specific elements disappear
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.queryByText('Pause Detection')).not.toBeInTheDocument();
+  });
+
+  // ── Storage listener lifecycle ──────────────────────────────
+
+  it('should register and clean up the storage.onChanged listener', async () => {
+    const { unmount } = renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    expect(browser.storage.onChanged.addListener).toHaveBeenCalled();
+
+    unmount();
+
+    expect(browser.storage.onChanged.removeListener).toHaveBeenCalled();
+  });
+});

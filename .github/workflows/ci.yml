@@ -1,0 +1,37 @@
+name: Build and Zip Chrome Extension
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension/slopmop-extension
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+ 
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'yarn'
+          cache-dependency-path: 'extension/slopmop-extension/yarn.lock'
+ 
+      - name: Install dependencies
+        run: yarn
+ 
+      - name: Build Chrome
+        run: yarn build:chrome
+
+      - name: Upload Chrome extension artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vite-web-extension-chrome
+          path: extension/slopmop-extension/dist_chrome
