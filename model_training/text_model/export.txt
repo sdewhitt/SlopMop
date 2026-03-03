@@ -179,3 +179,35 @@ Avg val accuracy: 100.00%
 Best model from epoch: 1
 Test loss: 0.0000 | Test accuracy: 100.00%
 Stress test loss: 0.0000 | Stress test accuracy: 100.00%
+
+
+ ------------------------------------- 
+    Batch 1: Loss: 0.0000035763 | Confidence: 37.50% | Accuracy: 100.00% | s/batch: 152.4518010616
+Epoch 1/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 152.4518 | avr s/batch: 152.4518
+    Batch 2: Loss: 0.0000019819 | Confidence: 37.50% | Accuracy: 100.00% | s/batch: 158.1539001465
+Epoch 2/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 158.1539 | avr s/batch: 158.1539
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 100.00%
+Avg val accuracy: 100.00%
+Best model from epoch: 2
+Test loss: 0.0000 | Test accuracy: 100.00%
+Stress test loss: 0.0000 | Stress test accuracy: 100.00%
+
+
+ ------------------------------------- 
+    Batch 1: Loss: 0.0000022799 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 156.7637181282
+Epoch 1/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 156.7637 | avr s/batch: 156.7637
+    Batch 2: Loss: 0.0000011325 | Confidence: 50.00% | Accuracy: 100.00% | s/batch: 164.1773190498
+Epoch 2/2 [SUMMARY]: Loss: 0.0000 | Val loss: 0.0000 | Train acc: 100.00% | Val acc: 100.00%
+  s/epoch: 164.1773 | avr s/batch: 164.1773
+
+--- SESSION SUMMARY ---
+Avg train accuracy: 100.00%
+Avg val accuracy: 100.00%
+Best model from epoch: 2
+Test loss: 0.0000 | Test accuracy: 100.00%
+Stress test loss: 0.0000 | Stress test accuracy: 100.00%
