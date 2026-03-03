@@ -12,6 +12,13 @@ import browser from 'webextension-polyfill';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
+import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
+import { PostExtractor } from '@src/core/PostExtractor';
+import { FeedObserver } from '@src/core/FeedObserver';
+import { OverlayRenderer } from '@src/core/OverlayRenderer';
+import { DEFAULT_SETTINGS } from '@src/types/domain';
+import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
+import { renderDebugBadge } from './debug';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
 import panelCss from './panel.css?inline';
 
@@ -96,3 +103,29 @@ try {
   console.error(e);
 }
 
+// ── Feed observer ─────────────────────────────────────────────
+// Scans social media feeds for AI-generated posts and renders overlays.
+try {
+  renderDebugBadge();
+
+  const isReddit = window.location.hostname.includes('reddit.com');
+  if (isReddit) {
+    const feedSettings = { ...DEFAULT_SETTINGS };
+    if (feedSettings.enabled) {
+      const adapter = new RedditAdapter();
+      const extractor = new PostExtractor();
+      const overlay = new OverlayRenderer(adapter, feedSettings);
+      const bus = new ExtensionMessageBus();
+      const observer = new FeedObserver(adapter, extractor, overlay, bus, feedSettings);
+
+      bus.onDetectionResponse((res) => {
+        overlay.renderResult(res.postId, res);
+      });
+
+      observer.start();
+      console.log('[SlopMop] FeedObserver started');
+    }
+  }
+} catch (e) {
+  console.error('[SlopMop] observer init error', e);
+}
