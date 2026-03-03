@@ -149,7 +149,7 @@ def gsingh1_to_text_label(dataset):
 
 
 # runing every batch in gsignh1 will take hours, so choose 50 or 100 of each label and 100 of mixed at random per run
-def sample_subset(dataset, n_human=32, n_ai=32, n_mixed=32 , seed=None):
+def sample_subset(dataset, n_human=128, n_ai=128, n_mixed=128, seed=None):
   rng = random.Random(seed)
   indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
   indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
