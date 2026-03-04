@@ -254,13 +254,13 @@ export default function Popup() {
   if (view === 'settings') {
     return (
       <div
-        className={`w-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
           settings.accessibilityMode ? 'accessibility-mode' : ''
         }`}
       >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
-        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-none flex-1">
+        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
           {/* Simple view: only detection on/off (on Home) and account remain; advanced settings hidden */}
           {!simpleMode && (
             <>
