@@ -1,0 +1,65 @@
+Create file: extension/slopmop-extension/src/lib/api.ts
+Paste the code below as the entire file contents.
+================================================================
+
+/**
+ * SlopMop backend API client.
+ * Base URL is set via VITE_API_BASE_URL in .env (e.g. your Render deployment URL).
+ * This module is used by the background script to call the deployed detection API.
+ */
+
+/**
+ * Reads the API base URL from Vite env and validates it.
+ * Must be called from extension context (Vite injects env at build time).
+ */
+const getBaseUrl = (): string => {
+  // VITE_ prefix is required for Vite to expose the variable to the client bundle
+  const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  if (!url?.trim()) {
+    throw new Error(
+      'VITE_API_BASE_URL is not set. Add it to .env (e.g. https://your-app.onrender.com for Render).',
+    );
+  }
+  // Remove trailing slash so we can safely append /detect
+  return url.replace(/\/$/, '');
+};
+
+/**
+ * Shape of the JSON returned by POST /detect.
+ * Matches the backend DetectResponse model.
+ */
+export interface DetectResponse {
+  /** 0.0 = human-like, 1.0 = AI-like */
+  confidence: number;
+  /** "ai" or "human" */
+  label: string;
+  /** Human-readable reason for the detection result */
+  explanation: string;
+}
+
+/**
+ * Sends text to the backend /detect endpoint and returns the result.
+ * Call this from the background script (not popup/content) to avoid CORS issues.
+ *
+ * @param text - The string to analyze for AI vs human origin
+ * @returns Promise with confidence, label, and explanation
+ * @throws Error if VITE_API_BASE_URL is missing or if the API returns an error status
+ */
+export async function detectText(text: string): Promise<DetectResponse> {
+  const baseUrl = getBaseUrl();
+  // POST to {baseUrl}/detect with JSON body { text: "..." }
+  const res = await fetch(`${baseUrl}/detect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text.trim() }),
+  });
+  // If status is not 2xx, try to read error detail from response body
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((err as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  // Parse and return the detection result
+  return res.json() as Promise<DetectResponse>;
+}
+
+================================================================

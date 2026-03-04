@@ -1,0 +1,159 @@
+index.ts — BACKEND INTEGRATION CHANGES (with surrounding context)
+================================================================
+Find each section below in src/pages/background/index.ts and add the marked lines.
+
+----------------------------------------------------------------------------
+CHANGE 1: New import
+----------------------------------------------------------------------------
+Find this block (near the top of the file):
+
+import {
+  getOrCreateUserSettings,
+  updateDetectionSettings,
+  resetStats,
+  resetSettings,
+} from '@src/lib/firestore';
+import type { DetectionSettings } from '@src/utils/userSettings';
+
+ADD this line between the firestore import and the DetectionSettings import:
+
+import { detectText } from '@src/lib/api';
+
+Result should look like:
+
+import {
+  getOrCreateUserSettings,
+  updateDetectionSettings,
+  resetStats,
+  resetSettings,
+} from '@src/lib/firestore';
+import { detectText } from '@src/lib/api';
+import type { DetectionSettings } from '@src/utils/userSettings';
+
+----------------------------------------------------------------------------
+CHANGE 2: New property on BackgroundMessage
+----------------------------------------------------------------------------
+Find this interface:
+
+interface BackgroundMessage {
+  type: string;
+  email?: string;
+  password?: string;
+  uid?: string;
+  patch?: Partial<DetectionSettings>;
+}
+
+ADD this line before the closing brace (after patch line):
+
+  text?: string;
+
+Result should look like:
+
+interface BackgroundMessage {
+  type: string;
+  email?: string;
+  password?: string;
+  uid?: string;
+  patch?: Partial<DetectionSettings>;
+  text?: string;
+}
+
+----------------------------------------------------------------------------
+CHANGE 3: New message case in the switch
+----------------------------------------------------------------------------
+Find this part of the switch:
+
+    case 'SLOPMOP_RESET_SETTINGS':
+      return handleResetSettings(msg.uid!);
+    default:
+      return;
+  }
+});
+
+ADD these two lines between the SLOPMOP_RESET_SETTINGS case and default:
+
+    // ── Backend API ──
+    case 'SLOPMOP_DETECT':
+      return handleDetect(msg.text ?? '');
+
+Result should look like:
+
+    case 'SLOPMOP_RESET_SETTINGS':
+      return handleResetSettings(msg.uid!);
+    // ── Backend API ──
+    case 'SLOPMOP_DETECT':
+      return handleDetect(msg.text ?? '');
+    default:
+      return;
+  }
+});
+
+----------------------------------------------------------------------------
+CHANGE 4: New handler function
+----------------------------------------------------------------------------
+Find this part (after handleResetSettings, before the action.onClicked comment):
+
+async function handleResetSettings(uid: string): Promise<MessageResponse> {
+  try {
+    await resetSettings(uid);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * When the extension icon is clicked, send a toggle message to the content
+ * script in the active tab.
+ ...
+
+ADD the following block between the closing brace of handleResetSettings and
+the /** comment (so the new function sits right after handleResetSettings):
+
+// ── Backend detect ───────────────────────────────────────────────
+
+async function handleDetect(text: string): Promise<MessageResponse> {
+  try {
+    const result = await detectText(text);
+    await browser.storage.local.set({
+      detectResponse: result,
+      lastDetectResponse: result,
+    });
+    return { success: true, data: result };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+Result should look like:
+
+async function handleResetSettings(uid: string): Promise<MessageResponse> {
+  try {
+    await resetSettings(uid);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+// ── Backend detect ───────────────────────────────────────────────
+
+async function handleDetect(text: string): Promise<MessageResponse> {
+  try {
+    const result = await detectText(text);
+    await browser.storage.local.set({
+      detectResponse: result,
+      lastDetectResponse: result,
+    });
+    return { success: true, data: result };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * When the extension icon is clicked, send a toggle message to the content
+ * script in the active tab.
+ ...
+
+================================================================

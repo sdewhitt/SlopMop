@@ -1,0 +1,107 @@
+================================================================================
+POPUP: "Detect Now" BUTTON + INPUT YOUR OWN TEXT (MOCK)
+================================================================================
+File to edit: extension/slopmop-extension/src/pages/popup/Popup.tsx
+
+--------------------------------------------------------------------------------
+1. ADD STATE (inside Popup, with the other useState calls around line 84)
+--------------------------------------------------------------------------------
+
+  const [detectTextInput, setDetectTextInput] = useState('');
+  const [detectLoading, setDetectLoading] = useState(false);
+  const [detectError, setDetectError] = useState<string | null>(null);
+
+
+--------------------------------------------------------------------------------
+2. ADD THE "DETECT NOW" HANDLER (e.g. after resetSettings, before the settings view)
+--------------------------------------------------------------------------------
+
+  const handleDetectNow = async () => {
+    const text = detectTextInput.trim();
+    if (!text) return;
+    setDetectError(null);
+    setDetectLoading(true);
+    try {
+      const res = await browser.runtime.sendMessage({
+        type: 'SLOPMOP_DETECT',
+        text,
+      });
+      if (res?.success) {
+        // Background already wrote to storage; storage listener will update detectResponse
+        // Optional: setDetectResponse(res.data) to show immediately without waiting for storage
+        if (res.data && typeof res.data === 'object') {
+          setDetectResponse(res.data as DetectResponse);
+        }
+      } else {
+        setDetectError(res?.error ?? 'Detection failed');
+      }
+    } catch (e) {
+      setDetectError((e as Error).message ?? 'Connection error');
+    } finally {
+      setDetectLoading(false);
+    }
+  };
+
+
+--------------------------------------------------------------------------------
+3. ADD THE UI SECTION IN THE HOME VIEW
+--------------------------------------------------------------------------------
+Place this block in the home view return (e.g. after the "Toggle" button and
+before the "Stats" grid, or right before the Disclaimer). The existing
+confidence/explanation block at the bottom will show the result after a
+successful detect.
+
+  {/* Detect Now (mock: input your own text) */}
+  <section className="space-y-2">
+    <label className="block text-xs font-medium text-gray-400">
+      Input your own text (mock)
+    </label>
+    <textarea
+      value={detectTextInput}
+      onChange={(e) => setDetectTextInput(e.target.value)}
+      placeholder="Paste or type text to detect..."
+      rows={3}
+      className="w-full px-3 py-2 rounded-lg bg-gray-800 text-gray-200 text-sm placeholder-gray-500 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none"
+      disabled={detectLoading}
+    />
+    <button
+      type="button"
+      onClick={handleDetectNow}
+      disabled={detectLoading || !detectTextInput.trim()}
+      className="w-full py-2.5 rounded-lg font-semibold text-sm bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+    >
+      {detectLoading ? 'Detecting…' : 'Detect Now'}
+    </button>
+    {detectError && (
+      <p className="text-xs text-red-400">{detectError}</p>
+    )}
+  </section>
+
+
+--------------------------------------------------------------------------------
+4. WHERE TO INSERT THE SECTION IN THE JSX
+--------------------------------------------------------------------------------
+In the home view return, the structure is roughly:
+
+  <div className="...">
+    {/* Header */} ...
+    {/* Toggle */} ...
+    <!-- INSERT THE "Detect Now" SECTION HERE -->
+    {/* Stats */} ...
+    {/* Disclaimer */} ...
+    {detectResponse && ( ... )}
+  </div>
+
+So insert the block from section 3 between the Toggle button and the Stats grid.
+
+
+--------------------------------------------------------------------------------
+5. SUMMARY
+--------------------------------------------------------------------------------
+- detectTextInput: textarea value.
+- detectLoading: true while request in flight; disables textarea and button, shows "Detecting…".
+- detectError: set on API/connection failure; show below button.
+- handleDetectNow: trim text, sendMessage SLOPMOP_DETECT, on success set detectResponse (and/or rely on storage listener), on failure set detectError.
+- Existing confidence/explanation block already shows detectResponse; no change needed there.
+
+================================================================================

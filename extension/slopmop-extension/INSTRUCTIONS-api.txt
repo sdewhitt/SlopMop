@@ -1,0 +1,56 @@
+INSTRUCTIONS: Create src/lib/api.ts
+================================================================
+
+Create a new file at:
+
+  extension/slopmop-extension/src/lib/api.ts
+
+Paste the following as the entire file contents:
+
+----------------------------------------------------------------------
+
+/**
+ * SlopMop backend API client.
+ * Base URL is set via VITE_API_BASE_URL in .env (e.g. your Render deployment URL).
+ */
+
+const getBaseUrl = (): string => {
+  const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  if (!url?.trim()) {
+    throw new Error(
+      'VITE_API_BASE_URL is not set. Add it to .env (e.g. https://your-app.onrender.com for Render).',
+    );
+  }
+  return url.replace(/\/$/, ''); // strip trailing slash
+};
+
+export interface DetectResponse {
+  confidence: number;
+  label: string;
+  explanation: string;
+}
+
+/**
+ * Call the backend /detect endpoint. Use from the background script to avoid CORS.
+ */
+export async function detectText(text: string): Promise<DetectResponse> {
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}/detect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text.trim() }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((err as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<DetectResponse>;
+}
+
+----------------------------------------------------------------------
+
+Ensure .env has:
+  VITE_API_BASE_URL=https://slopmop.onrender.com
+(no trailing slash)
+
+================================================================

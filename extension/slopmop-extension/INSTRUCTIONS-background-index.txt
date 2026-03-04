@@ -1,0 +1,54 @@
+INSTRUCTIONS: What to add to src/pages/background/index.ts
+================================================================
+Do these in order. Make sure api.ts exists first.
+
+----------------------------------------------------------------------
+1. ADD IMPORT
+   Location: With the other @src/lib imports (after the firestore import line).
+
+   Add this line:
+   import { detectText } from '@src/lib/api';
+
+----------------------------------------------------------------------
+2. ADD TO INTERFACE BackgroundMessage
+   Location: Inside the interface, add one new property.
+
+   Add this line:
+   text?: string;
+
+----------------------------------------------------------------------
+3. ADD NEW CASE in the switch (message handlers)
+   Location: After the line "return handleResetSettings(msg.uid!);" and BEFORE "default:".
+
+   Add these lines:
+    // ── Backend API ──
+    case 'SLOPMOP_DETECT':
+      return handleDetect(msg.text ?? '');
+
+----------------------------------------------------------------------
+4. ADD NEW HANDLER FUNCTION
+   Location: After the closing brace of handleResetSettings, before the comment
+   "When the extension icon is clicked".
+
+   Add this block:
+
+// ── Backend detect ───────────────────────────────────────────────
+
+async function handleDetect(text: string): Promise<MessageResponse> {
+  try {
+    const result = await detectText(text);
+    await browser.storage.local.set({
+      detectResponse: result,
+      lastDetectResponse: result,
+    });
+    return { success: true, data: result };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+================================================================
+After adding the above, any code can trigger detection by sending:
+  browser.runtime.sendMessage({ type: 'SLOPMOP_DETECT', text: 'text to analyze' })
+The popup reads detectResponse / lastDetectResponse from storage and will show the result.
+================================================================

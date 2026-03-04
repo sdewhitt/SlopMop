@@ -1,0 +1,49 @@
+index.ts — BACKEND INTEGRATION CHANGES ONLY
+============================================
+Add these four pieces to src/pages/background/index.ts. Nothing else in the file changes.
+
+----------------------------------------
+CHANGE 1: New import (add after firestore import)
+----------------------------------------
+
+import { detectText } from '@src/lib/api';
+
+
+----------------------------------------
+CHANGE 2: New property on BackgroundMessage (add inside the interface)
+----------------------------------------
+
+  text?: string;
+
+
+----------------------------------------
+CHANGE 3: New message case (add in switch, after SLOPMOP_RESET_SETTINGS case, before default)
+----------------------------------------
+
+    // ── Backend API ──
+    case 'SLOPMOP_DETECT':
+      return handleDetect(msg.text ?? '');
+
+
+----------------------------------------
+CHANGE 4: New handler (add after handleResetSettings, before "When the extension icon is clicked")
+----------------------------------------
+
+// ── Backend detect ───────────────────────────────────────────────
+
+async function handleDetect(text: string): Promise<MessageResponse> {
+  try {
+    const result = await detectText(text);
+    await browser.storage.local.set({
+      detectResponse: result,
+      lastDetectResponse: result,
+    });
+    return { success: true, data: result };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+
+============================================
+That’s all. No other edits to index.ts.
