@@ -12,7 +12,9 @@ from preprocess import preprocess_text
 
 # Path to ONNX model (relative to this file) when using local file
 _MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
-ONNX_FILENAME = "text_detector.onnx"
+# Use FP32 model on CPU (FP16 causes "tensor(float16) does not match expected type (tensor(float))" on CPU)
+# Set HF_ONNX_FILENAME=text_detector_fp32.onnx and upload that file to your HF repo.
+ONNX_FILENAME = os.environ.get("HF_ONNX_FILENAME", "text_detector.onnx").strip() or "text_detector.onnx"
 LOCAL_ONNX_PATH = os.path.join(_MODEL_DIR, ONNX_FILENAME)
 MODEL_NAME = "desklib/ai-text-detector-v1.01"
 MAX_LENGTH = 512
@@ -27,13 +29,15 @@ def _get_onnx_path() -> str:
     """Resolve ONNX path: from Hugging Face Hub if HF_MODEL_REPO set, else local."""
     repo_id = os.environ.get("HF_MODEL_REPO", "").strip()
     if repo_id:
+        print(f"[SlopMop] Downloading ONNX from Hugging Face ({repo_id}). This may take 2-5 min...", flush=True)
         from huggingface_hub import hf_hub_download
-        return hf_hub_download(
+        path = hf_hub_download(
             repo_id=repo_id,
             filename=ONNX_FILENAME,
             local_dir=_MODEL_DIR,
-            local_dir_use_symlinks=False,
         )
+        print(f"[SlopMop] ONNX download complete: {path}", flush=True)
+        return path
     return LOCAL_ONNX_PATH
 
 
@@ -41,18 +45,25 @@ def _load_model() -> None:
     """Load ONNX session and tokenizer. Called once at startup."""
     global _session, _tokenizer, _load_error
     try:
+        print("[SlopMop] Resolving ONNX path...", flush=True)
         onnx_path = _get_onnx_path()
         if not os.path.exists(onnx_path):
             raise FileNotFoundError(f"ONNX model not found at {onnx_path}")
+        print("[SlopMop] Loading ONNX session...", flush=True)
         _session = ort.InferenceSession(
             onnx_path,
             providers=["CPUExecutionProvider"],
         )
+        print("[SlopMop] Loading tokenizer...", flush=True)
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        print("[SlopMop] Detector ready.", flush=True)
     except Exception as e:
+        import traceback
         _load_error = str(e)
         _session = None
         _tokenizer = None
+        print(f"[SlopMop] Model load failed: {e}", flush=True)
+        traceback.print_exc()
 
 
 def detect(text: str) -> float:
