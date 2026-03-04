@@ -1,5 +1,6 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
-import type { NormalizedPostContent, UserSettings, ContentType } from "@src/types/domain";
+import type { NormalizedPostContent } from "@src/types/domain";
+import type { DetectionSettings } from "@src/utils/userSettings";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -16,7 +17,7 @@ export class FeedObserver {
 
     private adapter: SiteAdapter;
     private extractor: PostExtractor;
-    private settings: UserSettings;
+    private settings: DetectionSettings;
     private overlay: OverlayRenderer;
     private bus: ExtensionMessageBus;
     private observer: MutationObserver | null = null;
@@ -28,7 +29,7 @@ export class FeedObserver {
     // which is number in browsers and NodeJS.Timeout in node
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: UserSettings) {
+    constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
         this.extractor = extractor;
         this.overlay = overlay;
@@ -183,14 +184,7 @@ export class FeedObserver {
         // check 1: is the extension turned on at all?
         if (!this.settings.enabled) return false;
 
-        // check 2: is this site in the whitelist?
-        // empty whitelist means "allow all sites"
-        if (this.settings.whitelist.length > 0
-            && !this.settings.whitelist.includes(post.site)) {
-            return false;
-        }
-
-        // check 3: does the content type match what the user wants to scan?
+        // check 2: does the content type match what the user wants to scan?
         // if scanText is false and this is a TEXT post, skip it
         // if scanImages is false and this is an IMAGE post, skip it
         // MIXED requires at least one of scanText or scanImages

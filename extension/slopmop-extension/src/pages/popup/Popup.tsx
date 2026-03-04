@@ -44,26 +44,25 @@ export default function Popup() {
   useEffect(() => {
     browser.storage.local
       .get([
-        'enabled',
         'postsScanned',
         'aiDetected',
         'postsProcessing',
         'settings',
-        // Most recent backend `/detect` response (if/when written by detection pipeline)
         'detectResponse',
         'lastDetectResponse',
         'lastDetection',
         'detectionResult',
       ])
       .then((result) => {
-        if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
         setStats({
           postsScanned: (result.postsScanned as number) || 0,
           aiDetected: (result.aiDetected as number) || 0,
           postsProcessing: (result.postsProcessing as number) || 0,
         });
         if (result.settings) {
-          setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+          const merged = { ...defaultSettings, ...(result.settings as Settings) };
+          setSettings(merged);
+          setEnabled(merged.enabled);
         }
 
         const raw =
@@ -84,10 +83,15 @@ export default function Popup() {
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
         platforms: { ...remote.settings.platforms },
+        enabled: remote.settings.enabled ?? defaultSettings.enabled,
+        scanText: remote.settings.scanText ?? defaultSettings.scanText,
+        scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
+        scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
+        uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
       };
       setSettings(merged);
+      setEnabled(merged.enabled);
       setStats(remote.stats);
-      // Mirror to local storage so the content script can read without Firestore
       browser.storage.local.set({ settings: merged });
       browser.storage.local.set({
         postsScanned: remote.stats.postsScanned,
@@ -96,27 +100,23 @@ export default function Popup() {
       });
     } catch (err) {
       console.error('[Popup] Failed to load Firestore settings:', err);
-      // Fall back to local storage
       const result = await browser.storage.local.get([
-        'enabled', 'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
+        'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
       ]);
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
       setStats({
         postsScanned: (result.postsScanned as number) || 0,
         aiDetected: (result.aiDetected as number) || 0,
         postsProcessing: (result.postsProcessing as number) || 0,
       });
       if (result.settings) {
-        setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+        const merged = { ...defaultSettings, ...(result.settings as Settings) };
+        setSettings(merged);
+        setEnabled(merged.enabled);
       }
     }
   }, [user]);
 
   useEffect(() => {
-    // Load local "enabled" flag (not stored in Firestore)
-    browser.storage.local.get(['enabled']).then((result) => {
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
-    });
     loadSettings();
   }, [loadSettings]);
 
@@ -142,7 +142,14 @@ export default function Popup() {
   const toggleEnabled = () => {
     const next = !enabled;
     setEnabled(next);
-    browser.storage.local.set({ enabled: next });
+    setSettings((prev) => {
+      const updated = { ...prev, enabled: next };
+      browser.storage.local.set({ settings: updated });
+      if (user) {
+        updateDetectionSettings(user.uid, { enabled: next }).catch(console.error);
+      }
+      return updated;
+    });
   };
 
   const flashSaved = () => {
@@ -195,8 +202,14 @@ export default function Popup() {
       highlightStyle: defaultUserSettings.settings.highlightStyle,
       showNotifications: defaultUserSettings.settings.showNotifications,
       platforms: { ...defaultUserSettings.settings.platforms },
+      enabled: defaultUserSettings.settings.enabled,
+      scanText: defaultUserSettings.settings.scanText,
+      scanImages: defaultUserSettings.settings.scanImages,
+      scanComments: defaultUserSettings.settings.scanComments,
+      uiMode: defaultUserSettings.settings.uiMode,
     };
     setSettings(defaults);
+    setEnabled(defaults.enabled);
     browser.storage.local.set({ settings: defaults });
     flashSaved();
     if (user) {

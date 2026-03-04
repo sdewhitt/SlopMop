@@ -1,4 +1,5 @@
-import { DetectionResponse, PostId, UserSettings} from "@src/types/domain"
+import { DetectionResponse, PostId } from "@src/types/domain"
+import type { DetectionSettings } from "@src/utils/userSettings";
 import type { SiteAdapter } from "./adapters/SiteAdapter";
  
 
@@ -14,10 +15,10 @@ export class OverlayRenderer {
     private mapToPostText = new Map<PostId, string>()
     // used to get DOM node from postId
     private adapter: SiteAdapter;
-    private settings: UserSettings;
+    private settings: DetectionSettings;
 
 
-    constructor(adapter: SiteAdapter, settings: UserSettings) {
+    constructor(adapter: SiteAdapter, settings: DetectionSettings) {
         this.adapter = adapter;
         this.settings = settings;
     }
@@ -26,51 +27,41 @@ export class OverlayRenderer {
     // render DetectionResponse as a badge on the page
     // for now, start with basic appearance, then we can match the UI mockups
     renderResult(postId: PostId, res: DetectionResponse): void {
-        // case1: assume renderPending created an overlay earlier 
-        const overlay = this.mapToOverlay.get(postId); // returns undefined if no postId
-        if (!overlay) return; // this might cause trouble
+        const overlay = this.mapToOverlay.get(postId);
+        if (!overlay) return;
 
-        // store the response so the tooltip can access it on hover
         this.mapToResponse.set(postId, res);
 
+        const isSimple = this.settings.uiMode === "simple";
+
         const colorMap: Record<DetectionResponse["verdict"], string> = {
-            likely_ai: "#ef4444", // red, check with https://www.peekcolor.app/
-            likely_human: "#22c55e", // green
-            unknown: "#6b7280", // grey
+            likely_ai: "#ef4444",
+            likely_human: "#22c55e",
+            unknown: "#6b7280",
         };
         overlay.style.backgroundColor = colorMap[res.verdict];
-        // pointer cursor tells the user the badge is interactive
         overlay.style.cursor = "pointer";
 
-        // display verdict text
-        overlay.textContent = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
-
-        // if detailed mode on, show explanation inline on the badge itself
-        if (this.settings.uiMode === "detailed") {
-            overlay.textContent += ` — ${res.explanation.summary}`;
+        if (isSimple) {
+            overlay.style.fontSize = "14px";
+            overlay.style.padding = "6px 12px";
         }
 
-        // hover tooltip 
-        // tooltip is null when not visible. we track it in a closure
-        // so mouseenter/mouseleave can create and destroy it
-        let tooltip: HTMLElement | null = null;
+        overlay.textContent = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
 
-        // look up the original text so we can render highlight excerpts in the tooltip.
-        // falls back to "" if no text was stored
+        let tooltip: HTMLElement | null = null;
         const postText = this.mapToPostText.get(postId) ?? "";
 
-        // mouseenter: build the tooltip and append it as a child of the badge.
-        // because the badge is position:absolute, the tooltip positions relative to it
         overlay.addEventListener("mouseenter", () => {
-            // guard: don't create a second tooltip if one already exists
             if (tooltip) return;
-            tooltip = this.createTooltip(res, postText);
+            tooltip = isSimple
+                ? this.createSimpleTooltip(res)
+                : this.createTooltip(res, postText);
             overlay.appendChild(tooltip);
         });
 
-        // mouseleave: tear down the tooltip so it doesn't linger
         overlay.addEventListener("mouseleave", () => {
-            tooltip?.remove(); // ?. optional chaining: if tooltip is already null, skip
+            tooltip?.remove();
             tooltip = null;
         });
     }
@@ -86,15 +77,16 @@ export class OverlayRenderer {
         postNode.style.position = "relative";
         postNode.appendChild(overlay);
         // style the overlay object
+        const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
-            position: "absolute", // places it on the post
-            bottom: "8px", // place on the bottom
-            right: "8px", // place on the right side 8 px away from border
-            padding: "4px 8px",
+            position: "absolute",
+            bottom: "8px",
+            right: "8px",
+            padding: isSimple ? "6px 12px" : "4px 8px",
             borderRadius: "4px",
-            fontSize: "12px",
+            fontSize: isSimple ? "14px" : "12px",
             zIndex: "9999",
-            backgroundColor: "#6b7280", // grey
+            backgroundColor: "#6b7280",
             color: "#fff",
         });
         overlay.textContent = "Scanning...";
@@ -119,10 +111,48 @@ export class OverlayRenderer {
         this.mapToPostText.delete(postId);
     }
 
-    // builds the tooltip DOM element that appears when the user hovers over a badge.
-    // postText is the original analyzed text so we can slice out highlighted spans.
-    // pointerEvents: "none" prevents the tooltip from stealing the mouse,
-    // which would cause the badge's mouseleave to fire and flicker the tooltip
+    private createSimpleTooltip(res: DetectionResponse): HTMLElement {
+        const verdictLabel: Record<DetectionResponse["verdict"], string> = {
+            likely_ai: "Likely AI-generated",
+            likely_human: "Likely human-written",
+            unknown: "Inconclusive",
+        };
+
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            bottom: "calc(100% + 8px)",
+            right: "0",
+            minWidth: "200px",
+            maxWidth: "300px",
+            padding: "14px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "14px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "none",
+        });
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "16px",
+            marginBottom: "8px",
+        });
+        header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        tip.appendChild(header);
+
+        const summary = document.createElement("div");
+        Object.assign(summary.style, { fontSize: "14px" });
+        summary.textContent = res.explanation.summary;
+        tip.appendChild(summary);
+
+        return tip;
+    }
+
     private createTooltip(res: DetectionResponse, postText: string): HTMLElement {
         const highlights = res.explanation.highlights ?? [];
         // if there are highlights to show, use a wider tooltip to fit quoted excerpts.

@@ -14,19 +14,21 @@ import {
   resetStats,
   resetSettings,
 } from '@src/lib/firestore';
-import { detectText } from '@src/lib/api';
-import { DetectionResponse, NormalizedPostContent, DEFAULT_SETTINGS, UserSettings } from '@src/types/domain';
-
-import type { DetectionSettings } from '@src/utils/userSettings';
+import { detectText, type DetectResponse} from '@src/lib/api';
+import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
 
 // ── Post analysis ────────────────────────────────────────────────
-// Settings for post analysis (image scanning etc.)
-const settings: UserSettings = { ...DEFAULT_SETTINGS };
-
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
+
+async function getDetectionSettings(): Promise<DetectionSettings> {
+  const stored = await browser.storage.local.get('settings');
+  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
+  return { ...defaultUserSettings.settings, ...saved };
+}
 
 // ── Firebase Auth ────────────────────────────────────────────────
 // All Firebase Auth operations run here in the background script
@@ -59,23 +61,9 @@ browser.runtime.onInstalled.addListener(async () => {
   const result = await browser.storage.local.get('settings');
   if (!result.settings) {
     await browser.storage.local.set({
-      enabled: true,
       postsScanned: 0,
       aiDetected: 0,
-      settings: {
-        enabled: true,
-        sensitivity: 'medium',
-        highlightStyle: 'badge',
-        platforms: {
-          twitter: true,
-          reddit: true,
-          facebook: true,
-          youtube: true,
-          linkedin: true,
-        },
-        showNotifications: true,
-        accessibilityMode: false,
-      },
+      settings: defaultUserSettings.settings,
     });
   }
 });
@@ -264,7 +252,7 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
-  // safety-net: if the user has scanImages disabled, skip image fetching entirely.
+  const settings = await getDetectionSettings();
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
   let enrichedImages = post.images;
@@ -322,6 +310,7 @@ async function fetchImageAsBase64(srcUrl: string): Promise<string> {
     return '';
   }
 }
+
 
 function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | null {
   let fakeResponse: DetectionResponse | undefined;

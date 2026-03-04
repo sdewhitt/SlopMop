@@ -16,8 +16,8 @@ import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
-import { DEFAULT_SETTINGS } from '@src/types/domain';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
+import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
 import panelCss from './panel.css?inline';
@@ -105,27 +105,81 @@ try {
 
 // ── Feed observer ─────────────────────────────────────────────
 // Scans social media feeds for AI-generated posts and renders overlays.
-try {
+
+let activeObserver: FeedObserver | null = null;
+
+function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
+  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
+  return { ...defaultUserSettings.settings, ...saved };
+}
+
+function shouldRunOnCurrentSite(
+  settings: DetectionSettings,
+  ignoredSites: string[],
+): boolean {
+  const hostname = window.location.hostname;
+
+  if (ignoredSites.some((s) => hostname.includes(s))) return false;
+
+  if (hostname.includes('reddit.com')) return settings.platforms.reddit;
+  if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
+  if (hostname.includes('facebook.com')) return settings.platforms.facebook;
+  if (hostname.includes('youtube.com')) return settings.platforms.youtube;
+  if (hostname.includes('linkedin.com')) return settings.platforms.linkedin;
+
+  return false;
+}
+
+function startObserver(settings: DetectionSettings): void {
+  const hostname = window.location.hostname;
+  let adapter;
+  if (hostname.includes('reddit.com')) {
+    adapter = new RedditAdapter();
+  } else {
+    return;
+  }
+
+  const extractor = new PostExtractor();
+  const overlay = new OverlayRenderer(adapter, settings);
+  const bus = new ExtensionMessageBus();
+  activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
+
+  bus.onDetectionResponse((res) => {
+    overlay.renderResult(res.postId, res);
+  });
+
+  activeObserver.start();
+  console.log('[SlopMop] FeedObserver started');
+}
+
+async function initFeedObserver(): Promise<void> {
   renderDebugBadge();
 
-  const isReddit = window.location.hostname.includes('reddit.com');
-  if (isReddit) {
-    const feedSettings = { ...DEFAULT_SETTINGS };
-    if (feedSettings.enabled) {
-      const adapter = new RedditAdapter();
-      const extractor = new PostExtractor();
-      const overlay = new OverlayRenderer(adapter, feedSettings);
-      const bus = new ExtensionMessageBus();
-      const observer = new FeedObserver(adapter, extractor, overlay, bus, feedSettings);
+  const stored = await browser.storage.local.get(['settings', 'ignoredSites']);
+  const settings = resolveDetectionSettings(stored);
+  const ignoredSites = (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
 
-      bus.onDetectionResponse((res) => {
-        overlay.renderResult(res.postId, res);
-      });
+  if (!settings.enabled) return;
+  if (!shouldRunOnCurrentSite(settings, ignoredSites)) return;
 
-      observer.start();
-      console.log('[SlopMop] FeedObserver started');
-    }
-  }
-} catch (e) {
-  console.error('[SlopMop] observer init error', e);
+  startObserver(settings);
 }
+
+browser.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (!changes.settings) return;
+
+  const newSettings = resolveDetectionSettings({
+    settings: changes.settings.newValue,
+  });
+
+  if (!newSettings.enabled && activeObserver) {
+    activeObserver.stop();
+    activeObserver = null;
+    console.log('[SlopMop] FeedObserver stopped via settings change');
+  }
+});
+
+initFeedObserver().catch((e) => {
+  console.error('[SlopMop] observer init error', e);
+});

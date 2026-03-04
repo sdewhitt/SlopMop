@@ -7,6 +7,12 @@ interface DetectionSettingsProps {
   onUpdateSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 }
 
+const SCAN_COMMENTS_LABELS: Record<Settings['scanComments'], string> = {
+  off: 'Off',
+  user_triggered: 'Manual',
+  auto_top_n: 'Auto',
+};
+
 export default function DetectionSettings({ settings, onUpdateSetting }: DetectionSettingsProps) {
   return (
     <section>
@@ -18,6 +24,36 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Show Notifications"
           description="Alert when AI content is detected"
         />
+        <Toggle
+          checked={settings.scanText}
+          onChange={(v) => onUpdateSetting('scanText', v)}
+          label="Scan Text"
+          description="Analyze text content in posts"
+        />
+        <Toggle
+          checked={settings.scanImages}
+          onChange={(v) => onUpdateSetting('scanImages', v)}
+          label="Scan Images"
+          description="Analyze images in posts (coming soon)"
+        />
+        <div className="py-2.5">
+          <p className="text-sm font-medium text-gray-200 mb-1.5">Comment Scanning</p>
+          <div className="flex gap-1.5">
+            {(['off', 'user_triggered', 'auto_top_n'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => onUpdateSetting('scanComments', mode)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  settings.scanComments === mode
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                }`}
+              >
+                {SCAN_COMMENTS_LABELS[mode]}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="py-2.5">
           <p className="text-sm font-medium text-gray-200 mb-1.5">Sensitivity</p>
           <div className="flex gap-1.5">
@@ -50,6 +86,24 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
                 }`}
               >
                 {style}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="py-2.5">
+          <p className="text-sm font-medium text-gray-200 mb-1.5">Detail Mode</p>
+          <div className="flex gap-1.5">
+            {(['simple', 'detailed'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => onUpdateSetting('uiMode', mode)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
+                  settings.uiMode === mode
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                }`}
+              >
+                {mode}
               </button>
             ))}
           </div>
