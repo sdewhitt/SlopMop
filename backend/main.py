@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
+from detector import detect as model_detect
+
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
 # allow all origins, credentials, methods, and headers 
@@ -53,12 +55,12 @@ def score_text(text:str) -> tuple[float, str]:
 def generate_explanation(confidence: float, label: str) -> str:
     if label == "ai":
         return (
-            f"Mock heuristic flagged this as AI-like with confidence {confidence}. "
-            "The text contains multiple transition-style phrases commonly seen in generated writing."
+            f"Model flagged this as AI-like (confidence {confidence:.2f}). "
+            "The text exhibits patterns commonly seen in AI-generated writing."
         )
     return (
-        f"Mock heuristic flagged this as human-like with confidence {confidence}. "
-        "The text contains few AI-style marker phrases based on current rules."
+        f"Model flagged this as human-like (AI confidence {confidence:.2f}). "
+        "The text exhibits patterns commonly seen in human writing."
     )
 
 @app.post("/detect", response_model=DetectResponse)
@@ -77,8 +79,11 @@ def detect(request: DetectRequest):
             detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
         )
     
-    # connect to model here in week 2 of sprint 1
-    confidence, label = score_text(clean_text)
+    try:
+        confidence = model_detect(clean_text)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    label = "ai" if confidence >= 0.5 else "human"
     explanation = generate_explanation(confidence, label)
     return DetectResponse(confidence=confidence, label=label, explanation=explanation)
     

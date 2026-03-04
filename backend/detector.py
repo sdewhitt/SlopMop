@@ -62,10 +62,6 @@ def detect(text: str) -> float:
     input_ids = enc["input_ids"].astype(np.int64)
     attention_mask = enc["attention_mask"].astype(np.int64)
 
-    # Clamp token IDs to model vocab range (BERT vocab_size=30522)
-    # Prevents "indices element out of data bounds" when tokenizer produces out-of-range IDs
-    input_ids = np.clip(input_ids, 0, 30521).astype(np.int64)
-
     outputs = _session.run(
         ["logits"],
         {"input_ids": input_ids, "attention_mask": attention_mask},
