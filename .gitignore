@@ -27,6 +27,9 @@ Thumbs.db
 # Model training (keep venv out of repo)
 model_training/text_model/venv/
 model_training/text_model/runs/
+# Large checkpoints – keep local / HF; not in repo (avoids LFS budget on Render)
+model_training/text_model/best_text_detector.pt.gz
+model_training/text_model/best_text_detector_fp16.pt
 
 # Backend: ONNX loaded from Hugging Face at runtime (HF_MODEL_REPO)
 backend/model/*.onnx
