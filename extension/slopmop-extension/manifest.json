@@ -19,6 +19,12 @@
     "storage",
     "identity"
   ],
+  "host_permissions": [
+    "https://i.redd.it/*",
+    "https://preview.redd.it/*",
+    "https://external-preview.redd.it/*",
+    "https://i.imgur.com/*"
+  ],  
   "content_scripts": [
     {
       "matches": [
@@ -34,6 +40,10 @@
       ]
     }
   ],
+  "background": {
+    "service_worker": "src/pages/background/index.ts",
+    "type": "module"
+  },
   "devtools_page": "src/pages/devtools/index.html",
   "web_accessible_resources": [
     {

@@ -15,10 +15,18 @@ import {
   resetSettings,
 } from '@src/lib/firestore';
 import { detectText } from '@src/lib/api';
+import { DetectionResponse, NormalizedPostContent, DEFAULT_SETTINGS, UserSettings } from '@src/types/domain';
 
 import type { DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
+
+// ── Post analysis ────────────────────────────────────────────────
+// Settings for post analysis (image scanning etc.)
+const settings: UserSettings = { ...DEFAULT_SETTINGS };
+
+// Max number of images to fetch concurrently.
+const IMAGE_FETCH_CONCURRENCY = 3;
 
 // ── Firebase Auth ────────────────────────────────────────────────
 // All Firebase Auth operations run here in the background script
@@ -82,6 +90,7 @@ interface BackgroundMessage {
   uid?: string;
   patch?: Partial<DetectionSettings>;
   text?: string;
+  payload?: NormalizedPostContent;
 }
 
 interface MessageResponse {
@@ -90,11 +99,18 @@ interface MessageResponse {
   data?: unknown;
 }
 
-browser.runtime.onMessage.addListener((message: unknown) => {
+browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime.MessageSender) => {
   if (typeof message !== 'object' || message === null) return;
   const msg = message as BackgroundMessage;
 
   switch (msg.type) {
+    // ── Post analysis ──
+    case 'ANALYZE_POST': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return;
+      handleAnalyzePost(msg.payload!, tabId);
+      return true;
+    }
     // ── Auth ──
     case 'SLOPMOP_LOGIN':
       return handleLogin(msg.email!, msg.password!);
@@ -244,6 +260,124 @@ async function handleDetect(text: string): Promise<MessageResponse> {
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
   }
+}
+
+// ── Post analysis handlers ──────────────────────────────────────
+
+async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  // safety-net: if the user has scanImages disabled, skip image fetching entirely.
+  const shouldFetchImages = settings.scanImages && post.images.length > 0;
+
+  let enrichedImages = post.images;
+  if (shouldFetchImages) {
+    enrichedImages = await fetchImagesThrottled(post.images, IMAGE_FETCH_CONCURRENCY);
+  } else {
+    enrichedImages = post.images.map((img) => ({ ...img, bytesBase64: '' }));
+  }
+
+  const enrichedPost = { ...post, images: enrichedImages };
+
+  const fakeResponse = buildFakeResponse(enrichedPost);
+  browser.tabs.sendMessage(tabId, {
+    type: 'DETECTION_RESULT',
+    payload: fakeResponse,
+  });
+}
+
+// Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
+async function fetchImagesThrottled(
+  images: NormalizedPostContent['images'],
+  concurrency: number,
+): Promise<NormalizedPostContent['images']> {
+  const results: NormalizedPostContent['images'] = [];
+
+  for (let i = 0; i < images.length; i += concurrency) {
+    const batch = images.slice(i, i + concurrency);
+    const batchResults = await Promise.all(
+      batch.map(async (img) => {
+        if (img.bytesBase64) return img;
+        const base64 = await fetchImageAsBase64(img.srcUrl);
+        return { ...img, bytesBase64: base64 };
+      }),
+    );
+    results.push(...batchResults);
+  }
+
+  return results;
+}
+
+// Fetches a single image by URL and returns its contents as a base64 string.
+async function fetchImageAsBase64(srcUrl: string): Promise<string> {
+  try {
+    const response = await fetch(srcUrl);
+    if (!response.ok) return '';
+    const arrayBuffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    const CHUNK = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
+  } catch {
+    return '';
+  }
+}
+
+function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | null {
+  let fakeResponse: DetectionResponse | undefined;
+  const textLen: number = post.text?.plain?.length ?? 0;
+  const roll = Math.random();
+  if (roll < 0.4) {
+    fakeResponse = {
+      requestId: 'debug-req',
+      postId: post.postId,
+      verdict: 'likely_ai',
+      confidence: 0.92,
+      explanation: {
+        summary: 'Repetitive phrasing and low perplexity',
+        highlights: textLen > 20 ? [
+          { start: 0, end: Math.min(textLen, 45), reason: 'Opening follows a common AI template pattern' },
+          { start: Math.min(Math.floor(textLen * 0.4), textLen), end: Math.min(Math.floor(textLen * 0.4) + 60, textLen), reason: 'Unusually low perplexity for this span' },
+        ] : [],
+        model: { name: 'debug', version: '0.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 0, inferenceMs: 0 },
+      },
+    };
+  } else if (roll < 0.7) {
+    fakeResponse = {
+      requestId: 'debug-req',
+      postId: post.postId,
+      verdict: 'likely_human',
+      confidence: 0.78,
+      explanation: {
+        summary: 'Natural variance and typos detected',
+        highlights: textLen > 30 ? [
+          { start: Math.min(10, textLen), end: Math.min(50, textLen), reason: 'Contains a natural typo / informal shorthand' },
+        ] : [],
+        model: { name: 'debug', version: '0.0' },
+        cache: { hit: true, ttlRemainingMs: 45 },
+        timing: { totalMs: 321, inferenceMs: 190 },
+      },
+    };
+  } else if (roll < 0.9) {
+    fakeResponse = {
+      requestId: 'debug-req',
+      postId: post.postId,
+      verdict: 'unknown',
+      confidence: 0.5,
+      explanation: {
+        summary: 'Insufficient signal',
+        model: { name: 'debug', version: '0.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 0, inferenceMs: 0 },
+      },
+    };
+  } else {
+    return null;
+  }
+  return fakeResponse;
 }
 
 /**
