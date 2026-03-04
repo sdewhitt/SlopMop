@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from detector import detect as model_detect
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
@@ -78,7 +79,8 @@ def detect(request: DetectRequest):
         )
     
     # connect to model here in week 2 of sprint 1
-    confidence, label = score_text(clean_text)
+    confidence = model_detect(clean_text)
+    label = "ai" if confidence >= 0.5 else "human"
     explanation = generate_explanation(confidence, label)
     return DetectResponse(confidence=confidence, label=label, explanation=explanation)
     
