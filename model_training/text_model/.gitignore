@@ -1,4 +1,5 @@
 *.venv
+.DS_Store
 
 # large model weights (do not commit)
 *.pt
