@@ -2,3 +2,9 @@ fastapi
 uvicorn
 pytest
 httpx
+
+# detector.py (ONNX model inference)
+numpy
+onnxruntime
+transformers
+regex
