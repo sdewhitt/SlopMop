@@ -1,6 +1,7 @@
 """
 ONNX based AI text detector for SlopMop backend
 Loads the model and tokenizer at startup and exposes a detect() function.
+Model can be loaded from local backend/model/ or from Hugging Face Hub (set HF_MODEL_REPO).
 """
 
 import os
@@ -9,9 +10,10 @@ import onnxruntime as ort
 from transformers import AutoTokenizer
 from preprocess import preprocess_text
 
-# Path to ONNX model (relative to this file)
+# Path to ONNX model (relative to this file) when using local file
 _MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
-ONNX_PATH = os.path.join(_MODEL_DIR, "text_detector.onnx")
+ONNX_FILENAME = "text_detector.onnx"
+LOCAL_ONNX_PATH = os.path.join(_MODEL_DIR, ONNX_FILENAME)
 MODEL_NAME = "desklib/ai-text-detector-v1.01"
 MAX_LENGTH = 512
 
@@ -21,14 +23,29 @@ _tokenizer: AutoTokenizer | None = None
 _load_error: str | None = None
 
 
+def _get_onnx_path() -> str:
+    """Resolve ONNX path: from Hugging Face Hub if HF_MODEL_REPO set, else local."""
+    repo_id = os.environ.get("HF_MODEL_REPO", "").strip()
+    if repo_id:
+        from huggingface_hub import hf_hub_download
+        return hf_hub_download(
+            repo_id=repo_id,
+            filename=ONNX_FILENAME,
+            local_dir=_MODEL_DIR,
+            local_dir_use_symlinks=False,
+        )
+    return LOCAL_ONNX_PATH
+
+
 def _load_model() -> None:
     """Load ONNX session and tokenizer. Called once at startup."""
     global _session, _tokenizer, _load_error
     try:
-        if not os.path.exists(ONNX_PATH):
-            raise FileNotFoundError(f"ONNX model not found at {ONNX_PATH}")
+        onnx_path = _get_onnx_path()
+        if not os.path.exists(onnx_path):
+            raise FileNotFoundError(f"ONNX model not found at {onnx_path}")
         _session = ort.InferenceSession(
-            ONNX_PATH,
+            onnx_path,
             providers=["CPUExecutionProvider"],
         )
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)

@@ -27,3 +27,7 @@ Thumbs.db
 # Model training (keep venv out of repo)
 model_training/text_model/venv/
 model_training/text_model/runs/
+
+# Backend: ONNX loaded from Hugging Face at runtime (HF_MODEL_REPO)
+backend/model/*.onnx
+backend/model/*.onnx.data

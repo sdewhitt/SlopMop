@@ -38,13 +38,14 @@ from stress_test_generator import StressTestGenerator
 # Custom model for desklib/ai-text-detector-v1.01 (single logit + sigmoid, not AutoModelForSequenceClassification)
 class DesklibAIDetectionModel(PreTrainedModel):
   config_class = AutoConfig
+  all_tied_weights_keys = {}
 
   def __init__(self, config):
     super().__init__(config)
     self.model = AutoModel.from_config(config)
     self.classifier = nn.Linear(config.hidden_size, 1)
 
-  def forward(self, input_ids, attention_mask=None, labels=None):
+  def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):
     outputs = self.model(input_ids, attention_mask=attention_mask)
     last_hidden_state = outputs[0]
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
