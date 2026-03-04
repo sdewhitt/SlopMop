@@ -21,6 +21,7 @@ import DetectionSettings from './components/DetectionSettings';
 import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
+import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 
 type DetectResponse = {
   confidence?: number;
@@ -266,6 +267,8 @@ export default function Popup() {
               <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
 
               <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
+
+              <DisabledWebsitesManager />
 
               <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
             </>
