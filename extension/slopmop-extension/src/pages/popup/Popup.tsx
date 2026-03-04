@@ -84,11 +84,14 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
+      const local = await browser.storage.local.get(['settings']);
+      const localSettings = local.settings as Partial<Settings> | undefined;
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
         platforms: { ...remote.settings.platforms },
+        accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
       };
       setSettings(merged);
       setStats(remote.stats);
@@ -140,6 +143,18 @@ export default function Popup() {
       }
     };
 
+    browser.storage.onChanged.addListener(handler);
+    return () => browser.storage.onChanged.removeListener(handler);
+  }, []);
+
+  // Sync settings (e.g. accessibilityMode) when Options page or another tab updates storage.
+  useEffect(() => {
+    const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      const change = changes.settings;
+      if (!change?.newValue || typeof change.newValue !== 'object') return;
+      setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+    };
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
@@ -200,6 +215,7 @@ export default function Popup() {
       highlightStyle: defaultUserSettings.settings.highlightStyle,
       showNotifications: defaultUserSettings.settings.showNotifications,
       platforms: { ...defaultUserSettings.settings.platforms },
+      accessibilityMode: false,
     };
     setSettings(defaults);
     browser.storage.local.set({ settings: defaults });
@@ -212,7 +228,11 @@ export default function Popup() {
   // ── Loading state ─────────────────────────────────────────────
   if (authLoading) {
     return (
-      <div className="w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px]">
+      <div
+        className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
+          settings.accessibilityMode ? 'accessibility-mode' : ''
+        }`}
+      >
         <p className="text-xs text-gray-400">Loading…</p>
       </div>
     );
@@ -220,13 +240,23 @@ export default function Popup() {
 
   // ── Auth gate: redirect to sign-in if not authenticated ───────
   if (!user) {
-    return <SignInView />;
+    return (
+      <div
+        className={`w-full min-h-[200px] ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+      >
+        <SignInView />
+      </div>
+    );
   }
 
   // ── Settings view ─────────────────────────────────────────────
   if (view === 'settings') {
     return (
-      <div className="w-full bg-gray-900 text-white flex flex-col overflow-hidden">
+      <div
+        className={`w-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+          settings.accessibilityMode ? 'accessibility-mode' : ''
+        }`}
+      >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
         <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-none flex-1">
@@ -275,7 +305,11 @@ export default function Popup() {
 
   // ── Home view ─────────────────────────────────────────────────
   return (
-    <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none">
+    <div
+      className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
+        settings.accessibilityMode ? 'accessibility-mode' : ''
+      }`}
+    >
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
