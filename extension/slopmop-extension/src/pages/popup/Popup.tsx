@@ -40,6 +40,7 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
+   const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
     browser.storage.local
@@ -49,6 +50,7 @@ export default function Popup() {
         'aiDetected',
         'postsProcessing',
         'settings',
+        'simpleMode',
         // Most recent backend `/detect` response (if/when written by detection pipeline)
         'detectResponse',
         'lastDetectResponse',
@@ -64,6 +66,9 @@ export default function Popup() {
         });
         if (result.settings) {
           setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+        }
+        if (typeof result.simpleMode === 'boolean') {
+          setSimpleMode(result.simpleMode);
         }
 
         const raw =
@@ -225,11 +230,16 @@ export default function Popup() {
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
         <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-none flex-1">
-          <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
+          {/* Simple view: only detection on/off (on Home) and account remain; advanced settings hidden */}
+          {!simpleMode && (
+            <>
+              <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
 
-          <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
+              <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
 
-          <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
+              <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
+            </>
+          )}
 
           {/* Sign-out button */}
           <section>
