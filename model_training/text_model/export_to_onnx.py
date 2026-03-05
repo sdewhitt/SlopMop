@@ -9,19 +9,11 @@ model = detector.model
 device = detector.device
 
 # load the best model state from file if it exists
-# loading gz but use best_text_detector_fp16.pt if want fater, lighter model
-best_model_gzip_path = os.path.join(os.path.dirname(__file__), "best_text_detector.pt.gz")
-if os.path.exists(best_model_gzip_path):
-  with gzip.open(best_model_gzip_path, "rb") as f:
-    state = torch.load(f, map_location=device)
-    is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
-    if detector.use_binary_logit and is_desklib_checkpoint:
-      model.load_state_dict(state, strict=True)
-    elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
-      model.load_state_dict(state, strict=True)
-  print(f"Loaded best model weights from {best_model_gzip_path}.")
-else:
-  print("No best model checkpoint found; exporting base model weights.")
+best_model_path = os.path.join(os.path.dirname(__file__), "best_text_detector_smaller.pt")
+
+state = torch.load(best_model_path, map_location=device)
+model.load_state_dict(state, strict=True)
+print(f"Loaded best model weights from {best_model_path}.")
 
 model.eval()
 model.to(device)
@@ -39,7 +31,7 @@ input_ids = dummy["input_ids"].to(detector.device)
 attention_mask = dummy["attention_mask"].to(detector.device)
 
 # finally export the model to onnx
-onnx_path = "text_detector.onnx"
+onnx_path = "model_training/text_model/text_detector.onnx"
 
 torch.onnx.export(
   model,
@@ -52,7 +44,7 @@ torch.onnx.export(
       "attention_mask": {0: "batch_size", 1: "seq_len"},
       "logits": {0: "batch_size"},
   },
-  opset_version=13,
+  opset_version=14,
   do_constant_folding=True,
 )
 print(f"Exported ONNX model to {onnx_path}")

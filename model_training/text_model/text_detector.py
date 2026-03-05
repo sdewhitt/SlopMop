@@ -71,8 +71,8 @@ class DesklibAIDetectionModel(PreTrainedModel):
 
 # remove all emojis
 def emoji_removal(text):
-  emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
-  return emoji_pattern.sub(r'', text)
+    emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
+    return emoji_pattern.sub(r'', text)
 
 # preprocess a single text 
 def preprocess_text(text):
@@ -81,7 +81,7 @@ def preprocess_text(text):
 
   # remove all HTML tags
   text = re.sub(r'<[^>]*>', '', text)
-
+  
   # remove all braille art
   text = re.sub(r'[\u2800-\u28FF]+', '', text)
   
@@ -159,7 +159,7 @@ def gsingh1_to_text_label(dataset):
 
 
 # runing every batch in gsignh1 will take hours, so choose 50 or 100 of each label and 100 of mixed at random per run
-def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
+def sample_subset(dataset, n_human=250, n_ai=250, n_mixed=250, seed=None):
   rng = random.Random(seed)
   indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
   indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
@@ -183,7 +183,7 @@ def tokenize_batch(batch, tokenizer, text_column="text"):
     truncation=True,
     max_length=512
   )
-
+  
 class TextDetectors:
   """
   Implementation of the TextDetector class (design section 3)
@@ -293,6 +293,8 @@ if __name__ == "__main__":
     best_model_path = os.path.join(os.path.dirname(__file__), "best_text_detector(smaller).pt")
     best_model_gzip_path = os.path.join(os.path.dirname(__file__), "best_text_detector(smaller).pt.gz")
 
+    state = None
+    is_desklib_checkpoint = False
     if os.path.exists(best_model_gzip_path):
       with gzip.open(best_model_gzip_path, "rb") as f:
         state = torch.load(f, map_location=detector.device)
@@ -303,36 +305,36 @@ if __name__ == "__main__":
         elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
           detector.model.load_state_dict(state, strict=True)
           print(f"Loaded best model weights from {best_model_gzip_path}.")
+    elif os.path.exists(best_model_path):
+      state = torch.load(best_model_path, map_location=detector.device)
+      is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
+      if (detector.use_binary_logit and is_desklib_checkpoint) or (not detector.use_binary_logit and not is_desklib_checkpoint):
+        detector.model.load_state_dict(state, strict=True)
+        print(f"Loaded best model weights from {best_model_path}.")
     else:
-      print(f"No saved best model found at {best_model_gzip_path}; using freshly loaded weights.")
-
-    # best_model_fp_path = os.path.join(os.path.dirname(__file__), "best_text_detector_fp16(smaller).pt")
-    # if os.path.exists(best_model_fp_path):
-    #   state = torch.load(best_model_fp_path, map_location=detector.device)
-    #   is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
-    #   if detector.use_binary_logit and is_desklib_checkpoint:
-    #     detector.model.load_state_dict(state, strict=True)
-    #     print(f"Loaded best model weights from {best_model_fp_path}.")
-    #   elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
-    #     detector.model.load_state_dict(state, strict=True)
-    #     print(f"Loaded best model weights from {best_model_fp_path}.")
-    # else:
-    #   print(f"No saved best model found at {best_model_fp_path}; using freshly loaded weights.")
-    
+      print(f"No saved best model found; using freshly loaded weights.")
 
     print("Detector initialized.\n")
 
-    # load the dataset, clean the data, tokenize the data, and set the format
-    raw = load_dataset("gsingh1-py/train")
+    # # load the dataset, clean the data, tokenize the data, and set the format
+    # raw = load_dataset("gsingh1-py/train")
+    # dataset = raw["train"] if isinstance(raw, dict) else raw
+    # # convert to (text, label) if this is gsingh1 format (Human_story + AI columns)
+    # if "Human_story" in dataset.column_names and "label" not in dataset.column_names:
+    #   dataset = gsingh1_to_text_label(dataset)
+    # # use a small random subset (50 human + 50 AI + 50 mixed) per run for faster training
+    # dataset = sample_subset(dataset, n_human=250, n_ai=250, n_mixed=250, seed=None)
+    # print(f"Using subset of {len(dataset)} examples for training.\n")
+
+
+    # use test_dataset.csv for social media post focused testing
+    csv_path = os.path.join(os.path.dirname(__file__), "test_dataset.csv")
+    raw = load_dataset("csv", data_files=csv_path)
     dataset = raw["train"] if isinstance(raw, dict) else raw
-    # convert to (text, label) if this is gsingh1 format (Human_story + AI columns)
-    if "Human_story" in dataset.column_names and "label" not in dataset.column_names:
-      dataset = gsingh1_to_text_label(dataset)
-    # use a small random subset (50 human + 50 AI + 50 mixed) per run for faster training
-    dataset = sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None)
-    print(f"Using subset of {len(dataset)} examples for training.\n")
-
-
+    # ensure label is int
+    dataset = dataset.map(lambda x: {"label": int(x["label"]) if x.get("label") is not None else 0})
+    print(f"Using {len(dataset)} examples from {csv_path} for training.\n")
+    
     # split for validation, training, and testing
     n = len(dataset)
     indices = np.arange(n)
@@ -365,13 +367,11 @@ if __name__ == "__main__":
     # get the text column from the dataset, clean, tokenize, and set the format for both training and validation
     text_column = get_text_column(train_dataset)
 
-    is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
     if is_desklib_checkpoint:
       print("Using desklib checkpoint (knowledge distillation).")
 
     else:
       print("Using distilbert checkpoint (no knowledge distillation).")
-      cleaned_train_dataset = train_dataset.map(lambda ex: clean_example(ex, text_column))
 
     USE_KNOWLEDGE_DISTILLATION = False
     cleaned_train_dataset = train_dataset.map(lambda ex: clean_example(ex, text_column))
@@ -510,7 +510,7 @@ if __name__ == "__main__":
           # get the probabilities from the student model
           student_prob = torch.softmax(logits, dim=1)[:, 1]
           # get the cross-entropy loss
-          ce_loss = loss_fn(logits, labels)
+          ce_loss = loss_fn(logits, labels.long())
           # get the distillation loss
           distill_loss = torch.nn.functional.mse_loss(student_prob, teacher_prob)
           loss = DISTILL_ALPHA * ce_loss + (1 - DISTILL_ALPHA) * distill_loss
@@ -519,7 +519,7 @@ if __name__ == "__main__":
           loss = loss_fn(logits.squeeze(-1), labels.float())
         else:
           # get the loss for the multi-class model
-          loss = loss_fn(logits, labels)
+          loss = loss_fn(logits, labels.long())
 
 
 
@@ -589,7 +589,7 @@ if __name__ == "__main__":
             loss = loss_fn(logits.squeeze(-1), labels.float())
             probs = torch.sigmoid(logits.squeeze(-1))
           else:
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.long())
             probs = torch.softmax(logits, dim=1)[:, 1]
           total_val_loss += loss.item()
           # get the predictions
@@ -688,7 +688,7 @@ if __name__ == "__main__":
           loss = loss_fn(logits.squeeze(-1), labels.float())
           probs = torch.sigmoid(logits.squeeze(-1))
         else:
-          loss = loss_fn(logits, labels)
+          loss = loss_fn(logits, labels.long())
           probs = torch.softmax(logits, dim=1)[:, 1]
 
         total_test_loss += loss.item()
@@ -730,7 +730,7 @@ if __name__ == "__main__":
           loss = loss_fn(logits.squeeze(-1), labels.float())
           probs = torch.sigmoid(logits.squeeze(-1))
         else:
-          loss = loss_fn(logits, labels)
+          loss = loss_fn(logits, labels.long())
           probs = torch.softmax(logits, dim=1)[:, 1]
 
         total_stress_test_loss += loss.item()
