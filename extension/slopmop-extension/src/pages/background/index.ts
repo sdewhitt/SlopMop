@@ -412,10 +412,17 @@ function mapToDetectionResponse(
   postId: string,
   timingMs: number,
 ): DetectionResponse {
-  const verdict: DetectionResponse['verdict'] =
-    apiResult.label === 'ai' ? 'likely_ai'
-      : apiResult.label === 'human' ? 'likely_human'
-        : 'unknown';
+  console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
+
+  const confidencePercent = apiResult.confidence <= 1
+    ? apiResult.confidence * 100
+    : apiResult.confidence;
+
+  const verdict: DetectionResponse['verdict'] = confidencePercent > 60
+    ? 'likely_ai'
+    : confidencePercent >= 40
+      ? 'unknown'
+      : 'likely_human';
 
   return {
     requestId: crypto.randomUUID(),

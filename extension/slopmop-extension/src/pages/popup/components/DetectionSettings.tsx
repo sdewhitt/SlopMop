@@ -36,6 +36,12 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Scan Images"
           description="Analyze images in posts (coming soon)"
         />
+        <Toggle
+          checked={settings.automaticScanning}
+          onChange={(v) => onUpdateSetting('automaticScanning', v)}
+          label="Automatic Scanning"
+          description="When off, posts show a Detect Now button"
+        />
         <div className="py-2.5">
           <p className="text-sm font-medium text-gray-200 mb-1.5">Comment Scanning</p>
           <div className="flex gap-1.5">

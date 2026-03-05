@@ -22,6 +22,7 @@ export interface DetectionSettings {
   sensitivity: 'low' | 'medium' | 'high';
   highlightStyle: 'badge' | 'border' | 'dim';
   showNotifications: boolean;
+  automaticScanning: boolean;
   platforms: PlatformToggles;
   enabled: boolean;
   scanText: boolean;
@@ -58,6 +59,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     sensitivity: 'medium',
     highlightStyle: 'badge',
     showNotifications: true,
+    automaticScanning: false,
     platforms: {
       twitter: true,
       reddit: true,

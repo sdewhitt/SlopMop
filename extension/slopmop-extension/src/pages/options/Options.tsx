@@ -115,6 +115,12 @@ export default function Options() {
               label="Scan Images"
               description="Analyze images in posts (coming soon)"
             />
+            <Toggle
+              checked={settings.automaticScanning}
+              onChange={(v) => update('automaticScanning', v)}
+              label="Automatic Scanning"
+              description="When off, posts require clicking Detect Now"
+            />
           </div>
         </section>
 

@@ -71,7 +71,7 @@ export class OverlayRenderer {
     // renders Pending badge for the user.
     // plainText is the extracted post text from PostExtractor.
     // we store it so createTooltip can slice out highlighted spans later
-    renderPending(postId: PostId, plainText: string): void {
+    renderPending(postId: PostId, plainText: string, onDetectNow?: () => void): void {
         this.mapToPostText.set(postId, plainText);
         const postNode = this.findPostNode(postId);
         if (postNode === null) return;
@@ -91,7 +91,36 @@ export class OverlayRenderer {
             backgroundColor: "#6b7280",
             color: "#fff",
         });
-        overlay.textContent = "Scanning...";
+        if (!onDetectNow) {
+            overlay.textContent = "Scanning...";
+            this.mapToOverlay.set(postId, overlay);
+            return;
+        }
+
+        // manual mode: show a Detect Now button instead of scanning immediately.
+        // this keeps noisy pages readable when users prefer click-to-scan behavior.
+        const detectNowButton = document.createElement("button");
+        detectNowButton.type = "button";
+        detectNowButton.textContent = "Detect Now";
+        Object.assign(detectNowButton.style, {
+            border: "none",
+            borderRadius: "4px",
+            padding: "6px 10px",
+            fontSize: isSimple ? "14px" : "12px",
+            fontWeight: "600",
+            color: "#fff",
+            backgroundColor: "#6b7280",
+            cursor: "pointer",
+        });
+        detectNowButton.onclick = () => {
+            // lock the button after first click so duplicate requests don't fire.
+            detectNowButton.disabled = true;
+            detectNowButton.style.cursor = "default";
+            overlay.style.backgroundColor = "#6b7280";
+            overlay.textContent = "Scanning...";
+            onDetectNow();
+        };
+        overlay.appendChild(detectNowButton);
         this.mapToOverlay.set(postId, overlay);
 
 
@@ -99,6 +128,8 @@ export class OverlayRenderer {
     renderError(postId: PostId, message: string): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        // log every detection error so debugging network/backend issues is easier.
+        console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
         overlay.style.backgroundColor = "#f59e0b"; // amber yellow like a yield sign
         // badge text stays short in both modes to avoid covering too much content.

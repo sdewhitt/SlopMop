@@ -5,7 +5,7 @@ import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
 
-const DEBUG_EXTRACTION = true;
+const DEBUG_EXTRACTION = false;
 // debounce wait time in ms. mutations that fire within this window
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
@@ -185,14 +185,25 @@ export class FeedObserver {
             });
         }
 
-        // render pending for all posts.
-        // pass post.text.plain so the overlay can show highlighted excerpts later
-        this.overlay.renderPending(extracted.postId, extracted.text.plain);
+        if (this.settings.automaticScanning) {
+            // automatic mode: render scanning state immediately and dispatch analysis now.
+            this.overlay.renderPending(extracted.postId, extracted.text.plain);
+            this.dispatchAnalyze(extracted);
+            return;
+        }
+
+        // manual mode: render Detect Now button and wait for user click.
+        this.overlay.renderPending(extracted.postId, extracted.text.plain, () => {
+            this.dispatchAnalyze(extracted);
+        });
+    }
+
+    // send extracted post to background and start timeout tracking.
+    private dispatchAnalyze(post: NormalizedPostContent): void {
         // start timeout window before sending message.
         // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
-        this.startAnalyzeTimeout(extracted.postId);
-        // call background service to get post's DetectionResponse
-        this.bus.sendAnalyze(extracted);
+        this.startAnalyzeTimeout(post.postId);
+        this.bus.sendAnalyze(post);
     }
 
     // starts a per-post timeout for detection responses.
