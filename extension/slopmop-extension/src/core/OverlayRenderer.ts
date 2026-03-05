@@ -13,6 +13,8 @@ export class OverlayRenderer {
     // map each postId to the original plain text that was analyzed.
     // needed so createTooltip can slice out highlighted spans using start/end offsets
     private mapToPostText = new Map<PostId, string>()
+    // map each postId to latest error text so detailed mode can show it in tooltip.
+    private mapToErrorMessage = new Map<PostId, string>()
     // used to get DOM node from postId
     private adapter: SiteAdapter;
     private settings: DetectionSettings;
@@ -97,9 +99,38 @@ export class OverlayRenderer {
     renderError(postId: PostId, message: string): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.mapToErrorMessage.set(postId, message);
         overlay.style.backgroundColor = "#f59e0b"; // amber yellow like a yield sign
-        overlay.textContent = `Error - ${message}`;
+        // badge text stays short in both modes to avoid covering too much content.
+        overlay.textContent = "Error";
 
+        const isSimple = this.settings.uiMode === "simple";
+        if (isSimple) {
+            overlay.style.cursor = "default";
+            return;
+        }
+
+        // detailed mode keeps the badge compact and pushes the full message into tooltip.
+        overlay.style.cursor = "pointer";
+        let tooltip: HTMLElement | null = null;
+        overlay.onmouseenter = () => {
+            if (tooltip) return;
+            const errorMessage = this.mapToErrorMessage.get(postId) ?? "Unknown error";
+            tooltip = this.createErrorTooltip(errorMessage);
+            overlay.appendChild(tooltip);
+        };
+        overlay.onmouseleave = () => {
+            tooltip?.remove();
+            tooltip = null;
+        };
+
+    }
+    // timeout has a dedicated badge text so users can tell this was network-related.
+    renderTimeout(postId: PostId): void {
+        const overlay = this.mapToOverlay.get(postId);
+        if (!overlay) return;
+        overlay.style.backgroundColor = "#f59e0b";
+        overlay.textContent = "network timeout";
     }
     // removes a DOM element and its entry from all three maps
     clear(postId: PostId): void {
@@ -109,6 +140,7 @@ export class OverlayRenderer {
         this.mapToOverlay.delete(postId);
         this.mapToResponse.delete(postId);
         this.mapToPostText.delete(postId);
+        this.mapToErrorMessage.delete(postId);
     }
 
     private createSimpleTooltip(res: DetectionResponse): HTMLElement {
@@ -279,6 +311,43 @@ export class OverlayRenderer {
             meta.textContent += " (cached)";
         }
         tip.appendChild(meta);
+
+        return tip;
+    }
+
+    private createErrorTooltip(message: string): HTMLElement {
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            bottom: "calc(100% + 8px)",
+            right: "0",
+            minWidth: "240px",
+            maxWidth: "320px",
+            padding: "12px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "12px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "none",
+            wordBreak: "break-word",
+        });
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "13px",
+            marginBottom: "6px",
+            color: "#fbbf24",
+        });
+        header.textContent = "Detection error";
+        tip.appendChild(header);
+
+        const body = document.createElement("div");
+        body.textContent = message;
+        tip.appendChild(body);
 
         return tip;
     }

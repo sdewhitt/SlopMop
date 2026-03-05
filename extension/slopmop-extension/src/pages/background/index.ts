@@ -23,6 +23,8 @@ console.log('background script loaded');
 // ── Post analysis ────────────────────────────────────────────────
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
+// hardcoded developer toggle. keep true for offline fake responses.
+const USE_FAKE_DETECTION = false;
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
   const stored = await browser.storage.local.get('settings');
@@ -263,12 +265,49 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   }
 
   const enrichedPost = { ...post, images: enrichedImages };
+  const plainText = enrichedPost.text?.plain ?? '';
 
-  const fakeResponse = buildFakeResponse(enrichedPost);
-  browser.tabs.sendMessage(tabId, {
-    type: 'DETECTION_RESULT',
-    payload: fakeResponse,
-  });
+  if (!plainText.trim()) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'empty text' },
+    });
+    return;
+  }
+
+  if (USE_FAKE_DETECTION) {
+    const fakeResponse = buildFakeResponse(enrichedPost);
+    if (fakeResponse) {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: fakeResponse,
+      });
+    } else {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_ERROR',
+        payload: { postId: enrichedPost.postId, message: 'fake detection returned no result' },
+      });
+    }
+    return;
+  }
+
+  try {
+    const start = performance.now();
+    const apiResult = await detectText(plainText);
+    const elapsedMs = Math.round(performance.now() - start);
+    const mapped = mapToDetectionResponse(apiResult, enrichedPost.postId, elapsedMs);
+
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload: mapped,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'network error';
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message },
+    });
+  }
 }
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
@@ -366,6 +405,31 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
     return null;
   }
   return fakeResponse;
+}
+
+function mapToDetectionResponse(
+  apiResult: DetectResponse,
+  postId: string,
+  timingMs: number,
+): DetectionResponse {
+  const verdict: DetectionResponse['verdict'] =
+    apiResult.label === 'ai' ? 'likely_ai'
+      : apiResult.label === 'human' ? 'likely_human'
+        : 'unknown';
+
+  return {
+    requestId: crypto.randomUUID(),
+    postId,
+    verdict,
+    confidence: apiResult.confidence,
+    explanation: {
+      summary: apiResult.explanation,
+      highlights: [],
+      model: { name: 'slopmop-api', version: '1.0' },
+      cache: { hit: false, ttlRemainingMs: 0 },
+      timing: { totalMs: timingMs, inferenceMs: timingMs },
+    },
+  };
 }
 
 /**

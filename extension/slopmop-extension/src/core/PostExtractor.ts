@@ -29,6 +29,7 @@ export class PostExtractor {
 
         const rawText = textNode?.innerText?.trim() ?? '';
         if (!rawText) return null;
+        // normalize before classification so repeated whitespace doesn't skew downstream heuristics.
         const normalizedText = this.normalizeText(rawText);
         if (!normalizedText) return null;
 

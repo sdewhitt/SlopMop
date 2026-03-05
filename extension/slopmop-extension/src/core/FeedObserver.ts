@@ -9,6 +9,8 @@ const DEBUG_EXTRACTION = true;
 // debounce wait time in ms. mutations that fire within this window
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
+// if analysis takes longer than this, we show a timeout badge to the user.
+const ANALYZE_TIMEOUT_MS = 15_000;
 
 export class FeedObserver {
     // Orchestrator for the content script pipeline.
@@ -28,6 +30,10 @@ export class FeedObserver {
     // ReturnType<typeof setTimeout> resolves to the return type of setTimeout
     // which is number in browsers and NodeJS.Timeout in node
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    // one timeout timer per post while waiting for background detection result.
+    private pendingAnalyzeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // tracks posts that already timed out so late results do not overwrite timeout badge.
+    private timedOutPostIds = new Set<string>();
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -80,6 +86,12 @@ export class FeedObserver {
             clearTimeout(this.debounceTimer);
             this.debounceTimer = null;
         }
+        // clear all pending analysis timers so no callbacks run after stop().
+        for (const timer of this.pendingAnalyzeTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.pendingAnalyzeTimers.clear();
+        this.timedOutPostIds.clear();
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
@@ -176,8 +188,40 @@ export class FeedObserver {
         // render pending for all posts.
         // pass post.text.plain so the overlay can show highlighted excerpts later
         this.overlay.renderPending(extracted.postId, extracted.text.plain);
+        // start timeout window before sending message.
+        // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
+        this.startAnalyzeTimeout(extracted.postId);
         // call background service to get post's DetectionResponse
         this.bus.sendAnalyze(extracted);
+    }
+
+    // starts a per-post timeout for detection responses.
+    private startAnalyzeTimeout(postId: string): void {
+        this.clearAnalyzeTimeout(postId);
+        this.timedOutPostIds.delete(postId);
+        const timer = setTimeout(() => {
+            this.pendingAnalyzeTimers.delete(postId);
+            this.timedOutPostIds.add(postId);
+            this.overlay.renderTimeout(postId);
+        }, ANALYZE_TIMEOUT_MS);
+        this.pendingAnalyzeTimers.set(postId, timer);
+    }
+
+    private clearAnalyzeTimeout(postId: string): void {
+        const timer = this.pendingAnalyzeTimers.get(postId);
+        if (!timer) return;
+        clearTimeout(timer);
+        this.pendingAnalyzeTimers.delete(postId);
+    }
+
+    // returns true when the caller should render result/error for this post.
+    // returns false if this post already timed out and we want timeout to stay visible.
+    markAnalyzeCompleted(postId: string): boolean {
+        this.clearAnalyzeTimeout(postId);
+        if (this.timedOutPostIds.has(postId)) {
+            return false;
+        }
+        return true;
     }
 
     private isEligible(post: NormalizedPostContent): boolean {

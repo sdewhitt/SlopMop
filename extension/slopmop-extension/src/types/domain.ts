@@ -104,5 +104,6 @@ export type ContentToBackgroundMessage = // union type
     // add more message types here as needed
 // similar idea, but from background script to content script
 export type BackgroundToContentMessage =
-    | { type: "DETECTION_RESULT"; payload: DetectionResponse };
+    | { type: "DETECTION_RESULT"; payload: DetectionResponse }
+    | { type: "DETECTION_ERROR"; payload: { postId: PostId; message: string } };
   
