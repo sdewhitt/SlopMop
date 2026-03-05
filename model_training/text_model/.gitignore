@@ -13,5 +13,8 @@
 # TensorBoard logs
 model_training/text_model/runs/
 
-
+# node modules
 node_modules
+
+# export.txt
+export.txt
