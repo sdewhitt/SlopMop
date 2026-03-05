@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import browser from 'webextension-polyfill';
 import 'react/jsx-runtime';
 import { normalizeConfidence, resolveExplanation } from '@src/utils/generateExplanation';
+import { formatPatternReasons } from '@src/utils/aiTextPatterns';
 import { Settings, Stats, defaultSettings } from './types';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -298,13 +299,16 @@ export default function Popup() {
     (detectResponse?.confidence_score as number | undefined) ??
     null;
   const confidence = normalizeConfidence(rawConfidence);
-  const explanation = detectResponse
+  const baseExplanation = detectResponse
     ? resolveExplanation({
         explanation: detectResponse.explanation as string | undefined,
         confidence: rawConfidence,
         metadataComplete: detectResponse.metadataComplete as boolean | undefined,
       })
     : null;
+  const patternReasons = (detectResponse as { patternReasons?: string[] } | null)?.patternReasons;
+  const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
+  const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
 
   // ── Home view ─────────────────────────────────────────────────
   return (

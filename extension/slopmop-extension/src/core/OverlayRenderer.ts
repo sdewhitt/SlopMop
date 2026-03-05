@@ -1,4 +1,5 @@
-import { DetectionResponse, PostId, UserSettings} from "@src/types/domain"
+import { DetectionResponse, PostId, UserSettings } from "@src/types/domain";
+import { getPatternReasons } from "@src/utils/aiTextPatterns";
 import type { SiteAdapter } from "./adapters/SiteAdapter";
  
 
@@ -43,11 +44,17 @@ export class OverlayRenderer {
         overlay.style.cursor = "pointer";
 
         // display verdict text
-        overlay.textContent = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
+        const postText = this.mapToPostText.get(postId) ?? "";
+        const patternReasons = getPatternReasons(postText);
+        const hasPatternReasons = patternReasons.length > 0;
 
-        // if detailed mode on, show explanation inline on the badge itself
+        overlay.textContent = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
         if (this.settings.uiMode === "detailed") {
-            overlay.textContent += ` — ${res.explanation.summary}`;
+            if (hasPatternReasons) {
+                overlay.textContent += ` — ${patternReasons.join("; ")}`;
+            } else {
+                overlay.textContent += ` — ${res.explanation.summary}`;
+            }
         }
 
         // hover tooltip 
@@ -55,11 +62,7 @@ export class OverlayRenderer {
         // so mouseenter/mouseleave can create and destroy it
         let tooltip: HTMLElement | null = null;
 
-        // look up the original text so we can render highlight excerpts in the tooltip.
-        // falls back to "" if no text was stored
-        const postText = this.mapToPostText.get(postId) ?? "";
-
-        // mouseenter: build the tooltip and append it as a child of the badge.
+        // mouseenter: build the tooltip (postText already looked up above) and append it as a child of the badge.
         // because the badge is position:absolute, the tooltip positions relative to it
         overlay.addEventListener("mouseenter", () => {
             // guard: don't create a second tooltip if one already exists
@@ -191,9 +194,27 @@ export class OverlayRenderer {
         track.appendChild(fill);
         tip.appendChild(track);
 
-        //  body: explanation summary from the model
+        // pattern-based reasons first (em dashes, common AI phrases) when present — main "why" for the user
+        const tooltipPatternReasons = getPatternReasons(postText);
+        if (tooltipPatternReasons.length > 0) {
+            const patternEl = document.createElement("div");
+            Object.assign(patternEl.style, {
+                marginBottom: "8px",
+                fontWeight: "500",
+                fontSize: "12px",
+                color: "#e5e7eb",
+            });
+            patternEl.textContent = "Patterns observed: " + tooltipPatternReasons.join("; ");
+            tip.appendChild(patternEl);
+        }
+
+        // model summary (generic explanation from backend/fake)
         const summary = document.createElement("div");
-        Object.assign(summary.style, { marginBottom: "8px" });
+        Object.assign(summary.style, {
+            marginBottom: "8px",
+            fontSize: tooltipPatternReasons.length > 0 ? "11px" : "12px",
+            color: tooltipPatternReasons.length > 0 ? "#9ca3af" : "#e5e7eb",
+        });
         summary.textContent = res.explanation.summary;
         tip.appendChild(summary);
 

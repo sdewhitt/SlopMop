@@ -23,6 +23,7 @@ import {
   validateHost,
 } from '@src/utils/disabledWebsites';
 import { detectText } from '@src/lib/api';
+import { getPatternReasons } from '@src/utils/aiTextPatterns';
 import { DetectionResponse, NormalizedPostContent, DEFAULT_SETTINGS, UserSettings } from '@src/types/domain';
 
 import type { DetectionSettings } from '@src/utils/userSettings';
@@ -324,11 +325,13 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 async function handleDetect(text: string): Promise<MessageResponse> {
   try {
     const result = await detectText(text);
+    const patternReasons = getPatternReasons(text);
+    const enriched = { ...result, patternReasons };
     await browser.storage.local.set({
-      detectResponse: result,
-      lastDetectResponse: result,
+      detectResponse: enriched,
+      lastDetectResponse: enriched,
     });
-    return { success: true, data: result };
+    return { success: true, data: enriched };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
   }
