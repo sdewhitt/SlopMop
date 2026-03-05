@@ -109,35 +109,22 @@ try {
 
 let activeObserver: FeedObserver | null = null;
 
+function getCurrentHost(): string {
+  return window.location.hostname.toLowerCase().replace(/^www\./, '');
+}
+
 function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
   return { ...defaultUserSettings.settings, ...saved };
 }
 
-// Reactively stop or restart the observer when the ignored-sites list changes
-// (e.g. user adds/removes the current site from the Disabled Websites list).
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !('ignoredSites' in changes)) return;
-
-  const newSites = (changes['ignoredSites'].newValue as string[]) ?? [];
-  const nowIgnored = isHostIgnored(currentHost, newSites);
-
-  if (nowIgnored && observer) {
-    observer.stop();
-    observer = null;
-    console.log('[SlopMop] Detection stopped for', currentHost);
-  } else if (!nowIgnored && !observer) {
-    // Re-init from scratch so adapters/overlays are fresh.
-    initObserver();
-  }
-
 function shouldRunOnCurrentSite(
   settings: DetectionSettings,
   ignoredSites: string[],
 ): boolean {
-  const hostname = window.location.hostname;
+  const hostname = getCurrentHost();
 
-  if (ignoredSites.some((s) => hostname.includes(s))) return false;
+  if (isHostIgnored(hostname, ignoredSites)) return false;
 
   if (hostname.includes('reddit.com')) return settings.platforms.reddit;
   if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
@@ -149,7 +136,7 @@ function shouldRunOnCurrentSite(
 }
 
 function startObserver(settings: DetectionSettings): void {
-  const hostname = window.location.hostname;
+  const hostname = getCurrentHost();
   let adapter;
   if (hostname.includes('reddit.com')) {
     adapter = new RedditAdapter();
@@ -190,17 +177,28 @@ async function initFeedObserver(): Promise<void> {
 
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
-  if (!changes.settings) return;
+  if (!changes.settings && !changes.ignoredSites) return;
 
-  const newSettings = resolveDetectionSettings({
-    settings: changes.settings.newValue,
+  void browser.storage.local.get(['settings', 'ignoredSites']).then((stored) => {
+    const currentHost = getCurrentHost();
+    const newSettings = resolveDetectionSettings(stored);
+    const newIgnoredSites =
+      (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
+    const shouldRun = shouldRunOnCurrentSite(newSettings, newIgnoredSites);
+
+    if (!shouldRun && activeObserver) {
+      activeObserver.stop();
+      activeObserver = null;
+      console.log('[SlopMop] FeedObserver stopped for', currentHost);
+      return;
+    }
+
+    if (shouldRun && !activeObserver) {
+      initFeedObserver().catch((e) => {
+        console.error('[SlopMop] observer re-init error', e);
+      });
+    }
   });
-
-  if (!newSettings.enabled && activeObserver) {
-    activeObserver.stop();
-    activeObserver = null;
-    console.log('[SlopMop] FeedObserver stopped via settings change');
-  }
 });
 
 initFeedObserver().catch((e) => {

@@ -15,14 +15,16 @@ import {
   resetSettings,
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
-  validateHost,
-  normalizeHost,
 } from '@src/lib/firestore';
-
-import type { DetectionSettings } from '@src/utils/userSettings';
-import { detectText, type DetectResponse} from '@src/lib/api';
+import { detectText, type DetectResponse } from '@src/lib/api';
 import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
+import {
+  getIgnoredSites as getIgnoredSitesLocal,
+  setIgnoredSites,
+  normalizeHost,
+  validateHost,
+} from '@src/utils/disabledWebsites';
 
 console.log('background script loaded');
 

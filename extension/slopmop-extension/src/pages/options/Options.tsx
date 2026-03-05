@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
+import DisabledWebsitesManager from './DisabledWebsitesManager';
 
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean;
@@ -76,7 +77,8 @@ export default function Options() {
 
   const resetSettings = () => {
     setSettings(defaultSettings);
-    browser.storage.local.set({ settings: defaultSettings });
+    setSimpleMode(false);
+    browser.storage.local.set({ settings: defaultSettings, simpleMode: false });
     flashSaved();
   };
 
