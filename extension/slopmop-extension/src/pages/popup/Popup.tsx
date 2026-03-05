@@ -239,7 +239,7 @@ export default function Popup() {
       <div className="w-full bg-gray-900 text-white flex flex-col overflow-hidden">
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
-        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-none flex-1">
+        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
           <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
 
           <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
