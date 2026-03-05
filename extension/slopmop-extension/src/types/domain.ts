@@ -148,7 +148,14 @@ export type ContentToBackgroundMessage = // union type
     | { type: "ANALYZE_POST"; payload: NormalizedPostContent } 
     | { type: "SUBMIT_FEEDBACK"; payload: FeedbackReport };
     // add more message types here as needed
+// Payload when language is not supported (feed badge only; popup uses storage)
+export interface DetectionLanguageUnsupportedPayload {
+  postId: PostId;
+  message: string;
+}
+
 // similar idea, but from background script to content script
 export type BackgroundToContentMessage =
-    | { type: "DETECTION_RESULT"; payload: DetectionResponse };
+    | { type: "DETECTION_RESULT"; payload: DetectionResponse }
+    | { type: "DETECTION_LANGUAGE_UNSUPPORTED"; payload: DetectionLanguageUnsupportedPayload };
   

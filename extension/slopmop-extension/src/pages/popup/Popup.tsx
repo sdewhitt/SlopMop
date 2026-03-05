@@ -22,6 +22,7 @@ import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
+import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 
 type DetectResponse = {
   confidence?: number;
@@ -41,7 +42,8 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
-   const [simpleMode, setSimpleMode] = useState(false);
+  const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
+  const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
     browser.storage.local
@@ -78,6 +80,8 @@ export default function Popup() {
           (result.lastDetection as unknown) ??
           (result.detectionResult as unknown);
         if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
+        const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
+        setLanguageUnsupported(unsupported?.message ?? null);
       });
   }, []);
   // ── Sync settings from Firestore when the user signs in ──────
@@ -129,7 +133,7 @@ export default function Popup() {
     loadSettings();
   }, [loadSettings]);
 
-  // Keep popup updated when detection writes a new `/detect` response to storage.
+  // Keep popup updated when detection writes a new `/detect` response or language-unsupported to storage.
   useEffect(() => {
     const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local') return;
@@ -138,9 +142,18 @@ export default function Popup() {
         const change = changes[key];
         if (!change) continue;
         const raw = change.newValue as unknown;
-        if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
-        else setDetectResponse(null);
+        if (raw && typeof raw === 'object') {
+          setDetectResponse(raw as DetectResponse);
+          setLanguageUnsupported(null);
+        } else setDetectResponse(null);
         break;
+      }
+      const unsupportedChange = changes['lastDetectLanguageUnsupported'];
+      if (unsupportedChange?.newValue != null) {
+        const v = unsupportedChange.newValue as { message?: string };
+        setLanguageUnsupported(v?.message ?? UNSUPPORTED_LANGUAGE_MESSAGE);
+      } else if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
+        setLanguageUnsupported(null);
       }
     };
 
@@ -330,7 +343,7 @@ export default function Popup() {
         Sign Out
       </button>
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
-      {detectResponse && (
+      {detectResponse && !languageUnsupported && (
         <section className="mt-4 text-left">
           <p className="text-sm font-medium text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}

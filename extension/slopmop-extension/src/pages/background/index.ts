@@ -23,6 +23,11 @@ import {
   validateHost,
 } from '@src/utils/disabledWebsites';
 import { detectText } from '@src/lib/api';
+import {
+  isTextLanguageSupported,
+  UNSUPPORTED_LANGUAGE_MESSAGE,
+  UNSUPPORTED_LANGUAGE_BADGE,
+} from '@src/utils/languageSupport';
 import { DetectionResponse, NormalizedPostContent, DEFAULT_SETTINGS, UserSettings } from '@src/types/domain';
 
 import type { DetectionSettings } from '@src/utils/userSettings';
@@ -322,6 +327,15 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 }
 
 async function handleDetect(text: string): Promise<MessageResponse> {
+  if (!isTextLanguageSupported(text)) {
+    await browser.storage.local.set({
+      lastDetectResponse: null,
+      detectResponse: null,
+      lastDetectLanguageUnsupported: { message: UNSUPPORTED_LANGUAGE_MESSAGE },
+    });
+    return { success: false, error: UNSUPPORTED_LANGUAGE_MESSAGE };
+  }
+  await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
     const result = await detectText(text);
     await browser.storage.local.set({
@@ -337,6 +351,14 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  const text = post.text?.plain?.trim() ?? '';
+  if (!isTextLanguageSupported(text)) {
+    browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+      payload: { postId: post.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+    });
+    return;
+  }
   // safety-net: if the user has scanImages disabled, skip image fetching entirely.
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
