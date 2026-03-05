@@ -21,6 +21,7 @@ export interface Settings {
   scanImages: boolean;
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
+  accessibilityMode: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -34,4 +35,5 @@ export const defaultSettings: Settings = {
   scanImages: false,
   scanComments: 'auto_top_n',
   uiMode: 'simple',
+  accessibilityMode: false,
 };

@@ -85,6 +85,8 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
+      const local = await browser.storage.local.get('settings');
+      const localSettings = local.settings as Partial<Settings> | undefined;
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
@@ -96,6 +98,7 @@ export default function Popup() {
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
         scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
+        accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
       };
       setSettings(merged);
       setEnabled(merged.enabled);
@@ -236,6 +239,7 @@ export default function Popup() {
       scanImages: defaultUserSettings.settings.scanImages,
       scanComments: defaultUserSettings.settings.scanComments,
       uiMode: defaultUserSettings.settings.uiMode,
+      accessibilityMode: false,
     };
     setSettings(defaults);
     setEnabled(defaults.enabled);
@@ -253,7 +257,7 @@ export default function Popup() {
       <div
         className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
           simpleMode ? 'simple-mode' : ''
-        }`}
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
         <p className="text-xs text-gray-400">Loading…</p>
       </div>
@@ -264,7 +268,7 @@ export default function Popup() {
   if (!user) {
     return (
       <div
-        className={`w-full min-h-[200px] ${simpleMode ? 'simple-mode' : ''}`}
+        className={`w-full min-h-[200px] ${simpleMode ? 'simple-mode' : ''} ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
         <SignInView />
       </div>
@@ -277,7 +281,7 @@ export default function Popup() {
       <div
         className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
           simpleMode ? 'simple-mode' : ''
-        }`}
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
@@ -335,7 +339,7 @@ export default function Popup() {
     <div
       className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
         simpleMode ? 'simple-mode' : ''
-      }`}
+      } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
 

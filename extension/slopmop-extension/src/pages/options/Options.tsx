@@ -51,6 +51,7 @@ export default function Options() {
     setSettings((prev) => {
       const next = { ...prev, [key]: value };
       browser.storage.local.set({ settings: next });
+      if (key === 'enabled') browser.storage.local.set({ enabled: value });
       flashSaved();
       return next;
     });
@@ -83,7 +84,7 @@ export default function Options() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className={`min-h-screen bg-gray-950 text-white ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}>
       <div className="max-w-2xl mx-auto px-6 py-10">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
@@ -128,6 +129,12 @@ export default function Options() {
               onChange={(v) => update('automaticScanning', v)}
               label="Automatic Scanning"
               description="When off, posts require clicking Detect Now"
+            />
+            <Toggle
+              checked={settings.accessibilityMode}
+              onChange={(v) => update('accessibilityMode', v)}
+              label="Accessibility Mode"
+              description="Larger text and higher contrast for low-vision users"
             />
             <Toggle
               checked={simpleMode}
