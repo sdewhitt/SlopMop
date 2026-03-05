@@ -36,6 +36,28 @@ const settings: UserSettings = { ...DEFAULT_SETTINGS };
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
 
+// Backend text length limit (must match backend MAX_TEXT_LENGTH).
+const MAX_TEXT_LENGTH = 5000;
+
+// Serialise API calls so we don't overwhelm the backend.
+const analysisQueue: Array<() => Promise<void>> = [];
+let analysisRunning = false;
+
+function enqueueAnalysis(task: () => Promise<void>): void {
+  analysisQueue.push(task);
+  drainAnalysisQueue();
+}
+
+async function drainAnalysisQueue(): Promise<void> {
+  if (analysisRunning) return;
+  analysisRunning = true;
+  while (analysisQueue.length > 0) {
+    const next = analysisQueue.shift()!;
+    await next();
+  }
+  analysisRunning = false;
+}
+
 // ── Firebase Auth ────────────────────────────────────────────────
 // All Firebase Auth operations run here in the background script
 // where network requests are unrestricted (no page CSP).
@@ -337,6 +359,10 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  enqueueAnalysis(() => doAnalyzePost(post, tabId));
+}
+
+async function doAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
   // safety-net: if the user has scanImages disabled, skip image fetching entirely.
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
@@ -349,11 +375,67 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   const enrichedPost = { ...post, images: enrichedImages };
 
-  const fakeResponse = buildFakeResponse(enrichedPost);
-  browser.tabs.sendMessage(tabId, {
-    type: 'DETECTION_RESULT',
-    payload: fakeResponse,
-  });
+  // Truncate text to the backend's maximum accepted length.
+  let textToSend = enrichedPost.text.plain?.trim() ?? '';
+  if (textToSend.length > MAX_TEXT_LENGTH) {
+    console.warn(
+      `[SlopMop] Post ${enrichedPost.postId} text truncated from ${textToSend.length} to ${MAX_TEXT_LENGTH} chars`,
+    );
+    textToSend = textToSend.slice(0, MAX_TEXT_LENGTH);
+  }
+
+  // Skip posts with no usable text.
+  if (textToSend.length === 0) return;
+
+  // Retry with exponential back-off for transient server errors (502, 503, 504).
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 1000;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const apiResult = await detectText(textToSend);
+
+      // Map backend DetectResponse to extension DetectionResponse
+      const verdict: DetectionResponse['verdict'] =
+        apiResult.label === 'ai' ? 'likely_ai'
+          : apiResult.label === 'human' ? 'likely_human'
+          : 'unknown';
+
+      const response: DetectionResponse = {
+        requestId: crypto.randomUUID(),
+        postId: enrichedPost.postId,
+        verdict,
+        confidence: apiResult.confidence,
+        explanation: {
+          summary: apiResult.explanation,
+          model: { name: 'slopmop-backend', version: '0.1' },
+          cache: { hit: false, ttlRemainingMs: 0 },
+          timing: { totalMs: 0, inferenceMs: 0 },
+        },
+      };
+
+      browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: response,
+      });
+      return; // success — exit retry loop
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      const isTransient = /502|503|504/.test(msg);
+
+      if (isTransient && attempt < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * 2 ** attempt;
+        console.warn(
+          `[SlopMop] Transient error for post ${enrichedPost.postId}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      console.error('[SlopMop] Post analysis failed:', err);
+      return;
+    }
+  }
 }
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
@@ -396,61 +478,7 @@ async function fetchImageAsBase64(srcUrl: string): Promise<string> {
   }
 }
 
-function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | null {
-  let fakeResponse: DetectionResponse | undefined;
-  const textLen: number = post.text?.plain?.length ?? 0;
-  const roll = Math.random();
-  if (roll < 0.4) {
-    fakeResponse = {
-      requestId: 'debug-req',
-      postId: post.postId,
-      verdict: 'likely_ai',
-      confidence: 0.92,
-      explanation: {
-        summary: 'Repetitive phrasing and low perplexity',
-        highlights: textLen > 20 ? [
-          { start: 0, end: Math.min(textLen, 45), reason: 'Opening follows a common AI template pattern' },
-          { start: Math.min(Math.floor(textLen * 0.4), textLen), end: Math.min(Math.floor(textLen * 0.4) + 60, textLen), reason: 'Unusually low perplexity for this span' },
-        ] : [],
-        model: { name: 'debug', version: '0.0' },
-        cache: { hit: false, ttlRemainingMs: 0 },
-        timing: { totalMs: 0, inferenceMs: 0 },
-      },
-    };
-  } else if (roll < 0.7) {
-    fakeResponse = {
-      requestId: 'debug-req',
-      postId: post.postId,
-      verdict: 'likely_human',
-      confidence: 0.78,
-      explanation: {
-        summary: 'Natural variance and typos detected',
-        highlights: textLen > 30 ? [
-          { start: Math.min(10, textLen), end: Math.min(50, textLen), reason: 'Contains a natural typo / informal shorthand' },
-        ] : [],
-        model: { name: 'debug', version: '0.0' },
-        cache: { hit: true, ttlRemainingMs: 45 },
-        timing: { totalMs: 321, inferenceMs: 190 },
-      },
-    };
-  } else if (roll < 0.9) {
-    fakeResponse = {
-      requestId: 'debug-req',
-      postId: post.postId,
-      verdict: 'unknown',
-      confidence: 0.5,
-      explanation: {
-        summary: 'Insufficient signal',
-        model: { name: 'debug', version: '0.0' },
-        cache: { hit: false, ttlRemainingMs: 0 },
-        timing: { totalMs: 0, inferenceMs: 0 },
-      },
-    };
-  } else {
-    return null;
-  }
-  return fakeResponse;
-}
+
 
 /**
  * When the extension icon is clicked, send a toggle message to the content
