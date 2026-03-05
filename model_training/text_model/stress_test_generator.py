@@ -7,12 +7,12 @@ class StressTestGenerator:
   # initilize the augmenters for each type of stress test
   def __init__(self):
     # case augmentation
-    self.char_augmenter = nac.RandomCharAug(action="substitute")
+    self.char_augmenter = nac.RandomCharAug(action="substitute", verbose=0)
     # word augmentation
-    self.word_augmenter = naw.RandomWordAug(action="swap")
+    self.word_augmenter = naw.RandomWordAug(action="swap", verbose=0)
 
     # typo augmentation
-    self.typo_aug = nac.KeyboardAug(aug_char_p=0.1, aug_word_p=0.1)
+    self.typo_aug = nac.KeyboardAug(aug_char_p=0.1, aug_word_p=0.1, verbose=0)
 
     # homoglyphs augmentation
     self.homoglyphs = {'a': 'а', 'e': 'е', 'o': 'о', 'p': 'р', 's': 'ѕ'}
@@ -22,9 +22,9 @@ class StressTestGenerator:
     leets = {'e': '3', 'i': '1', 'a': '@', 's': '5', 'o': '0'}
     words = text.split()
     for i, word in enumerate(words):
-        for char, leet in leets.items():
-            if char in word:
-                words[i] = word.replace(char, leet)
+      for char, leet in leets.items():
+        if char in word:
+          words[i] = word.replace(char, leet)
     return ' '.join(words)
   
   # inject homoglyphs into the text
@@ -85,36 +85,36 @@ class StressTestGenerator:
 
     # randomly apply char augmentation
     if random.randint(0, 1):  # 1 = apply
-      print("applying char augmentation")
+      # print("applying char augmentation")
       augmented_text = self.char_augmenter.augment(augmented_text)
       if isinstance(augmented_text, list):
         augmented_text = augmented_text[0]
 
     # randomly apply word augmentation
     if random.randint(0, 1):
-      print("applying word augmentation")
+      # print("applying word augmentation")
       augmented_text = self.word_augmenter.augment(augmented_text)
       if isinstance(augmented_text, list):
         augmented_text = augmented_text[0]
 
     # randomly apply leetspeak
     if random.randint(0, 1):
-      print("applying leetspeak")
+      # print("applying leetspeak")
       augmented_text = self.inject_leetspeak(augmented_text)
 
     # randomly apply homoglyphs
     if random.randint(0, 1):
-      print("applying homoglyphs")
+      # print("applying homoglyphs")
       augmented_text = self.inject_homoglyphs(augmented_text)
 
     # randomly add AI slop
     if random.randint(0, 1):
-      print("adding AI slop")
+      # print("adding AI slop")
       augmented_text = self.add_ai_slop(augmented_text)
 
     # randomly apply typos
     if random.randint(0, 1):
-      print("applying typos")
+      # print("applying typos")
       augmented_text = self.typo_aug.augment(augmented_text)
       if isinstance(augmented_text, list):
         augmented_text = augmented_text[0]

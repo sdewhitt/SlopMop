@@ -13,9 +13,18 @@ import {
   updateDetectionSettings,
   resetStats,
   resetSettings,
+  getIgnoredSites,
+  setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
-import { detectText, type DetectResponse} from '@src/lib/api';
-import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+import {
+  setIgnoredSites,
+  getIgnoredSites as getIgnoredSitesLocal,
+  normalizeHost,
+  validateHost,
+} from '@src/utils/disabledWebsites';
+import { detectText, type DetectResponse } from '@src/lib/api';
+import { DEFAULT_SETTINGS, UserSettings, type DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
@@ -42,11 +51,19 @@ initFirebase();
 // Sync the current Firebase user to browser.storage.local so the
 // content-script React tree can read auth state reactively.
 if (auth) {
-  onAuthStateChanged(auth, (firebaseUser) => {
+  onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
       browser.storage.local.set({
         slopmopUser: { uid: firebaseUser.uid, email: firebaseUser.email },
       });
+      // Sync ignored sites from Firestore to local storage so the content
+      // script can read them synchronously without a Firestore round-trip.
+      try {
+        const sites = await getIgnoredSites(firebaseUser.uid);
+        await setIgnoredSites(sites);
+      } catch (e) {
+        console.error('[SlopMop] Failed to sync ignoredSites from Firestore', e);
+      }
     } else {
       browser.storage.local.remove('slopmopUser');
     }
@@ -77,6 +94,7 @@ interface BackgroundMessage {
   email?: string;
   password?: string;
   uid?: string;
+  site?: string;
   patch?: Partial<DetectionSettings>;
   text?: string;
   payload?: NormalizedPostContent;
@@ -120,6 +138,12 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_GET_IGNORED_SITES':
+      return handleGetIgnoredSites(msg.uid);
+    case 'SLOPMOP_ADD_IGNORED_SITE':
+      return handleAddIgnoredSite(msg.uid, msg.site!);
+    case 'SLOPMOP_REMOVE_IGNORED_SITE':
+      return handleRemoveIgnoredSite(msg.uid, msg.site!);
     default:
       return;
   }
@@ -232,6 +256,56 @@ async function handleResetStats(uid: string): Promise<MessageResponse> {
 async function handleResetSettings(uid: string): Promise<MessageResponse> {
   try {
     await resetSettings(uid);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+// ── Ignored Sites handlers ────────────────────────────────────────
+
+async function handleGetIgnoredSites(uid?: string): Promise<MessageResponse> {
+  try {
+    // Return local storage copy — always up to date for authenticated users.
+    const sites = await getIgnoredSitesLocal();
+    return { success: true, data: sites };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleAddIgnoredSite(uid: string | undefined, site: string): Promise<MessageResponse> {
+  try {
+    const normalized = normalizeHost(site);
+    const err = validateHost(normalized);
+    if (err) return { success: false, error: err };
+
+    const current = await getIgnoredSitesLocal();
+    if (current.includes(normalized)) {
+      return { success: false, error: 'Site is already in the list.' };
+    }
+
+    const updated = [...current, normalized];
+    await setIgnoredSites(updated);
+
+    // Persist to Firestore for authenticated users.
+    if (uid) await setIgnoredSitesFirestore(uid, updated).catch(console.error);
+
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleRemoveIgnoredSite(uid: string | undefined, site: string): Promise<MessageResponse> {
+  try {
+    const current = await getIgnoredSitesLocal();
+    const updated = current.filter((s) => s !== site);
+    await setIgnoredSites(updated);
+
+    // Persist to Firestore for authenticated users.
+    if (uid) await setIgnoredSitesFirestore(uid, updated).catch(console.error);
+
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };

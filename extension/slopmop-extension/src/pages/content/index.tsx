@@ -19,6 +19,7 @@ import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
+import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
 import panelCss from './panel.css?inline';
 
@@ -188,3 +189,64 @@ browser.storage.onChanged.addListener((changes, areaName) => {
 initFeedObserver().catch((e) => {
   console.error('[SlopMop] observer init error', e);
 });
+/* ============================= FROM SETH MERGING INTO BRANCH
+// Skips detection entirely when the current hostname is in the ignored-sites list.
+
+const currentHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
+
+let observer: FeedObserver | null = null;
+
+async function initObserver() {
+  try {
+    renderDebugBadge();
+
+    const isReddit = currentHost.includes('reddit.com');
+    if (!isReddit) return;
+
+    const result = await browser.storage.local.get('ignoredSites');
+    const ignoredSites = (result['ignoredSites'] as string[]) ?? [];
+
+    if (isHostIgnored(currentHost, ignoredSites)) {
+      console.log('[SlopMop] Detection disabled for', currentHost);
+      return;
+    }
+
+    const feedSettings = { ...DEFAULT_SETTINGS };
+    if (feedSettings.enabled) {
+      const adapter = new RedditAdapter();
+      const extractor = new PostExtractor();
+      const overlay = new OverlayRenderer(adapter, feedSettings);
+      const bus = new ExtensionMessageBus();
+      observer = new FeedObserver(adapter, extractor, overlay, bus, feedSettings);
+
+      bus.onDetectionResponse((res) => {
+        overlay.renderResult(res.postId, res);
+      });
+
+      observer.start();
+      console.log('[SlopMop] FeedObserver started');
+    }
+  } catch (e) {
+    console.error('[SlopMop] observer init error', e);
+  }
+}
+
+initObserver();
+
+// Reactively stop or restart the observer when the ignored-sites list changes
+// (e.g. user adds/removes the current site from the Disabled Websites list).
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('ignoredSites' in changes)) return;
+
+  const newSites = (changes['ignoredSites'].newValue as string[]) ?? [];
+  const nowIgnored = isHostIgnored(currentHost, newSites);
+
+  if (nowIgnored && observer) {
+    observer.stop();
+    observer = null;
+    console.log('[SlopMop] Detection stopped for', currentHost);
+  } else if (!nowIgnored && !observer) {
+    // Re-init from scratch so adapters/overlays are fresh.
+    initObserver();
+  }
+});*/
