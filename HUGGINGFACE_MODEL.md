@@ -34,11 +34,18 @@ cd c:\Users\aryr5\OneDrive\Documents\CS307\SlopMop
 
 **Option A – CLI (recommended):**
 
+Use the **FP32** model for the backend (ONNX Runtime on CPU fails on the FP16 model with a type error). After running `export_to_onnx.py`, the FP32 file is kept as `text_detector_fp32.onnx`:
+
 ```powershell
-huggingface-cli upload YOUR_USERNAME/slopmop-text-detector model_training/text_model/text_detector.onnx text_detector.onnx
+huggingface-cli upload YOUR_USERNAME/slopmop-text-detector model_training/text_model/text_detector_fp32.onnx text_detector_fp32.onnx
 ```
 
-Replace `YOUR_USERNAME` with your Hugging Face username. The file will appear in the repo as `text_detector.onnx`.
+Replace `YOUR_USERNAME` with your Hugging Face username. If there is a `text_detector_fp32.onnx.data` file next to it, upload that too with the same name in the repo.
+
+Then on **Render** → Environment, add:
+- **HF_ONNX_FILENAME** = `text_detector_fp32.onnx`
+
+(If you use the smaller FP16 file as `text_detector.onnx` instead, leave `HF_ONNX_FILENAME` unset; the FP16 model can fail on CPU with a float16/float32 mismatch.)
 
 **Option B – Python one-liner:**
 

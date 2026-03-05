@@ -87,7 +87,7 @@ backend/model/*.onnx* filter=lfs diff=lfs merge=lfs -text
    - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
    - **Instance Type:** Standard (2 GB RAM) or higher – required for the ONNX model
 
-5. **If using Hugging Face** (no model in repo): add env var **HF_MODEL_REPO** = `YOUR_USERNAME/slopmop-text-detector` (see [HUGGINGFACE_MODEL.md](HUGGINGFACE_MODEL.md)).
+5. **If using Hugging Face** (no model in repo): add **HF_MODEL_REPO** = `YOUR_USERNAME/slopmop-text-detector` and **HF_ONNX_FILENAME** = `text_detector_fp32.onnx` (see [HUGGINGFACE_MODEL.md](HUGGINGFACE_MODEL.md)).
 6. **Create Web Service**
 
 ---

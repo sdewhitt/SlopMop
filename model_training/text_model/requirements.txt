@@ -12,7 +12,3 @@ nlpaug>=1.1.11
 
 # ONNX export & inference
 onnx>=1.14.0
-onnxconverter-common>=1.14.0
-
-# parity_test.py
-httpx>=0.24.0
