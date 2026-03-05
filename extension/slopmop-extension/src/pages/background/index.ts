@@ -412,7 +412,7 @@ function mapToDetectionResponse(
   postId: string,
   timingMs: number,
 ): DetectionResponse {
-  console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
+  //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
 
   const confidencePercent = apiResult.confidence <= 1
     ? apiResult.confidence * 100
