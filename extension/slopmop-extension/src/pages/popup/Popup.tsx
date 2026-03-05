@@ -41,32 +41,31 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
-   const [simpleMode, setSimpleMode] = useState(false);
+  const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
     browser.storage.local
       .get([
-        'enabled',
         'postsScanned',
         'aiDetected',
         'postsProcessing',
         'settings',
         'simpleMode',
-        // Most recent backend `/detect` response (if/when written by detection pipeline)
         'detectResponse',
         'lastDetectResponse',
         'lastDetection',
         'detectionResult',
       ])
       .then((result) => {
-        if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
         setStats({
           postsScanned: (result.postsScanned as number) || 0,
           aiDetected: (result.aiDetected as number) || 0,
           postsProcessing: (result.postsProcessing as number) || 0,
         });
         if (result.settings) {
-          setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+          const merged = { ...defaultSettings, ...(result.settings as Settings) };
+          setSettings(merged);
+          setEnabled(merged.enabled);
         }
         if (typeof result.simpleMode === 'boolean') {
           setSimpleMode(result.simpleMode);
@@ -85,18 +84,21 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
-      const local = await browser.storage.local.get(['settings']);
-      const localSettings = local.settings as Partial<Settings> | undefined;
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
+        automaticScanning: remote.settings.automaticScanning ?? defaultSettings.automaticScanning,
         platforms: { ...remote.settings.platforms },
-        accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
+        enabled: remote.settings.enabled ?? defaultSettings.enabled,
+        scanText: remote.settings.scanText ?? defaultSettings.scanText,
+        scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
+        scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
+        uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
       };
       setSettings(merged);
+      setEnabled(merged.enabled);
       setStats(remote.stats);
-      // Mirror to local storage so the content script can read without Firestore
       browser.storage.local.set({ settings: merged });
       browser.storage.local.set({
         postsScanned: remote.stats.postsScanned,
@@ -105,27 +107,23 @@ export default function Popup() {
       });
     } catch (err) {
       console.error('[Popup] Failed to load Firestore settings:', err);
-      // Fall back to local storage
       const result = await browser.storage.local.get([
-        'enabled', 'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
+        'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
       ]);
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
       setStats({
         postsScanned: (result.postsScanned as number) || 0,
         aiDetected: (result.aiDetected as number) || 0,
         postsProcessing: (result.postsProcessing as number) || 0,
       });
       if (result.settings) {
-        setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+        const merged = { ...defaultSettings, ...(result.settings as Settings) };
+        setSettings(merged);
+        setEnabled(merged.enabled);
       }
     }
   }, [user]);
 
   useEffect(() => {
-    // Load local "enabled" flag (not stored in Firestore)
-    browser.storage.local.get(['enabled']).then((result) => {
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
-    });
     loadSettings();
   }, [loadSettings]);
 
@@ -148,14 +146,22 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
-  // Sync settings (e.g. accessibilityMode) when Options page or another tab updates storage.
+  // Sync settings and simple mode when Options page or another tab updates storage.
   useEffect(() => {
     const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local') return;
+
       const change = changes.settings;
-      if (!change?.newValue || typeof change.newValue !== 'object') return;
-      setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+      if (change?.newValue && typeof change.newValue === 'object') {
+        setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+      }
+
+      const simpleModeChange = changes.simpleMode;
+      if (typeof simpleModeChange?.newValue === 'boolean') {
+        setSimpleMode(simpleModeChange.newValue);
+      }
     };
+
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
@@ -163,7 +169,14 @@ export default function Popup() {
   const toggleEnabled = () => {
     const next = !enabled;
     setEnabled(next);
-    browser.storage.local.set({ enabled: next });
+    setSettings((prev) => {
+      const updated = { ...prev, enabled: next };
+      browser.storage.local.set({ settings: updated });
+      if (user) {
+        updateDetectionSettings(user.uid, { enabled: next }).catch(console.error);
+      }
+      return updated;
+    });
   };
 
   const flashSaved = () => {
@@ -215,11 +228,18 @@ export default function Popup() {
       sensitivity: defaultUserSettings.settings.sensitivity,
       highlightStyle: defaultUserSettings.settings.highlightStyle,
       showNotifications: defaultUserSettings.settings.showNotifications,
+      automaticScanning: defaultUserSettings.settings.automaticScanning,
       platforms: { ...defaultUserSettings.settings.platforms },
-      accessibilityMode: false,
+      enabled: defaultUserSettings.settings.enabled,
+      scanText: defaultUserSettings.settings.scanText,
+      scanImages: defaultUserSettings.settings.scanImages,
+      scanComments: defaultUserSettings.settings.scanComments,
+      uiMode: defaultUserSettings.settings.uiMode,
     };
     setSettings(defaults);
-    browser.storage.local.set({ settings: defaults });
+    setEnabled(defaults.enabled);
+    setSimpleMode(false);
+    browser.storage.local.set({ settings: defaults, simpleMode: false });
     flashSaved();
     if (user) {
       firestoreResetSettings(user.uid).catch(console.error);
@@ -231,7 +251,7 @@ export default function Popup() {
     return (
       <div
         className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
-          settings.accessibilityMode ? 'accessibility-mode' : ''
+          simpleMode ? 'simple-mode' : ''
         }`}
       >
         <p className="text-xs text-gray-400">Loading…</p>
@@ -243,7 +263,7 @@ export default function Popup() {
   if (!user) {
     return (
       <div
-        className={`w-full min-h-[200px] ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+        className={`w-full min-h-[200px] ${simpleMode ? 'simple-mode' : ''}`}
       >
         <SignInView />
       </div>
@@ -255,7 +275,7 @@ export default function Popup() {
     return (
       <div
         className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
-          settings.accessibilityMode ? 'accessibility-mode' : ''
+          simpleMode ? 'simple-mode' : ''
         }`}
       >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
@@ -310,7 +330,7 @@ export default function Popup() {
   return (
     <div
       className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
-        settings.accessibilityMode ? 'accessibility-mode' : ''
+        simpleMode ? 'simple-mode' : ''
       }`}
     >
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
