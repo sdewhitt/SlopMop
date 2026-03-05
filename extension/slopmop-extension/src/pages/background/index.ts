@@ -16,26 +16,29 @@ import {
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
+import { detectText, type DetectResponse } from '@src/lib/api';
+import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import {
-  setIgnoredSites,
   getIgnoredSites as getIgnoredSitesLocal,
+  setIgnoredSites,
   normalizeHost,
   validateHost,
 } from '@src/utils/disabledWebsites';
-import { detectText } from '@src/lib/api';
-import { getPatternReasons } from '@src/utils/aiTextPatterns';
-import { DetectionResponse, NormalizedPostContent, DEFAULT_SETTINGS, UserSettings } from '@src/types/domain';
-
-import type { DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
 
 // ── Post analysis ────────────────────────────────────────────────
-// Settings for post analysis (image scanning etc.)
-const settings: UserSettings = { ...DEFAULT_SETTINGS };
-
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
+// hardcoded developer toggle. keep true for offline fake responses.
+const USE_FAKE_DETECTION = false;
+
+async function getDetectionSettings(): Promise<DetectionSettings> {
+  const stored = await browser.storage.local.get('settings');
+  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
+  return { ...defaultUserSettings.settings, ...saved };
+}
 
 // ── Firebase Auth ────────────────────────────────────────────────
 // All Firebase Auth operations run here in the background script
@@ -76,23 +79,9 @@ browser.runtime.onInstalled.addListener(async () => {
   const result = await browser.storage.local.get('settings');
   if (!result.settings) {
     await browser.storage.local.set({
-      enabled: true,
       postsScanned: 0,
       aiDetected: 0,
-      settings: {
-        enabled: true,
-        sensitivity: 'medium',
-        highlightStyle: 'badge',
-        platforms: {
-          twitter: true,
-          reddit: true,
-          facebook: true,
-          youtube: true,
-          linkedin: true,
-        },
-        showNotifications: true,
-        accessibilityMode: false,
-      },
+      settings: defaultUserSettings.settings,
     });
   }
 });
@@ -325,13 +314,11 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 async function handleDetect(text: string): Promise<MessageResponse> {
   try {
     const result = await detectText(text);
-    const patternReasons = getPatternReasons(text);
-    const enriched = { ...result, patternReasons };
     await browser.storage.local.set({
-      detectResponse: enriched,
-      lastDetectResponse: enriched,
+      detectResponse: result,
+      lastDetectResponse: result,
     });
-    return { success: true, data: enriched };
+    return { success: true, data: result };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
   }
@@ -340,7 +327,7 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
-  // safety-net: if the user has scanImages disabled, skip image fetching entirely.
+  const settings = await getDetectionSettings();
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
   let enrichedImages = post.images;
@@ -351,12 +338,49 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   }
 
   const enrichedPost = { ...post, images: enrichedImages };
+  const plainText = enrichedPost.text?.plain ?? '';
 
-  const fakeResponse = buildFakeResponse(enrichedPost);
-  browser.tabs.sendMessage(tabId, {
-    type: 'DETECTION_RESULT',
-    payload: fakeResponse,
-  });
+  if (!plainText.trim()) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'empty text' },
+    });
+    return;
+  }
+
+  if (USE_FAKE_DETECTION) {
+    const fakeResponse = buildFakeResponse(enrichedPost);
+    if (fakeResponse) {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: fakeResponse,
+      });
+    } else {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_ERROR',
+        payload: { postId: enrichedPost.postId, message: 'fake detection returned no result' },
+      });
+    }
+    return;
+  }
+
+  try {
+    const start = performance.now();
+    const apiResult = await detectText(plainText);
+    const elapsedMs = Math.round(performance.now() - start);
+    const mapped = mapToDetectionResponse(apiResult, enrichedPost.postId, elapsedMs);
+
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload: mapped,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'network error';
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message },
+    });
+  }
 }
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
@@ -398,6 +422,7 @@ async function fetchImageAsBase64(srcUrl: string): Promise<string> {
     return '';
   }
 }
+
 
 function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | null {
   let fakeResponse: DetectionResponse | undefined;
@@ -453,6 +478,38 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
     return null;
   }
   return fakeResponse;
+}
+
+function mapToDetectionResponse(
+  apiResult: DetectResponse,
+  postId: string,
+  timingMs: number,
+): DetectionResponse {
+  //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
+
+  const confidencePercent = apiResult.confidence <= 1
+    ? apiResult.confidence * 100
+    : apiResult.confidence;
+
+  const verdict: DetectionResponse['verdict'] = confidencePercent > 60
+    ? 'likely_ai'
+    : confidencePercent >= 40
+      ? 'unknown'
+      : 'likely_human';
+
+  return {
+    requestId: crypto.randomUUID(),
+    postId,
+    verdict,
+    confidence: apiResult.confidence,
+    explanation: {
+      summary: apiResult.explanation,
+      highlights: [],
+      model: { name: 'slopmop-api', version: '1.0' },
+      cache: { hit: false, ttlRemainingMs: 0 },
+      timing: { totalMs: timingMs, inferenceMs: timingMs },
+    },
+  };
 }
 
 /**

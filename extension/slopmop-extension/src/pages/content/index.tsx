@@ -16,8 +16,8 @@ import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
-import { DEFAULT_SETTINGS } from '@src/types/domain';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
+import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
 import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
@@ -106,63 +106,101 @@ try {
 
 // ── Feed observer ─────────────────────────────────────────────
 // Scans social media feeds for AI-generated posts and renders overlays.
-// Skips detection entirely when the current hostname is in the ignored-sites list.
 
-const currentHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
+let activeObserver: FeedObserver | null = null;
 
-let observer: FeedObserver | null = null;
+function getCurrentHost(): string {
+  return window.location.hostname.toLowerCase().replace(/^www\./, '');
+}
 
-async function initObserver() {
-  try {
-    renderDebugBadge();
+function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
+  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
+  return { ...defaultUserSettings.settings, ...saved };
+}
 
-    const isReddit = currentHost.includes('reddit.com');
-    if (!isReddit) return;
+function shouldRunOnCurrentSite(
+  settings: DetectionSettings,
+  ignoredSites: string[],
+): boolean {
+  const hostname = getCurrentHost();
 
-    const result = await browser.storage.local.get('ignoredSites');
-    const ignoredSites = (result['ignoredSites'] as string[]) ?? [];
+  if (isHostIgnored(hostname, ignoredSites)) return false;
 
-    if (isHostIgnored(currentHost, ignoredSites)) {
-      console.log('[SlopMop] Detection disabled for', currentHost);
+  if (hostname.includes('reddit.com')) return settings.platforms.reddit;
+  if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
+  if (hostname.includes('facebook.com')) return settings.platforms.facebook;
+  if (hostname.includes('youtube.com')) return settings.platforms.youtube;
+  if (hostname.includes('linkedin.com')) return settings.platforms.linkedin;
+
+  return false;
+}
+
+function startObserver(settings: DetectionSettings): void {
+  const hostname = getCurrentHost();
+  let adapter;
+  if (hostname.includes('reddit.com')) {
+    adapter = new RedditAdapter();
+  } else {
+    return;
+  }
+
+  const extractor = new PostExtractor();
+  const overlay = new OverlayRenderer(adapter, settings);
+  const bus = new ExtensionMessageBus();
+  activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
+
+  bus.onDetectionResponse((res) => {
+    if (!activeObserver?.markAnalyzeCompleted(res.postId)) return;
+    overlay.renderResult(res.postId, res);
+  });
+  bus.onDetectionError(({ postId, message }) => {
+    if (!activeObserver?.markAnalyzeCompleted(postId)) return;
+    overlay.renderError(postId, message);
+  });
+
+  activeObserver.start();
+  console.log('[SlopMop] FeedObserver started');
+}
+
+async function initFeedObserver(): Promise<void> {
+  renderDebugBadge();
+
+  const stored = await browser.storage.local.get(['settings', 'ignoredSites']);
+  const settings = resolveDetectionSettings(stored);
+  const ignoredSites = (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
+
+  if (!settings.enabled) return;
+  if (!shouldRunOnCurrentSite(settings, ignoredSites)) return;
+
+  startObserver(settings);
+}
+
+browser.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (!changes.settings && !changes.ignoredSites) return;
+
+  void browser.storage.local.get(['settings', 'ignoredSites']).then((stored) => {
+    const currentHost = getCurrentHost();
+    const newSettings = resolveDetectionSettings(stored);
+    const newIgnoredSites =
+      (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
+    const shouldRun = shouldRunOnCurrentSite(newSettings, newIgnoredSites);
+
+    if (!shouldRun && activeObserver) {
+      activeObserver.stop();
+      activeObserver = null;
+      console.log('[SlopMop] FeedObserver stopped for', currentHost);
       return;
     }
 
-    const feedSettings = { ...DEFAULT_SETTINGS };
-    if (feedSettings.enabled) {
-      const adapter = new RedditAdapter();
-      const extractor = new PostExtractor();
-      const overlay = new OverlayRenderer(adapter, feedSettings);
-      const bus = new ExtensionMessageBus();
-      observer = new FeedObserver(adapter, extractor, overlay, bus, feedSettings);
-
-      bus.onDetectionResponse((res) => {
-        overlay.renderResult(res.postId, res);
+    if (shouldRun && !activeObserver) {
+      initFeedObserver().catch((e) => {
+        console.error('[SlopMop] observer re-init error', e);
       });
-
-      observer.start();
-      console.log('[SlopMop] FeedObserver started');
     }
-  } catch (e) {
-    console.error('[SlopMop] observer init error', e);
-  }
-}
+  });
+});
 
-initObserver();
-
-// Reactively stop or restart the observer when the ignored-sites list changes
-// (e.g. user adds/removes the current site from the Disabled Websites list).
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !('ignoredSites' in changes)) return;
-
-  const newSites = (changes['ignoredSites'].newValue as string[]) ?? [];
-  const nowIgnored = isHostIgnored(currentHost, newSites);
-
-  if (nowIgnored && observer) {
-    observer.stop();
-    observer = null;
-    console.log('[SlopMop] Detection stopped for', currentHost);
-  } else if (!nowIgnored && !observer) {
-    // Re-init from scratch so adapters/overlays are fresh.
-    initObserver();
-  }
+initFeedObserver().catch((e) => {
+  console.error('[SlopMop] observer init error', e);
 });

@@ -1,36 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
+import { type Settings, defaultSettings } from '../popup/types';
 import DisabledWebsitesManager from './DisabledWebsitesManager';
-
-interface Settings {
-  enabled: boolean;
-  sensitivity: 'low' | 'medium' | 'high';
-  highlightStyle: 'badge' | 'border' | 'dim';
-  platforms: {
-    twitter: boolean;
-    reddit: boolean;
-    facebook: boolean;
-    youtube: boolean;
-    linkedin: boolean;
-  };
-  showNotifications: boolean;
-  accessibilityMode: boolean;
-}
-
-const defaultSettings: Settings = {
-  enabled: true,
-  sensitivity: 'medium',
-  highlightStyle: 'badge',
-  platforms: {
-    twitter: true,
-    reddit: true,
-    facebook: true,
-    youtube: true,
-    linkedin: true,
-  },
-  showNotifications: true,
-  accessibilityMode: false,
-};
 
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean;
@@ -80,8 +51,6 @@ export default function Options() {
     setSettings((prev) => {
       const next = { ...prev, [key]: value };
       browser.storage.local.set({ settings: next });
-      // Sync top-level 'enabled' for popup
-      if (key === 'enabled') browser.storage.local.set({ enabled: value });
       flashSaved();
       return next;
     });
@@ -108,12 +77,13 @@ export default function Options() {
 
   const resetSettings = () => {
     setSettings(defaultSettings);
-    browser.storage.local.set({ settings: defaultSettings, enabled: defaultSettings.enabled });
+    setSimpleMode(false);
+    browser.storage.local.set({ settings: defaultSettings, simpleMode: false });
     flashSaved();
   };
 
   return (
-    <div className={`min-h-screen bg-gray-950 text-white ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}>
+    <div className="min-h-screen bg-gray-950 text-white">
       <div className="max-w-2xl mx-auto px-6 py-10">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
@@ -142,10 +112,22 @@ export default function Options() {
               />
             )}
             <Toggle
-              checked={settings.accessibilityMode}
-              onChange={(v) => update('accessibilityMode', v)}
-              label="Accessibility Mode"
-              description="Larger text and higher contrast for low-vision users"
+              checked={settings.scanText}
+              onChange={(v) => update('scanText', v)}
+              label="Scan Text"
+              description="Analyze text content in posts"
+            />
+            <Toggle
+              checked={settings.scanImages}
+              onChange={(v) => update('scanImages', v)}
+              label="Scan Images"
+              description="Analyze images in posts (coming soon)"
+            />
+            <Toggle
+              checked={settings.automaticScanning}
+              onChange={(v) => update('automaticScanning', v)}
+              label="Automatic Scanning"
+              description="When off, posts require clicking Detect Now"
             />
             <Toggle
               checked={simpleMode}
