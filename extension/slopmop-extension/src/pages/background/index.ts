@@ -41,6 +41,28 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
   return { ...defaultUserSettings.settings, ...saved };
 }
 
+// Backend text length limit (must match backend MAX_TEXT_LENGTH).
+const MAX_TEXT_LENGTH = 5000;
+
+// Serialise API calls so we don't overwhelm the backend.
+const analysisQueue: Array<() => Promise<void>> = [];
+let analysisRunning = false;
+
+function enqueueAnalysis(task: () => Promise<void>): void {
+  analysisQueue.push(task);
+  drainAnalysisQueue();
+}
+
+async function drainAnalysisQueue(): Promise<void> {
+  if (analysisRunning) return;
+  analysisRunning = true;
+  while (analysisQueue.length > 0) {
+    const next = analysisQueue.shift()!;
+    await next();
+  }
+  analysisRunning = false;
+}
+
 // ── Firebase Auth ────────────────────────────────────────────────
 // All Firebase Auth operations run here in the background script
 // where network requests are unrestricted (no page CSP).
@@ -328,7 +350,15 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+<<<<<<< extractor
   const settings = await getDetectionSettings();
+=======
+  enqueueAnalysis(() => doAnalyzePost(post, tabId));
+}
+
+async function doAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  // safety-net: if the user has scanImages disabled, skip image fetching entirely.
+>>>>>>> add-ai-image-detection
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
   let enrichedImages = post.images;
@@ -341,6 +371,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
 
+<<<<<<< extractor
   if (!plainText.trim()) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
@@ -381,6 +412,68 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message },
     });
+=======
+  // Truncate text to the backend's maximum accepted length.
+  let textToSend = enrichedPost.text.plain?.trim() ?? '';
+  if (textToSend.length > MAX_TEXT_LENGTH) {
+    console.warn(
+      `[SlopMop] Post ${enrichedPost.postId} text truncated from ${textToSend.length} to ${MAX_TEXT_LENGTH} chars`,
+    );
+    textToSend = textToSend.slice(0, MAX_TEXT_LENGTH);
+  }
+
+  // Skip posts with no usable text.
+  if (textToSend.length === 0) return;
+
+  // Retry with exponential back-off for transient server errors (502, 503, 504).
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 1000;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const apiResult = await detectText(textToSend);
+
+      // Map backend DetectResponse to extension DetectionResponse
+      const verdict: DetectionResponse['verdict'] =
+        apiResult.label === 'ai' ? 'likely_ai'
+          : apiResult.label === 'human' ? 'likely_human'
+          : 'unknown';
+
+      const response: DetectionResponse = {
+        requestId: crypto.randomUUID(),
+        postId: enrichedPost.postId,
+        verdict,
+        confidence: apiResult.confidence,
+        explanation: {
+          summary: apiResult.explanation,
+          model: { name: 'slopmop-backend', version: '0.1' },
+          cache: { hit: false, ttlRemainingMs: 0 },
+          timing: { totalMs: 0, inferenceMs: 0 },
+        },
+      };
+
+      browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: response,
+      });
+      return; // success — exit retry loop
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      const isTransient = /502|503|504/.test(msg);
+
+      if (isTransient && attempt < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * 2 ** attempt;
+        console.warn(
+          `[SlopMop] Transient error for post ${enrichedPost.postId}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      console.error('[SlopMop] Post analysis failed:', err);
+      return;
+    }
+>>>>>>> add-ai-image-detection
   }
 }
 
@@ -425,6 +518,7 @@ async function fetchImageAsBase64(srcUrl: string): Promise<string> {
 }
 
 
+<<<<<<< extractor
 function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | null {
   let fakeResponse: DetectionResponse | undefined;
   const textLen: number = post.text?.plain?.length ?? 0;
@@ -480,6 +574,8 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
   }
   return fakeResponse;
 }
+=======
+>>>>>>> add-ai-image-detection
 
 function mapToDetectionResponse(
   apiResult: DetectResponse,
