@@ -37,6 +37,17 @@ def _get_onnx_path() -> str:
             local_dir=_MODEL_DIR,
         )
         print(f"[SlopMop] ONNX download complete: {path}", flush=True)
+        # If the model uses external data, download .onnx.data into the same dir
+        data_filename = ONNX_FILENAME + ".data"
+        try:
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=data_filename,
+                local_dir=_MODEL_DIR,
+            )
+            print(f"[SlopMop] ONNX external data downloaded: {data_filename}", flush=True)
+        except Exception:
+            pass  # No external data or file not in repo
         return path
     return LOCAL_ONNX_PATH
 
