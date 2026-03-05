@@ -280,7 +280,7 @@ export default function Popup() {
 
   // ── Home view ─────────────────────────────────────────────────
   return (
-    <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none">
+    <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-y-auto overscroll-none">
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />

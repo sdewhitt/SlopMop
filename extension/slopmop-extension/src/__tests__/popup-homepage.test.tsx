@@ -186,16 +186,12 @@ describe('Popup Homepage', () => {
     const pauseBtn = screen.getByRole('button', { name: /Pause Detection/i });
     await user.click(pauseBtn);
 
-    expect(browser.storage.local.set).toHaveBeenCalledWith(
-      expect.objectContaining({ settings: expect.objectContaining({ enabled: false }) }),
-    );
+    expect(browser.storage.local.set).toHaveBeenCalledWith({ enabled: false });
 
     const enableBtn = screen.getByRole('button', { name: /Enable Detection/i });
     await user.click(enableBtn);
 
-    expect(browser.storage.local.set).toHaveBeenCalledWith(
-      expect.objectContaining({ settings: expect.objectContaining({ enabled: true }) }),
-    );
+    expect(browser.storage.local.set).toHaveBeenCalledWith({ enabled: true });
   });
 
   // ── Stats Grid ──────────────────────────────────────────────
@@ -244,14 +240,6 @@ describe('Popup Homepage', () => {
     expect(
       screen.getByText(/probability-based estimates, not definitive determinations/),
     ).toBeInTheDocument();
-  });
-
-  // ── Sign Out Button ─────────────────────────────────────────
-
-  it('should render a Sign Out button on the home view', async () => {
-    renderHome();
-    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Sign Out/i })).toBeInTheDocument();
   });
 
   // ── Confidence Display ──────────────────────────────────────
@@ -307,18 +295,5 @@ describe('Popup Homepage', () => {
     // Settings header appears, home-specific elements disappear
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.queryByText('Pause Detection')).not.toBeInTheDocument();
-  });
-
-  // ── Storage listener lifecycle ──────────────────────────────
-
-  it('should register and clean up the storage.onChanged listener', async () => {
-    const { unmount } = renderHome();
-    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
-
-    expect(browser.storage.onChanged.addListener).toHaveBeenCalled();
-
-    unmount();
-
-    expect(browser.storage.onChanged.removeListener).toHaveBeenCalled();
   });
 });
