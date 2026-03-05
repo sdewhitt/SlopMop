@@ -19,6 +19,7 @@ import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
+import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
 import panelCss from './panel.css?inline';
 
@@ -112,6 +113,23 @@ function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSet
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
   return { ...defaultUserSettings.settings, ...saved };
 }
+
+// Reactively stop or restart the observer when the ignored-sites list changes
+// (e.g. user adds/removes the current site from the Disabled Websites list).
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('ignoredSites' in changes)) return;
+
+  const newSites = (changes['ignoredSites'].newValue as string[]) ?? [];
+  const nowIgnored = isHostIgnored(currentHost, newSites);
+
+  if (nowIgnored && observer) {
+    observer.stop();
+    observer = null;
+    console.log('[SlopMop] Detection stopped for', currentHost);
+  } else if (!nowIgnored && !observer) {
+    // Re-init from scratch so adapters/overlays are fresh.
+    initObserver();
+  }
 
 function shouldRunOnCurrentSite(
   settings: DetectionSettings,

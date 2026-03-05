@@ -261,7 +261,30 @@ export class OverlayRenderer {
         header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
         tip.appendChild(header);
 
-        //  body: explanation summary from the model 
+        // confidence progress bar
+        const pct = Math.round(res.confidence * 100);
+        const barColor = pct >= 70 ? "#ef4444" : pct >= 40 ? "#f59e0b" : "#22c55e";
+        const track = document.createElement("div");
+        Object.assign(track.style, {
+            width: "100%",
+            height: "6px",
+            backgroundColor: "#374151",
+            borderRadius: "3px",
+            marginBottom: "8px",
+            overflow: "hidden",
+        });
+        const fill = document.createElement("div");
+        Object.assign(fill.style, {
+            width: `${pct}%`,
+            height: "100%",
+            backgroundColor: barColor,
+            borderRadius: "3px",
+            transition: "width 0.3s ease",
+        });
+        track.appendChild(fill);
+        tip.appendChild(track);
+
+        //  body: explanation summary from the model
         const summary = document.createElement("div");
         Object.assign(summary.style, { marginBottom: "8px" });
         summary.textContent = res.explanation.summary;

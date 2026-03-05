@@ -8,6 +8,20 @@
   font-size: 1.125rem; /* 18px base, up from 16px */
 }
 
+/* Popup/options: scale up Tailwind text sizes so they visibly increase (they normally override root font-size) */
+.accessibility-mode .text-xs {
+  font-size: 0.9375rem; /* 15px, up from 12px */
+}
+.accessibility-mode .text-sm {
+  font-size: 1.0625rem; /* 17px, up from 14px */
+}
+.accessibility-mode .text-\[10px\] {
+  font-size: 0.8125rem;
+}
+.accessibility-mode .text-\[11px\] {
+  font-size: 0.875rem;
+}
+
 /* Improve contrast: lighter text on dark backgrounds for better readability */
 .accessibility-mode .text-gray-400,
 .accessibility-mode .text-gray-500 {

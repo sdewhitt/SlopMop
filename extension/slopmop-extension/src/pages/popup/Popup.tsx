@@ -21,6 +21,7 @@ import DetectionSettings from './components/DetectionSettings';
 import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
+import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 
 type DetectResponse = {
   confidence?: number;
@@ -40,6 +41,7 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
+   const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
     browser.storage.local
@@ -64,6 +66,9 @@ export default function Popup() {
           setSettings(merged);
           setEnabled(merged.enabled);
         }
+        if (typeof result.simpleMode === 'boolean') {
+          setSimpleMode(result.simpleMode);
+        }
 
         const raw =
           (result.lastDetectResponse as unknown) ??
@@ -78,6 +83,8 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
+      const local = await browser.storage.local.get(['settings']);
+      const localSettings = local.settings as Partial<Settings> | undefined;
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
@@ -136,6 +143,18 @@ export default function Popup() {
       }
     };
 
+    browser.storage.onChanged.addListener(handler);
+    return () => browser.storage.onChanged.removeListener(handler);
+  }, []);
+
+  // Sync settings (e.g. accessibilityMode) when Options page or another tab updates storage.
+  useEffect(() => {
+    const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      const change = changes.settings;
+      if (!change?.newValue || typeof change.newValue !== 'object') return;
+      setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+    };
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
@@ -222,7 +241,11 @@ export default function Popup() {
   // ── Loading state ─────────────────────────────────────────────
   if (authLoading) {
     return (
-      <div className="w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px]">
+      <div
+        className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
+          settings.accessibilityMode ? 'accessibility-mode' : ''
+        }`}
+      >
         <p className="text-xs text-gray-400">Loading…</p>
       </div>
     );
@@ -230,21 +253,38 @@ export default function Popup() {
 
   // ── Auth gate: redirect to sign-in if not authenticated ───────
   if (!user) {
-    return <SignInView />;
+    return (
+      <div
+        className={`w-full min-h-[200px] ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+      >
+        <SignInView />
+      </div>
+    );
   }
 
   // ── Settings view ─────────────────────────────────────────────
   if (view === 'settings') {
     return (
-      <div className="w-full bg-gray-900 text-white flex flex-col overflow-hidden">
+      <div
+        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+          settings.accessibilityMode ? 'accessibility-mode' : ''
+        }`}
+      >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
         <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
-          <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
+          {/* Simple view: only detection on/off (on Home) and account remain; advanced settings hidden */}
+          {!simpleMode && (
+            <>
+              <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
 
-          <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
+              <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
 
-          <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
+              <DisabledWebsitesManager />
+
+              <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
+            </>
+          )}
 
           {/* Sign-out button */}
           <section>
@@ -280,7 +320,11 @@ export default function Popup() {
 
   // ── Home view ─────────────────────────────────────────────────
   return (
-    <div className="w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none">
+    <div
+      className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
+        settings.accessibilityMode ? 'accessibility-mode' : ''
+      }`}
+    >
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
