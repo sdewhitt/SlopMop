@@ -138,6 +138,9 @@ async function initObserver() {
       bus.onDetectionResponse((res) => {
         overlay.renderResult(res.postId, res);
       });
+      bus.onDetectionLanguageUnsupported((payload) => {
+        overlay.renderError(payload.postId, payload.message);
+      });
 
       observer.start();
       console.log('[SlopMop] FeedObserver started');

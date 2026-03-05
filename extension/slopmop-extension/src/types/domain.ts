@@ -148,7 +148,14 @@ export type ContentToBackgroundMessage = // union type
     | { type: "ANALYZE_POST"; payload: NormalizedPostContent } 
     | { type: "SUBMIT_FEEDBACK"; payload: FeedbackReport };
     // add more message types here as needed
+/** Payload when detection is skipped because language is not supported (Story 39). */
+export interface DetectionLanguageUnsupportedPayload {
+    postId: PostId;
+    message: string;
+}
+
 // similar idea, but from background script to content script
 export type BackgroundToContentMessage =
-    | { type: "DETECTION_RESULT"; payload: DetectionResponse };
+    | { type: "DETECTION_RESULT"; payload: DetectionResponse }
+    | { type: "DETECTION_LANGUAGE_UNSUPPORTED"; payload: DetectionLanguageUnsupportedPayload };
   

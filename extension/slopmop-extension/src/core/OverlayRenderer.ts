@@ -105,9 +105,9 @@ export class OverlayRenderer {
     renderError(postId: PostId, message: string): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
-        overlay.style.backgroundColor = "#f59e0b"; // amber yellow like a yield sign
-        overlay.textContent = `Error - ${message}`;
-
+        overlay.style.backgroundColor = "#f59e0b"; // amber
+        overlay.style.whiteSpace = "pre-line";   // allow newlines (e.g. "Unsupported language\nEnglish and Spanish supported")
+        overlay.textContent = message;
     }
     // removes a DOM element and its entry from all three maps
     clear(postId: PostId): void {
