@@ -387,6 +387,6 @@ $RECYCLE.BIN/
 
 # etc
 .idea
-
+.env*
 #generated manifest
 public/manifest.json

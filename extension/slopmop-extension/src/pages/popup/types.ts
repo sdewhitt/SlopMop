@@ -8,6 +8,7 @@ export interface Settings {
   sensitivity: 'low' | 'medium' | 'high';
   highlightStyle: 'badge' | 'border' | 'dim';
   accessibilityMode: boolean;
+  automaticScanning: boolean;
   platforms: {
     twitter: boolean;
     reddit: boolean;
@@ -16,12 +17,23 @@ export interface Settings {
     linkedin: boolean;
   };
   showNotifications: boolean;
+  enabled: boolean;
+  scanText: boolean;
+  scanImages: boolean;
+  scanComments: 'off' | 'user_triggered' | 'auto_top_n';
+  uiMode: 'simple' | 'detailed';
 }
 
 export const defaultSettings: Settings = {
   sensitivity: 'medium',
   highlightStyle: 'badge',
   accessibilityMode: false,
+  automaticScanning: false,
   platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
   showNotifications: true,
+  enabled: true,
+  scanText: true,
+  scanImages: false,
+  scanComments: 'auto_top_n',
+  uiMode: 'simple',
 };

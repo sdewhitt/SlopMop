@@ -186,12 +186,16 @@ describe('Popup Homepage', () => {
     const pauseBtn = screen.getByRole('button', { name: /Pause Detection/i });
     await user.click(pauseBtn);
 
-    expect(browser.storage.local.set).toHaveBeenCalledWith({ enabled: false });
+    expect(browser.storage.local.set).toHaveBeenCalledWith(
+      expect.objectContaining({ settings: expect.objectContaining({ enabled: false }) }),
+    );
 
     const enableBtn = screen.getByRole('button', { name: /Enable Detection/i });
     await user.click(enableBtn);
 
-    expect(browser.storage.local.set).toHaveBeenCalledWith({ enabled: true });
+    expect(browser.storage.local.set).toHaveBeenCalledWith(
+      expect.objectContaining({ settings: expect.objectContaining({ enabled: true }) }),
+    );
   });
 
   // ── Stats Grid ──────────────────────────────────────────────
