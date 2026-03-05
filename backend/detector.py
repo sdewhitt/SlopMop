@@ -107,8 +107,13 @@ def detect(text: str) -> float:
         {"input_ids": input_ids, "attention_mask": attention_mask},
     )
     logits_arr = np.asarray(outputs[0]).flatten()
-    logit = float(logits_arr[0])
-    prob = 1.0 / (1.0 + np.exp(-logit))
+    # Binary (1 logit): sigmoid. Two-class (2 logits, e.g. DistilBERT): softmax then P(AI)=class 1.
+    if logits_arr.size == 1:
+        logit = float(logits_arr[0])
+        prob = 1.0 / (1.0 + np.exp(-logit))
+    else:
+        exp_logits = np.exp(logits_arr - np.max(logits_arr))
+        prob = float(exp_logits[1] / exp_logits.sum())  # P(AI) = class 1
     return round(float(prob), 4)
 
 
