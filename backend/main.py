@@ -24,9 +24,9 @@ class DetectRequest(BaseModel):
 
 
 class DetectResponse(BaseModel):
-    confidence: float  # 0.0 = human, 1.0 = AI
-    label: str  # "ai" or "human"
-    explanation: str  # explanation for the detection
+    confidence: float  # 0.0 = human, 1.0 = AI (percentage AI)
+    label: str  # "likely_ai" | "leaning_ai" | "uncertain" | "leaning_human" | "likely_human"
+    explanation: str  # explanation aligned with confidence range (Sprint 14/15/18)
 
 
 @app.get("/")
@@ -52,14 +52,44 @@ def score_text(text:str) -> tuple[float, str]:
     label = "ai" if confidence >= 0.6 else "human"
     return confidence, label
 
+# Confidence ranges per Sprint 1 (Stories 14, 15, 18): high AI ≥70%, uncertain 40–60%, high human ≤30%
+def get_confidence_label(confidence: float) -> str:
+    if confidence >= 0.70:
+        return "likely_ai"
+    if confidence >= 0.60:
+        return "leaning_ai"
+    if confidence >= 0.40:
+        return "uncertain"
+    if confidence >= 0.30:
+        return "leaning_human"
+    return "likely_human"
+
+
 def generate_explanation(confidence: float, label: str) -> str:
-    if label == "ai":
+    pct = round(confidence * 100)
+    if label == "likely_ai":
         return (
-            f"Model flagged this as AI-like (confidence {confidence:.2f}). "
+            f"High likelihood of AI-generated content ({pct}%). "
             "The text exhibits patterns commonly seen in AI-generated writing."
         )
+    if label == "leaning_ai":
+        return (
+            f"Moderate likelihood of AI-generated content ({pct}%). "
+            "Some patterns suggest AI involvement; result is not high-confidence."
+        )
+    if label == "uncertain":
+        return (
+            f"Uncertain or mixed ({pct}%). "
+            "The result is inconclusive; the text may be AI-generated, human-written, or a mix."
+        )
+    if label == "leaning_human":
+        return (
+            f"Moderate likelihood of human-written content ({pct}% AI). "
+            "Some patterns suggest human authorship; result is not high-confidence."
+        )
+    # likely_human
     return (
-        f"Model flagged this as human-like (AI confidence {confidence:.2f}). "
+        f"High likelihood of human-written content ({pct}% AI). "
         "The text exhibits patterns commonly seen in human writing."
     )
 
@@ -83,7 +113,7 @@ def detect(request: DetectRequest):
         confidence = model_detect(clean_text)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-    label = "ai" if confidence >= 0.5 else "human"
+    label = get_confidence_label(confidence)
     explanation = generate_explanation(confidence, label)
     return DetectResponse(confidence=confidence, label=label, explanation=explanation)
     
