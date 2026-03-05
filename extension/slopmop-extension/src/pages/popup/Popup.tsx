@@ -251,7 +251,7 @@ export default function Popup() {
     return (
       <div
         className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
-          simpleMode ? 'accessibility-mode' : ''
+          simpleMode ? 'simple-mode' : ''
         }`}
       >
         <p className="text-xs text-gray-400">Loading…</p>
@@ -263,7 +263,7 @@ export default function Popup() {
   if (!user) {
     return (
       <div
-        className={`w-full min-h-[200px] ${simpleMode ? 'accessibility-mode' : ''}`}
+        className={`w-full min-h-[200px] ${simpleMode ? 'simple-mode' : ''}`}
       >
         <SignInView />
       </div>
@@ -275,7 +275,7 @@ export default function Popup() {
     return (
       <div
         className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
-          simpleMode ? 'accessibility-mode' : ''
+          simpleMode ? 'simple-mode' : ''
         }`}
       >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
@@ -330,7 +330,7 @@ export default function Popup() {
   return (
     <div
       className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
-        simpleMode ? 'accessibility-mode' : ''
+        simpleMode ? 'simple-mode' : ''
       }`}
     >
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
