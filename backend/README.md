@@ -101,8 +101,3 @@ Explanations are generated from these ranges (e.g. “High likelihood of AI-gene
 ```bash
 python -m pytest -q
 ```
-
-### Notes
-
-- Model is loaded at startup (Hugging Face Hub or local ONNX); see `detector.py` and `HUGGINGFACE_MODEL.md` for configuration.
-- Response keys are stable for extension integration: `confidence`, `label`, `explanation`.
