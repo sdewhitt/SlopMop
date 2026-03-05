@@ -16,7 +16,8 @@ _MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
 # Set HF_ONNX_FILENAME=text_detector_fp32.onnx and upload that file to your HF repo.
 ONNX_FILENAME = os.environ.get("HF_ONNX_FILENAME", "text_detector.onnx").strip() or "text_detector.onnx"
 LOCAL_ONNX_PATH = os.path.join(_MODEL_DIR, ONNX_FILENAME)
-MODEL_NAME = "desklib/ai-text-detector-v1.01"
+# Tokenizer must match the ONNX model. Smaller model uses DistilBERT; set TOKENIZER_NAME=distilbert-base-uncased on Render.
+MODEL_NAME = os.environ.get("TOKENIZER_NAME", "desklib/ai-text-detector-v1.01").strip() or "desklib/ai-text-detector-v1.01"
 MAX_LENGTH = 512
 
 # Loaded at module import
