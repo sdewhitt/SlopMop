@@ -29,3 +29,43 @@
   max-height: 5.5em;
   overflow-wrap: break-word;
 }
+
+/* ── Accessibility Mode inside the in-page panel ─────────────── */
+.accessibility-mode {
+  font-size: 1.125rem; /* 18px base, up from 16px */
+}
+
+/* Scale up Tailwind text sizes so they visibly increase */
+.accessibility-mode .text-xs {
+  font-size: 0.9375rem; /* 15px, up from 12px */
+}
+
+.accessibility-mode .text-sm {
+  font-size: 1.0625rem; /* 17px, up from 14px */
+}
+
+.accessibility-mode .text-\[10px\] {
+  font-size: 0.8125rem;
+}
+
+.accessibility-mode .text-\[11px\] {
+  font-size: 0.875rem;
+}
+
+/* Improve contrast for low-vision users */
+.accessibility-mode .text-gray-400,
+.accessibility-mode .text-gray-500 {
+  color: rgb(209 213 219); /* gray-300 */
+}
+
+.accessibility-mode .text-gray-300 {
+  color: rgb(243 244 246); /* gray-100 */
+}
+
+.accessibility-mode .text-amber-300\/90 {
+  color: rgb(253 230 138); /* amber-200 */
+}
+
+.accessibility-mode .text-amber-200 {
+  color: rgb(254 243 199); /* amber-100 */
+}

@@ -9,6 +9,7 @@ model = detector.model
 device = detector.device
 
 # load the best model state from file if it exists
+# loading gz but use best_text_detector_fp16.pt if want fater, lighter model
 best_model_gzip_path = os.path.join(os.path.dirname(__file__), "best_text_detector.pt.gz")
 if os.path.exists(best_model_gzip_path):
   with gzip.open(best_model_gzip_path, "rb") as f:

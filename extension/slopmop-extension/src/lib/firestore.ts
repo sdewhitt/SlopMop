@@ -106,3 +106,20 @@ export async function resetSettings(uid: string): Promise<void> {
     updatedAt: serverTimestamp(),
   });
 }
+
+// ──────────────────────── Ignored Sites ──────────────────────────
+
+/** Returns the list of ignored hostnames for a user. */
+export async function getIgnoredSites(uid: string): Promise<string[]> {
+  const settings = await getUserSettings(uid);
+  return settings?.ignoredSites ?? [];
+}
+
+/** Overwrites the full ignored-sites list for a user. */
+export async function setIgnoredSites(uid: string, sites: string[]): Promise<void> {
+  initFirebase();
+  await updateDoc(userDocRef(uid), {
+    ignoredSites: sites,
+    updatedAt: serverTimestamp(),
+  });
+}
