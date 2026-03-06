@@ -167,7 +167,7 @@ function startObserver(settings: DetectionSettings): void {
 }
 
 async function initFeedObserver(): Promise<void> {
-  renderDebugBadge();
+  // renderDebugBadge();
 
   const stored = await browser.storage.local.get(['settings', 'ignoredSites']);
   const settings = resolveDetectionSettings(stored);
