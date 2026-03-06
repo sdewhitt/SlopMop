@@ -23,6 +23,7 @@ import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
+import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 
 type DetectResponse = {
   confidence?: number;
@@ -42,6 +43,7 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
+  const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
@@ -56,6 +58,7 @@ export default function Popup() {
         'lastDetectResponse',
         'lastDetection',
         'detectionResult',
+        'lastDetectLanguageUnsupported',
       ])
       .then((result) => {
         setStats({
@@ -78,6 +81,8 @@ export default function Popup() {
           (result.lastDetection as unknown) ??
           (result.detectionResult as unknown);
         if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
+        const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
+        setLanguageUnsupported(unsupported?.message ?? null);
       });
   }, []);
   // ── Sync settings from Firestore when the user signs in ──────
@@ -140,9 +145,18 @@ export default function Popup() {
         const change = changes[key];
         if (!change) continue;
         const raw = change.newValue as unknown;
-        if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
-        else setDetectResponse(null);
+        if (raw && typeof raw === 'object') {
+          setDetectResponse(raw as DetectResponse);
+          setLanguageUnsupported(null);
+        } else setDetectResponse(null);
         break;
+      }
+      const unsupportedChange = changes['lastDetectLanguageUnsupported'];
+      if (unsupportedChange?.newValue != null) {
+        const v = unsupportedChange.newValue as { message?: string };
+        setLanguageUnsupported(v?.message ?? UNSUPPORTED_LANGUAGE_MESSAGE);
+      } else if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
+        setLanguageUnsupported(null);
       }
     };
 
@@ -349,7 +363,12 @@ export default function Popup() {
 
       <DisclaimerBanner />
 
-      {confidence != null && <ConfidenceDisplay confidenceScore={confidence} />}
+      {languageUnsupported != null && (
+        <div className="rounded-lg px-3 py-2 text-sm bg-amber-500/20 text-amber-200 border border-amber-500/50">
+          {languageUnsupported}
+        </div>
+      )}
+      {confidence != null && !languageUnsupported && <ConfidenceDisplay confidenceScore={confidence} />}
 
       <button
         onClick={() => logOut()}
@@ -358,7 +377,7 @@ export default function Popup() {
         Sign Out
       </button>
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
-      {detectResponse && (
+      {detectResponse && !languageUnsupported && (
         <section className="mt-4 text-left">
           <p className="text-sm font-medium text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}

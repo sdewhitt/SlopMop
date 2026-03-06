@@ -157,6 +157,10 @@ function startObserver(settings: DetectionSettings): void {
     if (!activeObserver?.markAnalyzeCompleted(postId)) return;
     overlay.renderError(postId, message);
   });
+  bus.onDetectionLanguageUnsupported((payload) => {
+    if (!activeObserver?.markAnalyzeCompleted(payload.postId)) return;
+    overlay.renderError(payload.postId, payload.message);
+  });
 
   activeObserver.start();
   console.log('[SlopMop] FeedObserver started');

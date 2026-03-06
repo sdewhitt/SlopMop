@@ -17,6 +17,11 @@ import {
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
 import { detectText, type DetectResponse } from '@src/lib/api';
+import {
+  isTextLanguageSupported,
+  UNSUPPORTED_LANGUAGE_MESSAGE,
+  UNSUPPORTED_LANGUAGE_BADGE,
+} from '@src/utils/languageSupport';
 import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import {
@@ -312,6 +317,15 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 }
 
 async function handleDetect(text: string): Promise<MessageResponse> {
+  if (!isTextLanguageSupported(text)) {
+    await browser.storage.local.set({
+      lastDetectResponse: null,
+      detectResponse: null,
+      lastDetectLanguageUnsupported: { message: UNSUPPORTED_LANGUAGE_MESSAGE },
+    });
+    return { success: false, error: UNSUPPORTED_LANGUAGE_MESSAGE };
+  }
+  await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
     const result = await detectText(text);
     await browser.storage.local.set({
@@ -339,6 +353,14 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
+
+  if (!isTextLanguageSupported(plainText)) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+      payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+    });
+    return;
+  }
 
   if (!plainText.trim()) {
     await browser.tabs.sendMessage(tabId, {

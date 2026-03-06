@@ -127,12 +127,11 @@ export class OverlayRenderer {
     renderError(postId: PostId, message: string): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
-        // log every detection error so debugging network/backend issues is easier.
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
-        overlay.style.backgroundColor = "#f59e0b"; // amber yellow like a yield sign
-        // badge text stays short in both modes to avoid covering too much content.
-        overlay.textContent = "Error";
+        overlay.style.backgroundColor = "#f59e0b"; // amber
+        overlay.style.whiteSpace = "pre-line";
+        overlay.textContent = message;
 
         const isSimple = this.settings.uiMode === "simple";
         if (isSimple) {
