@@ -35,6 +35,7 @@ export class OverlayRenderer {
 
         this.mapToResponse.set(postId, res);
         this.resetOverlayInteractions(overlay);
+        overlay.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
 
@@ -127,19 +128,19 @@ export class OverlayRenderer {
         if (!overlay) return;
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
+        this.resetOverlayInteractions(overlay);
         overlay.style.backgroundColor = "#f59e0b"; // amber
-        overlay.style.whiteSpace = "pre-line";
-        overlay.textContent = message;
+        overlay.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
-        if (onRetry) { // create retry button once error occursf
+        if (onRetry) {
             const retryButton = document.createElement("button");
             retryButton.type = "button";
             retryButton.textContent = "Retry";
             Object.assign(retryButton.style, {
                 border: "none",
                 background: "transparent",
-                color: "#000000", // black
+                color: "#fff",
                 padding: "0",
                 margin: "0",
                 fontSize: isSimple ? "14px" : "12px",
@@ -153,7 +154,6 @@ export class OverlayRenderer {
             };
             overlay.appendChild(retryButton);
         } else {
-            // badge text stays short in both modes to avoid covering too much content.
             overlay.textContent = "Error";
         }
 
@@ -182,6 +182,7 @@ export class OverlayRenderer {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
         this.resetOverlayInteractions(overlay);
+        overlay.style.whiteSpace = "normal";
         overlay.style.backgroundColor = "#f59e0b";
         overlay.textContent = "network timeout";
     }
@@ -455,6 +456,7 @@ export class OverlayRenderer {
 
     private showScanningState(overlay: HTMLElement): void {
         this.resetOverlayInteractions(overlay);
+        overlay.style.whiteSpace = "normal";
         overlay.style.backgroundColor = "#6b7280";
         overlay.style.cursor = "default";
         overlay.textContent = "Scanning...";
