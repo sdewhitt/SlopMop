@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeedObserver } from '@src/core/FeedObserver';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import type { SiteAdapter } from '@src/core/adapters/SiteAdapter';
+import type { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import { ContentType, type DetectionResponse } from '@src/types/domain';
 import { defaultUserSettings } from '@src/utils/userSettings';
 
@@ -183,5 +185,112 @@ describe('Reddit extraction pipeline', () => {
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
     expect(overlay?.textContent).toBe('likely_ai (86%)');
+  });
+
+  it('shows the detailed tooltip when hovering the badge in detailed mode', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+
+    const adapter = createAdapter({
+      findPostNodes: () => [postNode],
+      getStablePostId: (node) => (node === postNode ? 't3_overlay_detailed' : null),
+      findVisibleCommentNodes: () => [],
+    });
+    const renderer = new OverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'detailed',
+    });
+    const response: DetectionResponse = {
+      requestId: 'req-2',
+      postId: 't3_overlay_detailed',
+      verdict: 'likely_ai',
+      confidence: 0.86,
+      explanation: {
+        summary: 'Likely AI-generated wording.',
+        highlights: [],
+        model: { name: 'test-model', version: '1.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 125, inferenceMs: 100 },
+      },
+    };
+
+    renderer.renderPending(
+      't3_overlay_detailed',
+      "It's worth noting -- this text includes a common AI phrase.",
+    );
+    renderer.renderResult('t3_overlay_detailed', response);
+
+    const overlay = postNode.lastElementChild as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+
+    overlay?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+
+    expect(overlay?.textContent).toContain('Patterns observed:');
+    expect(overlay?.textContent).toContain('Likely AI-generated wording.');
+    expect(overlay?.textContent).toContain('Model: test-model v1.0');
+  });
+
+  it('renders a retry button when detection fails', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+
+    const adapter = createAdapter({
+      findPostNodes: () => [postNode],
+      getStablePostId: (node) => (node === postNode ? 't3_overlay_error' : null),
+      findVisibleCommentNodes: () => [],
+    });
+    const renderer = new OverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+    const onRetry = vi.fn();
+
+    renderer.renderPending('t3_overlay_error', 'Example reddit post');
+    renderer.renderError('t3_overlay_error', 'Backend failed', onRetry);
+
+    const overlay = postNode.lastElementChild as HTMLElement | null;
+    const retryButton = overlay?.querySelector('button');
+
+    expect(retryButton?.textContent).toBe('Retry');
+    retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(overlay?.textContent).toBe('Scanning...');
+  });
+
+  it('retries analysis with the original extracted payload', () => {
+    const extractor = new PostExtractor();
+    const postNode = document.createElement('article');
+    const textNode = document.createElement('div');
+    setInnerText(textNode, 'Retry this post');
+    postNode.appendChild(textNode);
+
+    const adapter = createAdapter({
+      getStablePostId: () => 't3_retryable',
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/retryable/title/',
+      getTextNode: () => textNode,
+      getAuthorHandle: () => 'u/retryable',
+      getTimestampText: () => 'just now',
+    });
+    const renderPending = vi.fn();
+    const sendAnalyze = vi.fn();
+    const observer = new FeedObserver(
+      adapter,
+      extractor,
+      { renderPending } as unknown as OverlayRenderer,
+      { sendAnalyze } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: true,
+      },
+    );
+
+    (observer as any).handleCandidatePost(postNode, 'post');
+
+    expect(sendAnalyze).toHaveBeenCalledTimes(1);
+    const originalPayload = sendAnalyze.mock.calls[0][0];
+
+    expect(observer.retryAnalyze('t3_retryable')).toBe(true);
+    expect(sendAnalyze).toHaveBeenCalledTimes(2);
+    expect(sendAnalyze.mock.calls[1][0]).toEqual(originalPayload);
   });
 });

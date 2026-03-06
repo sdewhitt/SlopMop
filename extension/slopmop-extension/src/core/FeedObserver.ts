@@ -35,6 +35,8 @@ export class FeedObserver {
     private pendingAnalyzeTimers = new Map<string, ReturnType<typeof setTimeout>>();
     // tracks posts that already timed out so late results do not overwrite timeout badge.
     private timedOutPostIds = new Set<string>();
+    // stores extracted payloads so failed analyses can be retried from the badge.
+    private postsById = new Map<string, NormalizedPostContent>();
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -93,6 +95,7 @@ export class FeedObserver {
         }
         this.pendingAnalyzeTimers.clear();
         this.timedOutPostIds.clear();
+        this.postsById.clear();
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
@@ -176,6 +179,7 @@ export class FeedObserver {
         // only mark as seen AFTER extraction succeeded + passed eligibility.
         // if we marked it earlier and extraction failed, we'd never retry
         this.seenPostIds.add(extracted.postId);
+        this.postsById.set(extracted.postId, extracted);
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] new post`, {
@@ -212,6 +216,13 @@ export class FeedObserver {
         // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
         this.startAnalyzeTimeout(post.postId);
         this.bus.sendAnalyze(post);
+    }
+
+    retryAnalyze(postId: string): boolean {
+        const post = this.postsById.get(postId);
+        if (!post) return false;
+        this.dispatchAnalyze(post);
+        return true;
     }
 
     // starts a per-post timeout for detection responses.

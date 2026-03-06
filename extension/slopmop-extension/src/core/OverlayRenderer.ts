@@ -1,5 +1,6 @@
 import { DetectionResponse, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
+import { getPatternReasons } from "@src/utils/aiTextPatterns";
 import type { SiteAdapter } from "./adapters/SiteAdapter";
  
 
@@ -33,6 +34,7 @@ export class OverlayRenderer {
         if (!overlay) return;
 
         this.mapToResponse.set(postId, res);
+        this.resetOverlayInteractions(overlay);
 
         const isSimple = this.settings.uiMode === "simple";
 
@@ -53,18 +55,18 @@ export class OverlayRenderer {
 
         let tooltip: HTMLElement | null = null;
         const postText = this.mapToPostText.get(postId) ?? "";
-        overlay.addEventListener("mouseenter", () => {
+        overlay.onmouseenter = () => {
             if (tooltip) return;
             tooltip = isSimple
                 ? this.createSimpleTooltip(res)
                 : this.createTooltip(res, postText);
             overlay.appendChild(tooltip);
-        });
+        };
 
-        overlay.addEventListener("mouseleave", () => {
+        overlay.onmouseleave = () => {
             tooltip?.remove();
             tooltip = null;
-        });
+        };
     }
 
     // renders Pending badge for the user.
@@ -112,11 +114,7 @@ export class OverlayRenderer {
             cursor: "pointer",
         });
         detectNowButton.onclick = () => {
-            // lock the button after first click so duplicate requests don't fire.
-            detectNowButton.disabled = true;
-            detectNowButton.style.cursor = "default";
-            overlay.style.backgroundColor = "#6b7280";
-            overlay.textContent = "Scanning...";
+            this.showScanningState(overlay);
             onDetectNow();
         };
         overlay.appendChild(detectNowButton);
@@ -124,7 +122,7 @@ export class OverlayRenderer {
 
 
     }
-    renderError(postId: PostId, message: string): void {
+    renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
         console.error("[OverlayRenderer] detection error", { postId, message });
@@ -134,13 +132,38 @@ export class OverlayRenderer {
         overlay.textContent = message;
 
         const isSimple = this.settings.uiMode === "simple";
+        if (onRetry) { // create retry button once error occursf
+            const retryButton = document.createElement("button");
+            retryButton.type = "button";
+            retryButton.textContent = "Retry";
+            Object.assign(retryButton.style, {
+                border: "none",
+                background: "transparent",
+                color: "#000000", // black
+                padding: "0",
+                margin: "0",
+                fontSize: isSimple ? "14px" : "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+            });
+            retryButton.onclick = (event) => {
+                event.stopPropagation();
+                this.showScanningState(overlay);
+                onRetry();
+            };
+            overlay.appendChild(retryButton);
+        } else {
+            // badge text stays short in both modes to avoid covering too much content.
+            overlay.textContent = "Error";
+        }
+
         if (isSimple) {
             overlay.style.cursor = "default";
             return;
         }
 
         // detailed mode keeps the badge compact and pushes the full message into tooltip.
-        overlay.style.cursor = "pointer";
+        overlay.style.cursor = onRetry ? "default" : "pointer";
         let tooltip: HTMLElement | null = null;
         overlay.onmouseenter = () => {
             if (tooltip) return;
@@ -158,6 +181,7 @@ export class OverlayRenderer {
     renderTimeout(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.resetOverlayInteractions(overlay);
         overlay.style.backgroundColor = "#f59e0b";
         overlay.textContent = "network timeout";
     }
@@ -420,6 +444,20 @@ export class OverlayRenderer {
         tip.appendChild(body);
 
         return tip;
+    }
+
+    private resetOverlayInteractions(overlay: HTMLElement): void {
+        overlay.replaceChildren();
+        overlay.onmouseenter = null;
+        overlay.onmouseleave = null;
+        overlay.onclick = null;
+    }
+
+    private showScanningState(overlay: HTMLElement): void {
+        this.resetOverlayInteractions(overlay);
+        overlay.style.backgroundColor = "#6b7280";
+        overlay.style.cursor = "default";
+        overlay.textContent = "Scanning...";
     }
 
     // scan DOM tree for the postNode given a postId. 

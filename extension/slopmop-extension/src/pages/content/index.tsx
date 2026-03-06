@@ -155,7 +155,9 @@ function startObserver(settings: DetectionSettings): void {
   });
   bus.onDetectionError(({ postId, message }) => {
     if (!activeObserver?.markAnalyzeCompleted(postId)) return;
-    overlay.renderError(postId, message);
+    overlay.renderError(postId, message, () => {
+      activeObserver?.retryAnalyze(postId);
+    });
   });
   bus.onDetectionLanguageUnsupported((payload) => {
     if (!activeObserver?.markAnalyzeCompleted(payload.postId)) return;
