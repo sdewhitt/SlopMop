@@ -118,6 +118,18 @@ def preprocess_text(text):
 
   return re.sub(r'\s+', ' ', clean_up).strip()
 
+
+# pattern for LLM metadata left in generated posts (e.g. SubSimulatorGPT2)
+_LLM_METADATA_PATTERN = re.compile(
+  r'version\s+\d+\.\d+\.\d+\s*;\s*Engine:\s*text-(?:curie|babbage|davinci|ada|gpt)-?\d*',
+  re.IGNORECASE
+)
+
+
+def has_llm_metadata(text: str) -> bool:
+  return bool(_LLM_METADATA_PATTERN.search(text))
+
+
 # clean a batch of examples
 def clean_batch(batch):
   return {"text": [preprocess_text(t) for t in batch["text"]]}
@@ -266,6 +278,30 @@ class TextDetectors:
     else:
       prob = torch.softmax(logits, dim=1)[0, 1].item()
 
+    # add 50% or 30% to confidence if LLM metadata (version; Engine: text-xxx; etc.) is present
+    if has_llm_metadata(text):
+      if prob <= 0.1:
+        prob = prob + 0.7
+        print("Added 70% to confidence because LLM metadata is present.")
+      elif prob <= 0.2:
+        prob = prob + 0.6
+        print("Added 60% to confidence because LLM metadata is present.")
+      elif prob <= 0.3:
+        prob = prob + 0.5
+        print("Added 50% to confidence because LLM metadata is present.")
+      elif prob <= 0.4:
+        prob = prob + 0.4
+        print("Added 40% to confidence because LLM metadata is present.")
+      elif prob <= 0.5:
+        prob = prob + 0.3
+        print("Added 30% to confidence because LLM metadata is present.")
+      elif prob <= 0.6:
+        print("Added 20% to confidence because LLM metadata is present.")
+        prob = prob + 0.2
+      else:
+        print("Added 0% to confidence because LLM metadata is present.")
+
+
     # get the label based on the probability
     if prob < human_max:
       label = "human"
@@ -292,19 +328,21 @@ if __name__ == "__main__":
     # load the best model state from file if it exists
     best_model_path = os.path.join(os.path.dirname(__file__), "best_text_detector(smaller).pt")
     best_model_gzip_path = os.path.join(os.path.dirname(__file__), "best_text_detector(smaller).pt.gz")
+    state = None
+    is_desklib_checkpoint = False
 
-    if os.path.exists(best_model_gzip_path):
-      with gzip.open(best_model_gzip_path, "rb") as f:
-        state = torch.load(f, map_location=detector.device)
-        is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
-        if detector.use_binary_logit and is_desklib_checkpoint:
-          detector.model.load_state_dict(state, strict=True)
-          print(f"Loaded best model weights from {best_model_gzip_path}.")
-        elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
-          detector.model.load_state_dict(state, strict=True)
-          print(f"Loaded best model weights from {best_model_gzip_path}.")
-    else:
-      print(f"No saved best model found at {best_model_gzip_path}; using freshly loaded weights.")
+
+    if os.path.exists(best_model_path):
+      state = torch.load(best_model_path, map_location=detector.device)
+      is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
+      if detector.use_binary_logit and is_desklib_checkpoint:
+        detector.model.load_state_dict(state, strict=True)
+        print(f"Loaded best model weights from {best_model_path}.")
+      elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
+        detector.model.load_state_dict(state, strict=True)
+        print(f"Loaded best model weights from {best_model_path}.")
+    if state is None:
+      print(f"No saved best model found; using freshly loaded weights.")
 
     # best_model_fp_path = os.path.join(os.path.dirname(__file__), "best_text_detector_fp16(smaller).pt")
     # if os.path.exists(best_model_fp_path):
@@ -322,16 +360,30 @@ if __name__ == "__main__":
 
     print("Detector initialized.\n")
 
-    # load the dataset, clean the data, tokenize the data, and set the format
-    raw = load_dataset("gsingh1-py/train")
-    dataset = raw["train"] if isinstance(raw, dict) else raw
-    # convert to (text, label) if this is gsingh1 format (Human_story + AI columns)
-    if "Human_story" in dataset.column_names and "label" not in dataset.column_names:
-      dataset = gsingh1_to_text_label(dataset)
-    # use a small random subset (50 human + 50 AI + 50 mixed) per run for faster training
-    dataset = sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None)
-    print(f"Using subset of {len(dataset)} examples for training.\n")
+    # load both datasets and combine
+    raw_gsingh = load_dataset("gsingh1-py/train")
+    gsingh = raw_gsingh["train"] if isinstance(raw_gsingh, dict) else raw_gsingh
+    if "Human_story" in gsingh.column_names and "label" not in gsingh.column_names:
+      gsingh = gsingh1_to_text_label(gsingh)
+    gsingh = sample_subset(gsingh, n_human=250, n_ai=250, n_mixed=250, seed=None)
 
+    csv_path = os.path.join(os.path.dirname(__file__), "test_dataset.csv")
+    raw_csv = load_dataset("csv", data_files=csv_path)
+    csv_ds = raw_csv["train"] if isinstance(raw_csv, dict) else raw_csv
+    csv_ds = csv_ds.map(lambda x: {"label": int(x["label"]) if x.get("label") is not None else 0})
+
+    # use test_dataset.csv for social media post focused testing
+    # csv_path = os.path.join(os.path.dirname(__file__), "test_dataset.csv")
+    # raw = load_dataset("csv", data_files=csv_path)
+    # dataset = raw["train"] if isinstance(raw, dict) else raw
+    # # ensure label is int
+    # dataset = dataset.map(lambda x: {"label": int(x["label"]) if x.get("label") is not None else 0})
+    # print(f"Using {len(dataset)} examples from {csv_path} for training.\n")
+
+    # use both datasets for training
+    dataset = datasets.concatenate_datasets([gsingh, csv_ds])
+    print(f"Using {len(gsingh)} from gsingh1-py + {len(csv_ds)} from test_dataset.csv = {len(dataset)} examples.\n")
+    
 
     # split for validation, training, and testing
     n = len(dataset)
@@ -364,8 +416,6 @@ if __name__ == "__main__":
 
     # get the text column from the dataset, clean, tokenize, and set the format for both training and validation
     text_column = get_text_column(train_dataset)
-
-    is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
     if is_desklib_checkpoint:
       print("Using desklib checkpoint (knowledge distillation).")
 
@@ -425,7 +475,7 @@ if __name__ == "__main__":
     # create the optimizer and loss function
     optimizer = AdamW(detector.model.parameters(), lr=5e-5)
 
-    epochs = 2
+    epochs = 4
 
     # loss function (BCE for desklib single-logit, CrossEntropy for 2-class models)
     loss_fn = torch.nn.BCEWithLogitsLoss() if detector.use_binary_logit else torch.nn.CrossEntropyLoss()

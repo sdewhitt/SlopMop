@@ -22,7 +22,13 @@ export interface DetectionSettings {
   sensitivity: 'low' | 'medium' | 'high';
   highlightStyle: 'badge' | 'border' | 'dim';
   showNotifications: boolean;
+  automaticScanning: boolean;
   platforms: PlatformToggles;
+  enabled: boolean;
+  scanText: boolean;
+  scanImages: boolean;
+  scanComments: 'off' | 'user_triggered' | 'auto_top_n';
+  uiMode: 'simple' | 'detailed';
 }
 
 /** Aggregate stats the extension reports back. */
@@ -53,6 +59,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     sensitivity: 'medium',
     highlightStyle: 'badge',
     showNotifications: true,
+    automaticScanning: false,
     platforms: {
       twitter: true,
       reddit: true,
@@ -60,6 +67,11 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
       youtube: true,
       linkedin: true,
     },
+    enabled: true,
+    scanText: true,
+    scanImages: true,
+    scanComments: 'auto_top_n',
+    uiMode: 'simple',
   },
   stats: {
     postsScanned: 0,

@@ -18,9 +18,12 @@
 .slopmop-panel {
   width: 320px;
   min-height: 340px;
+  max-height: calc(100vh - 24px);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #111827;
 }
 
@@ -30,42 +33,58 @@
   overflow-wrap: break-word;
 }
 
-/* ── Accessibility Mode inside the in-page panel ─────────────── */
-.accessibility-mode {
+/* ── Simple Mode inside the in-page panel ─────────────────────── */
+.simple-mode {
   font-size: 1.125rem; /* 18px base, up from 16px */
 }
 
 /* Scale up Tailwind text sizes so they visibly increase */
-.accessibility-mode .text-xs {
+.simple-mode .text-xs {
   font-size: 0.9375rem; /* 15px, up from 12px */
 }
 
-.accessibility-mode .text-sm {
+.simple-mode .text-sm {
   font-size: 1.0625rem; /* 17px, up from 14px */
 }
 
-.accessibility-mode .text-\[10px\] {
+.simple-mode .text-\[10px\] {
   font-size: 0.8125rem;
 }
 
-.accessibility-mode .text-\[11px\] {
+.simple-mode .text-\[11px\] {
   font-size: 0.875rem;
 }
 
 /* Improve contrast for low-vision users */
-.accessibility-mode .text-gray-400,
-.accessibility-mode .text-gray-500 {
+.simple-mode .text-gray-400,
+.simple-mode .text-gray-500 {
   color: rgb(209 213 219); /* gray-300 */
 }
 
-.accessibility-mode .text-gray-300 {
+.simple-mode .text-gray-300 {
   color: rgb(243 244 246); /* gray-100 */
 }
 
-.accessibility-mode .text-amber-300\/90 {
+.simple-mode .text-amber-300\/90 {
   color: rgb(253 230 138); /* amber-200 */
 }
 
-.accessibility-mode .text-amber-200 {
+.simple-mode .text-amber-200 {
   color: rgb(254 243 199); /* amber-100 */
 }
+
+/* Accessibility Mode — separate toggle, same visual treatment */
+.accessibility-mode {
+  font-size: 1.125rem;
+}
+
+.accessibility-mode .text-xs { font-size: 0.9375rem; }
+.accessibility-mode .text-sm { font-size: 1.0625rem; }
+.accessibility-mode .text-\[10px\] { font-size: 0.8125rem; }
+.accessibility-mode .text-\[11px\] { font-size: 0.875rem; }
+
+.accessibility-mode .text-gray-400,
+.accessibility-mode .text-gray-500 { color: rgb(209 213 219); }
+.accessibility-mode .text-gray-300 { color: rgb(243 244 246); }
+.accessibility-mode .text-amber-300\/90 { color: rgb(253 230 138); }
+.accessibility-mode .text-amber-200 { color: rgb(254 243 199); }

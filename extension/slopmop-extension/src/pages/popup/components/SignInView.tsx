@@ -51,7 +51,7 @@ export default function SignInView() {
   };
 
   return (
-    <div className="w-full bg-gray-900 text-white p-4 flex flex-col items-center gap-4 overflow-hidden overscroll-none">
+    <div className="w-full bg-gray-900 text-white p-4 flex flex-col items-center gap-4 overflow-y-auto overscroll-none">
       {/* Header */}
       <div className="flex items-center gap-3 w-full">
         <img src={logo} className="h-9 w-9" alt="SlopMop logo" />

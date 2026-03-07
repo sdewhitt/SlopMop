@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import browser from 'webextension-polyfill';
 import 'react/jsx-runtime';
 import { normalizeConfidence, resolveExplanation } from '@src/utils/generateExplanation';
+import { formatPatternReasons } from '@src/utils/aiTextPatterns';
 import { Settings, Stats, defaultSettings } from './types';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -22,6 +23,7 @@ import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
+import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 
 type DetectResponse = {
   confidence?: number;
@@ -41,32 +43,33 @@ export default function Popup() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
-   const [simpleMode, setSimpleMode] = useState(false);
+  const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
+  const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
     browser.storage.local
       .get([
-        'enabled',
         'postsScanned',
         'aiDetected',
         'postsProcessing',
         'settings',
         'simpleMode',
-        // Most recent backend `/detect` response (if/when written by detection pipeline)
         'detectResponse',
         'lastDetectResponse',
         'lastDetection',
         'detectionResult',
+        'lastDetectLanguageUnsupported',
       ])
       .then((result) => {
-        if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
         setStats({
           postsScanned: (result.postsScanned as number) || 0,
           aiDetected: (result.aiDetected as number) || 0,
           postsProcessing: (result.postsProcessing as number) || 0,
         });
         if (result.settings) {
-          setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+          const merged = { ...defaultSettings, ...(result.settings as Settings) };
+          setSettings(merged);
+          setEnabled(merged.enabled);
         }
         if (typeof result.simpleMode === 'boolean') {
           setSimpleMode(result.simpleMode);
@@ -78,6 +81,8 @@ export default function Popup() {
           (result.lastDetection as unknown) ??
           (result.detectionResult as unknown);
         if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
+        const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
+        setLanguageUnsupported(unsupported?.message ?? null);
       });
   }, []);
   // ── Sync settings from Firestore when the user signs in ──────
@@ -85,18 +90,24 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
-      const local = await browser.storage.local.get(['settings']);
+      const local = await browser.storage.local.get('settings');
       const localSettings = local.settings as Partial<Settings> | undefined;
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
+        automaticScanning: remote.settings.automaticScanning ?? defaultSettings.automaticScanning,
         platforms: { ...remote.settings.platforms },
+        enabled: remote.settings.enabled ?? defaultSettings.enabled,
+        scanText: remote.settings.scanText ?? defaultSettings.scanText,
+        scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
+        scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
+        uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
       };
       setSettings(merged);
+      setEnabled(merged.enabled);
       setStats(remote.stats);
-      // Mirror to local storage so the content script can read without Firestore
       browser.storage.local.set({ settings: merged });
       browser.storage.local.set({
         postsScanned: remote.stats.postsScanned,
@@ -105,27 +116,23 @@ export default function Popup() {
       });
     } catch (err) {
       console.error('[Popup] Failed to load Firestore settings:', err);
-      // Fall back to local storage
       const result = await browser.storage.local.get([
-        'enabled', 'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
+        'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
       ]);
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
       setStats({
         postsScanned: (result.postsScanned as number) || 0,
         aiDetected: (result.aiDetected as number) || 0,
         postsProcessing: (result.postsProcessing as number) || 0,
       });
       if (result.settings) {
-        setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+        const merged = { ...defaultSettings, ...(result.settings as Settings) };
+        setSettings(merged);
+        setEnabled(merged.enabled);
       }
     }
   }, [user]);
 
   useEffect(() => {
-    // Load local "enabled" flag (not stored in Firestore)
-    browser.storage.local.get(['enabled']).then((result) => {
-      if (result.enabled !== undefined) setEnabled(result.enabled as boolean);
-    });
     loadSettings();
   }, [loadSettings]);
 
@@ -138,9 +145,18 @@ export default function Popup() {
         const change = changes[key];
         if (!change) continue;
         const raw = change.newValue as unknown;
-        if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
-        else setDetectResponse(null);
+        if (raw && typeof raw === 'object') {
+          setDetectResponse(raw as DetectResponse);
+          setLanguageUnsupported(null);
+        } else setDetectResponse(null);
         break;
+      }
+      const unsupportedChange = changes['lastDetectLanguageUnsupported'];
+      if (unsupportedChange?.newValue != null) {
+        const v = unsupportedChange.newValue as { message?: string };
+        setLanguageUnsupported(v?.message ?? UNSUPPORTED_LANGUAGE_MESSAGE);
+      } else if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
+        setLanguageUnsupported(null);
       }
     };
 
@@ -148,14 +164,22 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
-  // Sync settings (e.g. accessibilityMode) when Options page or another tab updates storage.
+  // Sync settings and simple mode when Options page or another tab updates storage.
   useEffect(() => {
     const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local') return;
+
       const change = changes.settings;
-      if (!change?.newValue || typeof change.newValue !== 'object') return;
-      setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+      if (change?.newValue && typeof change.newValue === 'object') {
+        setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+      }
+
+      const simpleModeChange = changes.simpleMode;
+      if (typeof simpleModeChange?.newValue === 'boolean') {
+        setSimpleMode(simpleModeChange.newValue);
+      }
     };
+
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
@@ -163,7 +187,14 @@ export default function Popup() {
   const toggleEnabled = () => {
     const next = !enabled;
     setEnabled(next);
-    browser.storage.local.set({ enabled: next });
+    setSettings((prev) => {
+      const updated = { ...prev, enabled: next };
+      browser.storage.local.set({ settings: updated });
+      if (user) {
+        updateDetectionSettings(user.uid, { enabled: next }).catch(console.error);
+      }
+      return updated;
+    });
   };
 
   const flashSaved = () => {
@@ -215,11 +246,19 @@ export default function Popup() {
       sensitivity: defaultUserSettings.settings.sensitivity,
       highlightStyle: defaultUserSettings.settings.highlightStyle,
       showNotifications: defaultUserSettings.settings.showNotifications,
+      automaticScanning: defaultUserSettings.settings.automaticScanning,
       platforms: { ...defaultUserSettings.settings.platforms },
+      enabled: defaultUserSettings.settings.enabled,
+      scanText: defaultUserSettings.settings.scanText,
+      scanImages: defaultUserSettings.settings.scanImages,
+      scanComments: defaultUserSettings.settings.scanComments,
+      uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
     };
     setSettings(defaults);
-    browser.storage.local.set({ settings: defaults });
+    setEnabled(defaults.enabled);
+    setSimpleMode(false);
+    browser.storage.local.set({ settings: defaults, simpleMode: false });
     flashSaved();
     if (user) {
       firestoreResetSettings(user.uid).catch(console.error);
@@ -231,8 +270,8 @@ export default function Popup() {
     return (
       <div
         className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
-          settings.accessibilityMode ? 'accessibility-mode' : ''
-        }`}
+          simpleMode ? 'simple-mode' : ''
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
         <p className="text-xs text-gray-400">Loading…</p>
       </div>
@@ -243,7 +282,7 @@ export default function Popup() {
   if (!user) {
     return (
       <div
-        className={`w-full min-h-[200px] ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+        className={`w-full min-h-[200px] ${simpleMode ? 'simple-mode' : ''} ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
         <SignInView />
       </div>
@@ -255,8 +294,8 @@ export default function Popup() {
     return (
       <div
         className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
-          settings.accessibilityMode ? 'accessibility-mode' : ''
-        }`}
+          simpleMode ? 'simple-mode' : ''
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
@@ -298,20 +337,23 @@ export default function Popup() {
     (detectResponse?.confidence_score as number | undefined) ??
     null;
   const confidence = normalizeConfidence(rawConfidence);
-  const explanation = detectResponse
+  const baseExplanation = detectResponse
     ? resolveExplanation({
         explanation: detectResponse.explanation as string | undefined,
         confidence: rawConfidence,
         metadataComplete: detectResponse.metadataComplete as boolean | undefined,
       })
     : null;
+  const patternReasons = (detectResponse as { patternReasons?: string[] } | null)?.patternReasons;
+  const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
+  const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
 
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div
       className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
-        settings.accessibilityMode ? 'accessibility-mode' : ''
-      }`}
+        simpleMode ? 'simple-mode' : ''
+      } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
 
@@ -321,7 +363,12 @@ export default function Popup() {
 
       <DisclaimerBanner />
 
-      {confidence != null && <ConfidenceDisplay confidenceScore={confidence} />}
+      {languageUnsupported != null && (
+        <div className="rounded-lg px-3 py-2 text-sm bg-amber-500/20 text-amber-200 border border-amber-500/50">
+          {languageUnsupported}
+        </div>
+      )}
+      {confidence != null && !languageUnsupported && <ConfidenceDisplay confidenceScore={confidence} />}
 
       <button
         onClick={() => logOut()}
@@ -330,7 +377,7 @@ export default function Popup() {
         Sign Out
       </button>
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
-      {detectResponse && (
+      {detectResponse && !languageUnsupported && (
         <section className="mt-4 text-left">
           <p className="text-sm font-medium text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}

@@ -1,4 +1,10 @@
-import { ContentToBackgroundMessage, DetectionResponse, NormalizedPostContent } from "@src/types/domain";
+import {
+    ContentToBackgroundMessage,
+    DetectionResponse,
+    DetectionLanguageUnsupportedPayload,
+    NormalizedPostContent,
+    PostId,
+} from "@src/types/domain";
 
 
 
@@ -24,6 +30,24 @@ export class ExtensionMessageBus {
     onDetectionResponse(handler: (res: DetectionResponse) => void): void {
         const listener = (message: any) => { // listener is closure function, which outlives outer function, so listener exists in registry forever
             if (message.type === "DETECTION_RESULT") {
+                handler(message.payload);
+            }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+    }
+
+    onDetectionError(handler: (payload: { postId: PostId; message: string }) => void): void {
+        const listener = (message: any) => {
+            if (message.type === "DETECTION_ERROR") {
+                handler(message.payload);
+            }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+    }
+
+    onDetectionLanguageUnsupported(handler: (payload: DetectionLanguageUnsupportedPayload) => void): void {
+        const listener = (message: any) => {
+            if (message.type === "DETECTION_LANGUAGE_UNSUPPORTED") {
                 handler(message.payload);
             }
         };

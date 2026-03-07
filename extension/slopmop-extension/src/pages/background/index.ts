@@ -16,25 +16,34 @@ import {
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
+import { detectText, type DetectResponse } from '@src/lib/api';
 import {
-  setIgnoredSites,
+  isTextLanguageSupported,
+  UNSUPPORTED_LANGUAGE_MESSAGE,
+  UNSUPPORTED_LANGUAGE_BADGE,
+} from '@src/utils/languageSupport';
+import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
+import {
   getIgnoredSites as getIgnoredSitesLocal,
+  setIgnoredSites,
   normalizeHost,
   validateHost,
 } from '@src/utils/disabledWebsites';
-import { detectText } from '@src/lib/api';
-import { DetectionResponse, NormalizedPostContent, DEFAULT_SETTINGS, UserSettings } from '@src/types/domain';
-
-import type { DetectionSettings } from '@src/utils/userSettings';
 
 console.log('background script loaded');
 
 // ── Post analysis ────────────────────────────────────────────────
-// Settings for post analysis (image scanning etc.)
-const settings: UserSettings = { ...DEFAULT_SETTINGS };
-
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
+// hardcoded developer toggle. keep true for offline fake responses.
+const USE_FAKE_DETECTION = false;
+
+async function getDetectionSettings(): Promise<DetectionSettings> {
+  const stored = await browser.storage.local.get('settings');
+  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
+  return { ...defaultUserSettings.settings, ...saved };
+}
 
 // Backend text length limit (must match backend MAX_TEXT_LENGTH).
 const MAX_TEXT_LENGTH = 5000;
@@ -97,23 +106,9 @@ browser.runtime.onInstalled.addListener(async () => {
   const result = await browser.storage.local.get('settings');
   if (!result.settings) {
     await browser.storage.local.set({
-      enabled: true,
       postsScanned: 0,
       aiDetected: 0,
-      settings: {
-        enabled: true,
-        sensitivity: 'medium',
-        highlightStyle: 'badge',
-        platforms: {
-          twitter: true,
-          reddit: true,
-          facebook: true,
-          youtube: true,
-          linkedin: true,
-        },
-        showNotifications: true,
-        accessibilityMode: false,
-      },
+      settings: defaultUserSettings.settings,
     });
   }
 });
@@ -344,6 +339,15 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 }
 
 async function handleDetect(text: string): Promise<MessageResponse> {
+  if (!isTextLanguageSupported(text)) {
+    await browser.storage.local.set({
+      lastDetectResponse: null,
+      detectResponse: null,
+      lastDetectLanguageUnsupported: { message: UNSUPPORTED_LANGUAGE_MESSAGE },
+    });
+    return { success: false, error: UNSUPPORTED_LANGUAGE_MESSAGE };
+  }
+  await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
     const result = await detectText(text);
     await browser.storage.local.set({
@@ -359,11 +363,7 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
-  enqueueAnalysis(() => doAnalyzePost(post, tabId));
-}
-
-async function doAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
-  // safety-net: if the user has scanImages disabled, skip image fetching entirely.
+  const settings = await getDetectionSettings();
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
   let enrichedImages = post.images;
@@ -374,67 +374,56 @@ async function doAnalyzePost(post: NormalizedPostContent, tabId: number): Promis
   }
 
   const enrichedPost = { ...post, images: enrichedImages };
+  const plainText = enrichedPost.text?.plain ?? '';
 
-  // Truncate text to the backend's maximum accepted length.
-  let textToSend = enrichedPost.text.plain?.trim() ?? '';
-  if (textToSend.length > MAX_TEXT_LENGTH) {
-    console.warn(
-      `[SlopMop] Post ${enrichedPost.postId} text truncated from ${textToSend.length} to ${MAX_TEXT_LENGTH} chars`,
-    );
-    textToSend = textToSend.slice(0, MAX_TEXT_LENGTH);
+  if (!isTextLanguageSupported(plainText)) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+      payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+    });
+    return;
   }
 
-  // Skip posts with no usable text.
-  if (textToSend.length === 0) return;
+  if (!plainText.trim()) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'empty text' },
+    });
+    return;
+  }
 
-  // Retry with exponential back-off for transient server errors (502, 503, 504).
-  const MAX_RETRIES = 3;
-  const BASE_DELAY_MS = 1000;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const apiResult = await detectText(textToSend);
-
-      // Map backend DetectResponse to extension DetectionResponse
-      const verdict: DetectionResponse['verdict'] =
-        apiResult.label === 'ai' ? 'likely_ai'
-          : apiResult.label === 'human' ? 'likely_human'
-          : 'unknown';
-
-      const response: DetectionResponse = {
-        requestId: crypto.randomUUID(),
-        postId: enrichedPost.postId,
-        verdict,
-        confidence: apiResult.confidence,
-        explanation: {
-          summary: apiResult.explanation,
-          model: { name: 'slopmop-backend', version: '0.1' },
-          cache: { hit: false, ttlRemainingMs: 0 },
-          timing: { totalMs: 0, inferenceMs: 0 },
-        },
-      };
-
-      browser.tabs.sendMessage(tabId, {
+  if (USE_FAKE_DETECTION) {
+    const fakeResponse = buildFakeResponse(enrichedPost);
+    if (fakeResponse) {
+      await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
-        payload: response,
+        payload: fakeResponse,
       });
-      return; // success — exit retry loop
-    } catch (err) {
-      const msg = (err as Error).message ?? '';
-      const isTransient = /502|503|504/.test(msg);
-
-      if (isTransient && attempt < MAX_RETRIES) {
-        const delay = BASE_DELAY_MS * 2 ** attempt;
-        console.warn(
-          `[SlopMop] Transient error for post ${enrichedPost.postId}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
-        );
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-
-      console.error('[SlopMop] Post analysis failed:', err);
-      return;
+    } else {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_ERROR',
+        payload: { postId: enrichedPost.postId, message: 'fake detection returned no result' },
+      });
     }
+    return;
+  }
+
+  try {
+    const start = performance.now();
+    const apiResult = await detectText(plainText);
+    const elapsedMs = Math.round(performance.now() - start);
+    const mapped = mapToDetectionResponse(apiResult, enrichedPost.postId, elapsedMs);
+
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload: mapped,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'network error';
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message },
+    });
   }
 }
 
@@ -479,6 +468,93 @@ async function fetchImageAsBase64(srcUrl: string): Promise<string> {
 }
 
 
+function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | null {
+  let fakeResponse: DetectionResponse | undefined;
+  const textLen: number = post.text?.plain?.length ?? 0;
+  const roll = Math.random();
+  if (roll < 0.4) {
+    fakeResponse = {
+      requestId: 'debug-req',
+      postId: post.postId,
+      verdict: 'likely_ai',
+      confidence: 0.92,
+      explanation: {
+        summary: 'Repetitive phrasing and low perplexity',
+        highlights: textLen > 20 ? [
+          { start: 0, end: Math.min(textLen, 45), reason: 'Opening follows a common AI template pattern' },
+          { start: Math.min(Math.floor(textLen * 0.4), textLen), end: Math.min(Math.floor(textLen * 0.4) + 60, textLen), reason: 'Unusually low perplexity for this span' },
+        ] : [],
+        model: { name: 'debug', version: '0.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 0, inferenceMs: 0 },
+      },
+    };
+  } else if (roll < 0.7) {
+    fakeResponse = {
+      requestId: 'debug-req',
+      postId: post.postId,
+      verdict: 'likely_human',
+      confidence: 0.78,
+      explanation: {
+        summary: 'Natural variance and typos detected',
+        highlights: textLen > 30 ? [
+          { start: Math.min(10, textLen), end: Math.min(50, textLen), reason: 'Contains a natural typo / informal shorthand' },
+        ] : [],
+        model: { name: 'debug', version: '0.0' },
+        cache: { hit: true, ttlRemainingMs: 45 },
+        timing: { totalMs: 321, inferenceMs: 190 },
+      },
+    };
+  } else if (roll < 0.9) {
+    fakeResponse = {
+      requestId: 'debug-req',
+      postId: post.postId,
+      verdict: 'unknown',
+      confidence: 0.5,
+      explanation: {
+        summary: 'Insufficient signal',
+        model: { name: 'debug', version: '0.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 0, inferenceMs: 0 },
+      },
+    };
+  } else {
+    return null;
+  }
+  return fakeResponse;
+}
+
+function mapToDetectionResponse(
+  apiResult: DetectResponse,
+  postId: string,
+  timingMs: number,
+): DetectionResponse {
+  //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
+
+  const confidencePercent = apiResult.confidence <= 1
+    ? apiResult.confidence * 100
+    : apiResult.confidence;
+
+  const verdict: DetectionResponse['verdict'] = confidencePercent > 60
+    ? 'likely_ai'
+    : confidencePercent >= 40
+      ? 'unknown'
+      : 'likely_human';
+
+  return {
+    requestId: crypto.randomUUID(),
+    postId,
+    verdict,
+    confidence: apiResult.confidence,
+    explanation: {
+      summary: apiResult.explanation,
+      highlights: [],
+      model: { name: 'slopmop-api', version: '1.0' },
+      cache: { hit: false, ttlRemainingMs: 0 },
+      timing: { totalMs: timingMs, inferenceMs: timingMs },
+    },
+  };
+}
 
 /**
  * When the extension icon is clicked, send a toggle message to the content
