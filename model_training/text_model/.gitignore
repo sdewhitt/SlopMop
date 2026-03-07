@@ -1,4 +1,5 @@
 *.venv
+.DS_Store
 
 # large model weights (do not commit)
 *.pt
@@ -12,5 +13,8 @@
 # TensorBoard logs
 model_training/text_model/runs/
 
-
+# node modules
 node_modules
+
+# export.txt
+export.txt

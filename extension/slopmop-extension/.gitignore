@@ -390,3 +390,4 @@ $RECYCLE.BIN/
 .env*
 #generated manifest
 public/manifest.json
+model_training/
