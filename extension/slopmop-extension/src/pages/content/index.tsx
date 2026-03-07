@@ -19,6 +19,7 @@ import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
+import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
 import panelCss from './panel.css?inline';
 
@@ -112,6 +113,10 @@ try {
 
 let activeObserver: FeedObserver | null = null;
 
+function getCurrentHost(): string {
+  return window.location.hostname.toLowerCase().replace(/^www\./, '');
+}
+
 function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
   return { ...defaultUserSettings.settings, ...saved };
@@ -121,9 +126,9 @@ function shouldRunOnCurrentSite(
   settings: DetectionSettings,
   ignoredSites: string[],
 ): boolean {
-  const hostname = window.location.hostname;
+  const hostname = getCurrentHost();
 
-  if (ignoredSites.some((s) => hostname.includes(s))) return false;
+  if (isHostIgnored(hostname, ignoredSites)) return false;
 
   if (hostname.includes('reddit.com')) return settings.platforms.reddit;
   if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
@@ -135,7 +140,7 @@ function shouldRunOnCurrentSite(
 }
 
 function startObserver(settings: DetectionSettings): void {
-  const hostname = window.location.hostname;
+  const hostname = getCurrentHost();
   let adapter;
   if (hostname.includes('reddit.com')) {
     adapter = new RedditAdapter();
@@ -154,7 +159,13 @@ function startObserver(settings: DetectionSettings): void {
   });
   bus.onDetectionError(({ postId, message }) => {
     if (!activeObserver?.markAnalyzeCompleted(postId)) return;
-    overlay.renderError(postId, message);
+    overlay.renderError(postId, message, () => {
+      activeObserver?.retryAnalyze(postId);
+    });
+  });
+  bus.onDetectionLanguageUnsupported((payload) => {
+    if (!activeObserver?.markAnalyzeCompleted(payload.postId)) return;
+    overlay.renderError(payload.postId, payload.message);
   });
 
   activeObserver.start();
@@ -162,7 +173,7 @@ function startObserver(settings: DetectionSettings): void {
 }
 
 async function initFeedObserver(): Promise<void> {
-  renderDebugBadge();
+  // renderDebugBadge();
 
   const stored = await browser.storage.local.get(['settings', 'ignoredSites']);
   const settings = resolveDetectionSettings(stored);
@@ -176,17 +187,28 @@ async function initFeedObserver(): Promise<void> {
 
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
-  if (!changes.settings) return;
+  if (!changes.settings && !changes.ignoredSites) return;
 
-  const newSettings = resolveDetectionSettings({
-    settings: changes.settings.newValue,
+  void browser.storage.local.get(['settings', 'ignoredSites']).then((stored) => {
+    const currentHost = getCurrentHost();
+    const newSettings = resolveDetectionSettings(stored);
+    const newIgnoredSites =
+      (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
+    const shouldRun = shouldRunOnCurrentSite(newSettings, newIgnoredSites);
+
+    if (!shouldRun && activeObserver) {
+      activeObserver.stop();
+      activeObserver = null;
+      console.log('[SlopMop] FeedObserver stopped for', currentHost);
+      return;
+    }
+
+    if (shouldRun && !activeObserver) {
+      initFeedObserver().catch((e) => {
+        console.error('[SlopMop] observer re-init error', e);
+      });
+    }
   });
-
-  if (!newSettings.enabled && activeObserver) {
-    activeObserver.stop();
-    activeObserver = null;
-    console.log('[SlopMop] FeedObserver stopped via settings change');
-  }
 });
 
 initFeedObserver().catch((e) => {

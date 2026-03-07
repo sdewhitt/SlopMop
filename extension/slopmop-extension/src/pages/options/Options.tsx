@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
+import DisabledWebsitesManager from './DisabledWebsitesManager';
 
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean;
@@ -33,11 +34,15 @@ function Toggle({ checked, onChange, label, description }: {
 export default function Options() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
+  const [simpleMode, setSimpleMode] = useState(false);
 
   useEffect(() => {
-    browser.storage.local.get('settings').then((result) => {
+    browser.storage.local.get(['settings', 'simpleMode']).then((result) => {
       if (result.settings) {
         setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+      }
+      if (typeof result.simpleMode === 'boolean') {
+        setSimpleMode(result.simpleMode);
       }
     });
   }, []);
@@ -46,6 +51,7 @@ export default function Options() {
     setSettings((prev) => {
       const next = { ...prev, [key]: value };
       browser.storage.local.set({ settings: next });
+      if (key === 'enabled') browser.storage.local.set({ enabled: value });
       flashSaved();
       return next;
     });
@@ -72,12 +78,13 @@ export default function Options() {
 
   const resetSettings = () => {
     setSettings(defaultSettings);
-    browser.storage.local.set({ settings: defaultSettings });
+    setSimpleMode(false);
+    browser.storage.local.set({ settings: defaultSettings, simpleMode: false });
     flashSaved();
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className={`min-h-screen bg-gray-950 text-white ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}>
       <div className="max-w-2xl mx-auto px-6 py-10">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
@@ -97,12 +104,14 @@ export default function Options() {
               label="Enable Detection"
               description="Turn AI content detection on or off globally"
             />
-            <Toggle
-              checked={settings.showNotifications}
-              onChange={(v) => update('showNotifications', v)}
-              label="Show Notifications"
-              description="Display a notification when AI content is detected"
-            />
+            {!simpleMode && (
+              <Toggle
+                checked={settings.showNotifications}
+                onChange={(v) => update('showNotifications', v)}
+                label="Show Notifications"
+                description="Display a notification when AI content is detected"
+              />
+            )}
             <Toggle
               checked={settings.scanText}
               onChange={(v) => update('scanText', v)}
@@ -121,88 +130,113 @@ export default function Options() {
               label="Automatic Scanning"
               description="When off, posts require clicking Detect Now"
             />
+            <Toggle
+              checked={settings.accessibilityMode}
+              onChange={(v) => update('accessibilityMode', v)}
+              label="Accessibility Mode"
+              description="Larger text and higher contrast for low-vision users"
+            />
+            <Toggle
+              checked={simpleMode}
+              onChange={(v) => {
+                setSimpleMode(v);
+                browser.storage.local.set({ simpleMode: v });
+                flashSaved();
+              }}
+              label="Simple Mode"
+              description="Hide advanced options and show only basic controls"
+            />
           </div>
         </section>
 
         {/* Detection */}
-        <section className="mb-8">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Detection</h2>
-          <div className="bg-gray-900 rounded-xl p-4 space-y-4">
-            <div>
-              <label className="text-sm font-medium text-gray-200">Sensitivity</label>
-              <p className="text-xs text-gray-500 mb-2">Higher sensitivity flags more content but may increase false positives</p>
-              <div className="flex gap-2">
-                {(['low', 'medium', 'high'] as const).map((level) => (
-                  <button
-                    key={level}
-                    onClick={() => update('sensitivity', level)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
-                      settings.sensitivity === level
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                    }`}
-                  >
-                    {level}
-                  </button>
-                ))}
+        {!simpleMode && (
+          <section className="mb-8">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Detection</h2>
+            <div className="bg-gray-900 rounded-xl p-4 space-y-4">
+              <div>
+                <label className="text-sm font-medium text-gray-200">Sensitivity</label>
+                <p className="text-xs text-gray-500 mb-2">Higher sensitivity flags more content but may increase false positives</p>
+                <div className="flex gap-2">
+                  {(['low', 'medium', 'high'] as const).map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => update('sensitivity', level)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                        settings.sensitivity === level
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <label className="text-sm font-medium text-gray-200">Highlight Style</label>
-              <p className="text-xs text-gray-500 mb-2">How flagged content is visually marked</p>
-              <div className="flex gap-2">
-                {(['badge', 'border', 'dim'] as const).map((style) => (
-                  <button
-                    key={style}
-                    onClick={() => update('highlightStyle', style)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
-                      settings.highlightStyle === style
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                    }`}
-                  >
-                    {style}
-                  </button>
-                ))}
+              <div>
+                <label className="text-sm font-medium text-gray-200">Highlight Style</label>
+                <p className="text-xs text-gray-500 mb-2">How flagged content is visually marked</p>
+                <div className="flex gap-2">
+                  {(['badge', 'border', 'dim'] as const).map((style) => (
+                    <button
+                      key={style}
+                      onClick={() => update('highlightStyle', style)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                        settings.highlightStyle === style
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      }`}
+                    >
+                      {style}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Platforms */}
-        <section className="mb-8">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Platforms</h2>
-          <div className="bg-gray-900 rounded-xl p-4 divide-y divide-gray-800">
-            {(Object.keys(settings.platforms) as Array<keyof Settings['platforms']>).map((platform) => (
-              <Toggle
-                key={platform}
-                checked={settings.platforms[platform]}
-                onChange={(v) => updatePlatform(platform, v)}
-                label={platform.charAt(0).toUpperCase() + platform.slice(1)}
-              />
-            ))}
-          </div>
-        </section>
+        {!simpleMode && (
+          <section className="mb-8">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Platforms</h2>
+            <div className="bg-gray-900 rounded-xl p-4 divide-y divide-gray-800">
+              {(Object.keys(settings.platforms) as Array<keyof Settings['platforms']>).map((platform) => (
+                <Toggle
+                  key={platform}
+                  checked={settings.platforms[platform]}
+                  onChange={(v) => updatePlatform(platform, v)}
+                  label={platform.charAt(0).toUpperCase() + platform.slice(1)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Disabled Websites */}
+        {!simpleMode && <DisabledWebsitesManager />}
 
         {/* Data */}
-        <section className="mb-8">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Data</h2>
-          <div className="bg-gray-900 rounded-xl p-4 flex gap-3">
-            <button
-              onClick={resetStats}
-              className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-            >
-              Reset Statistics
-            </button>
-            <button
-              onClick={resetSettings}
-              className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors"
-            >
-              Reset All Settings
-            </button>
-          </div>
-        </section>
+        {!simpleMode && (
+          <section className="mb-8">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Data</h2>
+            <div className="bg-gray-900 rounded-xl p-4 flex gap-3">
+              <button
+                onClick={resetStats}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+              >
+                Reset Statistics
+              </button>
+              <button
+                onClick={resetSettings}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors"
+              >
+                Reset All Settings
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-600">SlopMop v1.0 &middot; Detect AI-generated content</p>

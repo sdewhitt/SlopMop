@@ -1,5 +1,6 @@
-import { DetectionResponse, PostId } from "@src/types/domain"
+import { DetectionResponse, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
+import { getPatternReasons } from "@src/utils/aiTextPatterns";
 import type { SiteAdapter } from "./adapters/SiteAdapter";
  
 
@@ -33,6 +34,8 @@ export class OverlayRenderer {
         if (!overlay) return;
 
         this.mapToResponse.set(postId, res);
+        this.resetOverlayInteractions(overlay);
+        overlay.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
 
@@ -53,19 +56,18 @@ export class OverlayRenderer {
 
         let tooltip: HTMLElement | null = null;
         const postText = this.mapToPostText.get(postId) ?? "";
-
-        overlay.addEventListener("mouseenter", () => {
+        overlay.onmouseenter = () => {
             if (tooltip) return;
             tooltip = isSimple
                 ? this.createSimpleTooltip(res)
                 : this.createTooltip(res, postText);
             overlay.appendChild(tooltip);
-        });
+        };
 
-        overlay.addEventListener("mouseleave", () => {
+        overlay.onmouseleave = () => {
             tooltip?.remove();
             tooltip = null;
-        });
+        };
     }
 
     // renders Pending badge for the user.
@@ -113,11 +115,7 @@ export class OverlayRenderer {
             cursor: "pointer",
         });
         detectNowButton.onclick = () => {
-            // lock the button after first click so duplicate requests don't fire.
-            detectNowButton.disabled = true;
-            detectNowButton.style.cursor = "default";
-            overlay.style.backgroundColor = "#6b7280";
-            overlay.textContent = "Scanning...";
+            this.showScanningState(overlay);
             onDetectNow();
         };
         overlay.appendChild(detectNowButton);
@@ -125,24 +123,47 @@ export class OverlayRenderer {
 
 
     }
-    renderError(postId: PostId, message: string): void {
+    renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
-        // log every detection error so debugging network/backend issues is easier.
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
-        overlay.style.backgroundColor = "#f59e0b"; // amber yellow like a yield sign
-        // badge text stays short in both modes to avoid covering too much content.
-        overlay.textContent = "Error";
+        this.resetOverlayInteractions(overlay);
+        overlay.style.backgroundColor = "#f59e0b"; // amber
+        overlay.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
+        if (onRetry) {
+            const retryButton = document.createElement("button");
+            retryButton.type = "button";
+            retryButton.textContent = "Retry";
+            Object.assign(retryButton.style, {
+                border: "none",
+                background: "transparent",
+                color: "#fff",
+                padding: "0",
+                margin: "0",
+                fontSize: isSimple ? "14px" : "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+            });
+            retryButton.onclick = (event) => {
+                event.stopPropagation();
+                this.showScanningState(overlay);
+                onRetry();
+            };
+            overlay.appendChild(retryButton);
+        } else {
+            overlay.textContent = "Error";
+        }
+
         if (isSimple) {
             overlay.style.cursor = "default";
             return;
         }
 
         // detailed mode keeps the badge compact and pushes the full message into tooltip.
-        overlay.style.cursor = "pointer";
+        overlay.style.cursor = onRetry ? "default" : "pointer";
         let tooltip: HTMLElement | null = null;
         overlay.onmouseenter = () => {
             if (tooltip) return;
@@ -160,6 +181,8 @@ export class OverlayRenderer {
     renderTimeout(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.resetOverlayInteractions(overlay);
+        overlay.style.whiteSpace = "normal";
         overlay.style.backgroundColor = "#f59e0b";
         overlay.textContent = "network timeout";
     }
@@ -261,9 +284,50 @@ export class OverlayRenderer {
         header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
         tip.appendChild(header);
 
-        //  body: explanation summary from the model 
+        // confidence progress bar
+        const pct = Math.round(res.confidence * 100);
+        const barColor = pct >= 70 ? "#ef4444" : pct >= 40 ? "#f59e0b" : "#22c55e";
+        const track = document.createElement("div");
+        Object.assign(track.style, {
+            width: "100%",
+            height: "6px",
+            backgroundColor: "#374151",
+            borderRadius: "3px",
+            marginBottom: "8px",
+            overflow: "hidden",
+        });
+        const fill = document.createElement("div");
+        Object.assign(fill.style, {
+            width: `${pct}%`,
+            height: "100%",
+            backgroundColor: barColor,
+            borderRadius: "3px",
+            transition: "width 0.3s ease",
+        });
+        track.appendChild(fill);
+        tip.appendChild(track);
+
+        // pattern-based reasons first (em dashes, common AI phrases) when present — main "why" for the user
+        const tooltipPatternReasons = getPatternReasons(postText);
+        if (tooltipPatternReasons.length > 0) {
+            const patternEl = document.createElement("div");
+            Object.assign(patternEl.style, {
+                marginBottom: "8px",
+                fontWeight: "500",
+                fontSize: "12px",
+                color: "#e5e7eb",
+            });
+            patternEl.textContent = "Patterns observed: " + tooltipPatternReasons.join("; ");
+            tip.appendChild(patternEl);
+        }
+
+        // model summary (generic explanation from backend/fake)
         const summary = document.createElement("div");
-        Object.assign(summary.style, { marginBottom: "8px" });
+        Object.assign(summary.style, {
+            marginBottom: "8px",
+            fontSize: tooltipPatternReasons.length > 0 ? "11px" : "12px",
+            color: tooltipPatternReasons.length > 0 ? "#9ca3af" : "#e5e7eb",
+        });
         summary.textContent = res.explanation.summary;
         tip.appendChild(summary);
 
@@ -381,6 +445,21 @@ export class OverlayRenderer {
         tip.appendChild(body);
 
         return tip;
+    }
+
+    private resetOverlayInteractions(overlay: HTMLElement): void {
+        overlay.replaceChildren();
+        overlay.onmouseenter = null;
+        overlay.onmouseleave = null;
+        overlay.onclick = null;
+    }
+
+    private showScanningState(overlay: HTMLElement): void {
+        this.resetOverlayInteractions(overlay);
+        overlay.style.whiteSpace = "normal";
+        overlay.style.backgroundColor = "#6b7280";
+        overlay.style.cursor = "default";
+        overlay.textContent = "Scanning...";
     }
 
     // scan DOM tree for the postNode given a postId. 

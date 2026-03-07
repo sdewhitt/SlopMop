@@ -3,27 +3,27 @@ import Link from "next/link";
 const steps = [
   {
     number: 1,
-    title: "Step 1 — Placeholder",
+    title: "Visit the Chrome Web Store",
     description:
-      "[ Actual instructions will go here once the extension is published. ]",
+      "Search for \"SlopMop\" or click the direct link to our extension page.",
   },
   {
     number: 2,
-    title: "Step 2 — Placeholder",
+    title: "Add to Chrome",
     description:
-      "[ Actual instructions will go here once the extension is published. ]",
+      "Click the \"Add to Chrome\" button, then confirm by clicking \"Add extension\" in the popup.",
   },
   {
     number: 3,
-    title: "Step 3 — Placeholder",
+    title: "Pin to toolbar",
     description:
-      "[ Actual instructions will go here once the extension is published. ]",
+      "Click the puzzle piece icon in your Chrome toolbar and pin SlopMop for easy access.",
   },
   {
     number: 4,
-    title: "Step 4 — Placeholder",
+    title: "Sign in and start detecting",
     description:
-      "[ Actual instructions will go here once the extension is published. ]",
+      "Click the SlopMop icon, create an account or sign in, and browse as usual — AI content gets flagged automatically.",
   },
 ];
 

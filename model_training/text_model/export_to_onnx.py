@@ -9,16 +9,25 @@ model = detector.model
 device = detector.device
 
 # load the best model state from file if it exists
-best_model_gzip_path = os.path.join(os.path.dirname(__file__), "best_text_detector.pt.gz")
-if os.path.exists(best_model_gzip_path):
-  with gzip.open(best_model_gzip_path, "rb") as f:
-    state = torch.load(f, map_location=device)
-    is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
-    if detector.use_binary_logit and is_desklib_checkpoint:
-      model.load_state_dict(state, strict=True)
-    elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
-      model.load_state_dict(state, strict=True)
-  print(f"Loaded best model weights from {best_model_gzip_path}.")
+script_dir = os.path.dirname(__file__)
+best_gz = os.path.join(script_dir, "best_text_detector_smaller.pt.gz")
+best_pt = os.path.join(script_dir, "best_text_detector_smaller.pt")
+best_model_path = best_gz if os.path.exists(best_gz) else best_pt
+if os.path.exists(best_model_path):
+  if best_model_path.endswith(".gz"):
+    try:
+      with gzip.open(best_model_path, "rb") as f:
+        state = torch.load(f, map_location=device)
+    except gzip.BadGzipFile:
+      with open(best_model_path, "rb") as f:
+        state = torch.load(f, map_location=device)
+  else:
+    with open(best_model_path, "rb") as f:
+      state = torch.load(f, map_location=device)
+  is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
+  if (detector.use_binary_logit and is_desklib_checkpoint) or (not detector.use_binary_logit and not is_desklib_checkpoint):
+    model.load_state_dict(state, strict=True)
+  print(f"Loaded best model weights from {best_model_path}.")
 else:
   print("No best model checkpoint found; exporting base model weights.")
 
@@ -51,7 +60,7 @@ torch.onnx.export(
       "attention_mask": {0: "batch_size", 1: "seq_len"},
       "logits": {0: "batch_size"},
   },
-  opset_version=13,
+  opset_version=14,
   do_constant_folding=True,
 )
 print(f"Exported ONNX model to {onnx_path}")

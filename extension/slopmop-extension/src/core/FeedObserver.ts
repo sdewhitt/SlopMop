@@ -1,6 +1,7 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
+import { isTextLanguageSupported, UNSUPPORTED_LANGUAGE_BADGE } from "@src/utils/languageSupport";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -34,6 +35,8 @@ export class FeedObserver {
     private pendingAnalyzeTimers = new Map<string, ReturnType<typeof setTimeout>>();
     // tracks posts that already timed out so late results do not overwrite timeout badge.
     private timedOutPostIds = new Set<string>();
+    // stores extracted payloads so failed analyses can be retried from the badge.
+    private postsById = new Map<string, NormalizedPostContent>();
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -92,6 +95,7 @@ export class FeedObserver {
         }
         this.pendingAnalyzeTimers.clear();
         this.timedOutPostIds.clear();
+        this.postsById.clear();
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
@@ -175,6 +179,7 @@ export class FeedObserver {
         // only mark as seen AFTER extraction succeeded + passed eligibility.
         // if we marked it earlier and extraction failed, we'd never retry
         this.seenPostIds.add(extracted.postId);
+        this.postsById.set(extracted.postId, extracted);
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] new post`, {
@@ -192,6 +197,13 @@ export class FeedObserver {
             return;
         }
 
+        // manual mode: if language unsupported, show badge only (no Detect Now button).
+        if (!isTextLanguageSupported(extracted.text.plain)) {
+            this.overlay.renderPending(extracted.postId, extracted.text.plain);
+            this.overlay.renderError(extracted.postId, UNSUPPORTED_LANGUAGE_BADGE);
+            return;
+        }
+
         // manual mode: render Detect Now button and wait for user click.
         this.overlay.renderPending(extracted.postId, extracted.text.plain, () => {
             this.dispatchAnalyze(extracted);
@@ -204,6 +216,13 @@ export class FeedObserver {
         // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
         this.startAnalyzeTimeout(post.postId);
         this.bus.sendAnalyze(post);
+    }
+
+    retryAnalyze(postId: string): boolean {
+        const post = this.postsById.get(postId);
+        if (!post) return false;
+        this.dispatchAnalyze(post);
+        return true;
     }
 
     // starts a per-post timeout for detection responses.
