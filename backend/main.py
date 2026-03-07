@@ -1,6 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+import sys
+import os
+import base64
+import io
+from PIL import Image
+import torch
+
+# Add nonescape's python package to the path so `from nonescape import ...` works
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "nonescape", "python"))
+from nonescape import NonescapeClassifierMini, preprocess_image
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
@@ -14,6 +24,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Load image detection model once at startup ─────────────────
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "nonescape",
+    "nonescape-mini-v0.safetensors",
+)
+
+image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
+image_model.eval()
+
 MAX_TEXT_LENGTH = 5000
 
 
@@ -25,6 +45,17 @@ class DetectResponse(BaseModel):
     confidence: float  # 0.0 = human, 1.0 = AI
     label: str  # "ai" or "human"
     explanation: str  # explanation for the detection
+
+
+class DetectImageRequest(BaseModel):
+    image_base64: str          # raw base64-encoded image bytes
+    mime_type: str = "image/jpeg"
+
+
+class DetectImageResponse(BaseModel):
+    confidence: float          # 0.0 = authentic, 1.0 = AI-generated
+    label: str                 # "ai" or "human"
+    explanation: str
 
 
 @app.get("/")
@@ -81,4 +112,32 @@ def detect(request: DetectRequest):
     confidence, label = score_text(clean_text)
     explanation = generate_explanation(confidence, label)
     return DetectResponse(confidence=confidence, label=label, explanation=explanation)
-    
+
+
+@app.post("/detect-image", response_model=DetectImageResponse)
+def detect_image(request: DetectImageRequest):
+    raw = request.image_base64.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="image_base64 is required")
+
+    try:
+        img_bytes = base64.b64decode(raw)
+        image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+
+    tensor = preprocess_image(image).unsqueeze(0)  # add batch dim
+
+    with torch.no_grad():
+        probs = image_model(tensor)
+        authentic_prob = probs[0][0].item()
+        ai_prob = probs[0][1].item()
+
+    label = "ai" if ai_prob > 0.5 else "human"
+    confidence = round(ai_prob, 4)
+    explanation = (
+        f"Nonescape-mini classified this image as {'AI-generated' if label == 'ai' else 'authentic'} "
+        f"with {confidence:.1%} confidence."
+    )
+
+    return DetectImageResponse(confidence=confidence, label=label, explanation=explanation)

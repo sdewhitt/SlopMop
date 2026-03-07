@@ -133,10 +133,12 @@ export class OverlayRenderer {
         overlay.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
+        overlay.textContent = "Error";
+
         if (onRetry) {
             const retryButton = document.createElement("button");
             retryButton.type = "button";
-            retryButton.textContent = "Retry";
+            retryButton.textContent = " · Retry";
             Object.assign(retryButton.style, {
                 border: "none",
                 background: "transparent",
@@ -153,8 +155,6 @@ export class OverlayRenderer {
                 onRetry();
             };
             overlay.appendChild(retryButton);
-        } else {
-            overlay.textContent = "Error";
         }
 
         if (isSimple) {
@@ -167,7 +167,7 @@ export class OverlayRenderer {
         let tooltip: HTMLElement | null = null;
         overlay.onmouseenter = () => {
             if (tooltip) return;
-            const errorMessage = this.mapToErrorMessage.get(postId) ?? "Unknown error";
+            const errorMessage = this.mapToErrorMessage.get(postId) || "Unknown error";
             tooltip = this.createErrorTooltip(errorMessage);
             overlay.appendChild(tooltip);
         };
