@@ -18,9 +18,12 @@
 .slopmop-panel {
   width: 320px;
   min-height: 340px;
+  max-height: calc(100vh - 24px);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #111827;
 }
 

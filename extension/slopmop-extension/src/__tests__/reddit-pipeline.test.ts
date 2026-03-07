@@ -140,6 +140,46 @@ describe('Reddit extraction pipeline', () => {
     });
   });
 
+  it('extracts image-only post when there is no text body', () => {
+    const extractor = new PostExtractor();
+    const postNode = document.createElement('article');
+
+    const imageNode = document.createElement('img');
+    imageNode.src = 'https://i.redd.it/image-only.jpg';
+
+    const adapter = createAdapter({
+      getStablePostId: () => 't3_imgonly',
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/imgonly/title/',
+      getTextNode: () => null,
+      getImageNodes: () => [imageNode],
+      getAuthorHandle: () => 'u/imagefan',
+      getTimestampText: () => '5m ago',
+    });
+
+    const extracted = extractor.extract(postNode, adapter, 'post');
+
+    expect(extracted).not.toBeNull();
+    expect(extracted?.contentType).toBe(ContentType.IMAGE);
+    expect(extracted?.text.plain).toBe('');
+    expect(extracted?.images).toHaveLength(1);
+    expect(extracted?.images[0].srcUrl).toBe('https://i.redd.it/image-only.jpg');
+  });
+
+  it('returns null when post has neither text nor images', () => {
+    const extractor = new PostExtractor();
+    const postNode = document.createElement('article');
+
+    const adapter = createAdapter({
+      getStablePostId: () => 't3_empty',
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/empty/title/',
+      getTextNode: () => null,
+      getImageNodes: () => [],
+    });
+
+    const extracted = extractor.extract(postNode, adapter, 'post');
+    expect(extracted).toBeNull();
+  });
+
   it('derives a stable reddit post id from permalink when id attributes are absent', () => {
     const adapter = new RedditAdapter();
     const postNode = document.createElement('article');
@@ -251,7 +291,8 @@ describe('Reddit extraction pipeline', () => {
     const overlay = postNode.lastElementChild as HTMLElement | null;
     const retryButton = overlay?.querySelector('button');
 
-    expect(retryButton?.textContent).toBe('Retry');
+    expect(overlay?.textContent).toContain('Error');
+    expect(retryButton?.textContent).toBe(' · Retry');
     retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(overlay?.textContent).toBe('Scanning...');

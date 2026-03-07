@@ -6,13 +6,13 @@ import { ContentType } from "@src/types/domain";
     // available options are text, image, mixed, unsupported.
     // ContentType is a string enum
 export function classify(plainText: string, imageLength: number): ContentType {
-    // need to debug with the plainText field and see what an image post usually returns.
-    // not sure if this logic is correct until i see a real plainText field for an image post
-    // e.g. where does the post's title go?
-    if (plainText === null && imageLength < 1) return ContentType.UNSUPPORTED;
-    if (plainText !== null && imageLength < 1) return ContentType.TEXT;
-    if (plainText === null && imageLength >= 1) return ContentType.IMAGE;
-    if (plainText !== null && imageLength >= 1) return ContentType.MIXED;
+    const hasText = plainText.length > 0;
+    const hasImages = imageLength >= 1;
+
+    if (!hasText && !hasImages) return ContentType.UNSUPPORTED;
+    if (hasText && !hasImages) return ContentType.TEXT;
+    if (!hasText && hasImages) return ContentType.IMAGE;
+    if (hasText && hasImages) return ContentType.MIXED;
     return ContentType.UNSUPPORTED;
 }
 

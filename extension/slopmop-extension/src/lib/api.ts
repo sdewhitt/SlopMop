@@ -73,3 +73,54 @@ const result: DetectResponse = await response.json();
 
 return result;
 }
+
+// expected response from POST /detect-image
+export interface DetectImageResponse {
+    confidence: number;
+    label: string;
+    explanation: string;
+}
+
+/*
+* Sends a base64-encoded image to backend API and returns image detection result.
+*/
+export async function detectImage(
+    imageBase64: string,
+    mimeType: string = "image/jpeg",
+): Promise<DetectImageResponse> {
+    const baseUrl: string = getBaseUrl();
+
+    const requestBody = {
+        image_base64: imageBase64,
+        mime_type: mimeType,
+    };
+
+    const response = await fetch(baseUrl + "/detect-image", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+    });
+
+    if (response.ok === false) {
+        let message: string = "HTTP " + response.status;
+
+        try {
+            const data = await response.json();
+            if (data !== null && data !== undefined) {
+                if (typeof data.detail === "string") {
+                    message = data.detail;
+                }
+            }
+        } catch (error) {
+            // response is not JSON, keep default message
+        }
+
+        throw new Error(message);
+    }
+
+    const result: DetectImageResponse = await response.json();
+
+    return result;
+}

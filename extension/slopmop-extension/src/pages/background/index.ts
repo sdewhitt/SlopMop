@@ -16,7 +16,7 @@ import {
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
-import { detectText, type DetectResponse } from '@src/lib/api';
+import { detectText, detectImage, type DetectResponse, type DetectImageResponse } from '@src/lib/api';
 import {
   isTextLanguageSupported,
   UNSUPPORTED_LANGUAGE_MESSAGE,
@@ -43,6 +43,28 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
   const stored = await browser.storage.local.get('settings');
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
   return { ...defaultUserSettings.settings, ...saved };
+}
+
+// Backend text length limit (must match backend MAX_TEXT_LENGTH).
+const MAX_TEXT_LENGTH = 5000;
+
+// Serialise API calls so we don't overwhelm the backend.
+const analysisQueue: Array<() => Promise<void>> = [];
+let analysisRunning = false;
+
+function enqueueAnalysis(task: () => Promise<void>): void {
+  analysisQueue.push(task);
+  drainAnalysisQueue();
+}
+
+async function drainAnalysisQueue(): Promise<void> {
+  if (analysisRunning) return;
+  analysisRunning = true;
+  while (analysisQueue.length > 0) {
+    const next = analysisQueue.shift()!;
+    await next();
+  }
+  analysisRunning = false;
 }
 
 // ── Firebase Auth ────────────────────────────────────────────────
@@ -353,8 +375,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
+  const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
-  if (!isTextLanguageSupported(plainText)) {
+  if (!hasImages && !isTextLanguageSupported(plainText)) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
       payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
@@ -362,10 +385,10 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  if (!plainText.trim()) {
+  if (!plainText.trim() && !hasImages) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
-      payload: { postId: enrichedPost.postId, message: 'empty text' },
+      payload: { postId: enrichedPost.postId, message: 'empty text and no images' },
     });
     return;
   }
@@ -383,6 +406,44 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         payload: { postId: enrichedPost.postId, message: 'fake detection returned no result' },
       });
     }
+    return;
+  }
+
+  // Route IMAGE and MIXED posts through image detection first
+  if (enrichedPost.contentType === 'IMAGE' || enrichedPost.contentType === 'MIXED') {
+    const firstImage = enrichedImages.find((img) => img.bytesBase64);
+    if (firstImage) {
+      try {
+        const start = performance.now();
+        const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+        const elapsedMs = Math.round(performance.now() - start);
+        const mapped = mapToDetectionResponse(imgResult, enrichedPost.postId, elapsedMs);
+
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: mapped,
+        });
+        return;
+      } catch {
+        // Fall through to text detection if image detection fails
+      }
+    }
+  }
+
+  // Text detection for TEXT posts and MIXED fallback
+  if (!plainText.trim()) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'empty text' },
+    });
+    return;
+  }
+
+  if (!isTextLanguageSupported(plainText)) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+      payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+    });
     return;
   }
 
@@ -503,7 +564,7 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
 }
 
 function mapToDetectionResponse(
-  apiResult: DetectResponse,
+  apiResult: DetectResponse | DetectImageResponse,
   postId: string,
   timingMs: number,
 ): DetectionResponse {

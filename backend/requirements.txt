@@ -1,4 +1,10 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 fastapi
 uvicorn
 pytest
 httpx
+torch
+torchvision
+transformers
+safetensors
+Pillow>=9.0.0
