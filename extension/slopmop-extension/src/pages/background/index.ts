@@ -11,6 +11,7 @@ import {
 import {
   getOrCreateUserSettings,
   updateDetectionSettings,
+  updateDetectionStats,
   resetStats,
   resetSettings,
   getIgnoredSites,
@@ -38,11 +39,96 @@ console.log('background script loaded');
 const IMAGE_FETCH_CONCURRENCY = 3;
 // hardcoded developer toggle. keep true for offline fake responses.
 const USE_FAKE_DETECTION = false;
+const STATS_STORAGE_KEYS = ['postsScanned', 'aiDetected', 'postsProcessing'];
+type StoredStats = {
+  postsScanned: number;
+  aiDetected: number;
+  postsProcessing: number;
+};
+
+let statsWriteChain: Promise<void> = Promise.resolve();
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
   const stored = await browser.storage.local.get('settings');
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
   return { ...defaultUserSettings.settings, ...saved };
+}
+
+function normalizeStoredStats(stored: Record<string, unknown>): StoredStats {
+  return {
+    postsScanned: typeof stored.postsScanned === 'number' ? stored.postsScanned : 0,
+    aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
+    postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
+  };
+}
+
+async function readStoredStats(): Promise<StoredStats> {
+  const stored = await browser.storage.local.get(STATS_STORAGE_KEYS);
+  return normalizeStoredStats(stored);
+}
+
+async function persistStats(stats: StoredStats): Promise<void> {
+  await browser.storage.local.set(stats);
+  const uid = auth?.currentUser?.uid;
+  if (!uid) return;
+
+  try {
+    await updateDetectionStats(uid, stats);
+  } catch (error) {
+    console.error('[SlopMop] Failed to sync detection stats', error);
+  }
+}
+
+function queueStatsUpdate(mutator: (stats: StoredStats) => StoredStats): Promise<void> {
+  const next = statsWriteChain.then(async () => {
+    const current = await readStoredStats();
+    const updated = mutator(current);
+    await persistStats(updated);
+  });
+
+  statsWriteChain = next.catch((error) => {
+    console.error('[SlopMop] Failed to update detection stats', error);
+  });
+
+  return next;
+}
+
+async function markScanStarted(): Promise<void> {
+  await queueStatsUpdate((stats) => ({
+    postsScanned: stats.postsScanned + 1,
+    aiDetected: stats.aiDetected,
+    postsProcessing: stats.postsProcessing + 1,
+  })).catch((error) => {
+    console.error('[SlopMop] Failed to mark scan started', error);
+  });
+}
+
+async function markScanFinished(aiDetected: boolean): Promise<void> {
+  await queueStatsUpdate((stats) => ({
+    postsScanned: stats.postsScanned,
+    aiDetected: stats.aiDetected + (aiDetected ? 1 : 0),
+    postsProcessing: Math.max(0, stats.postsProcessing - 1),
+  })).catch((error) => {
+    console.error('[SlopMop] Failed to mark scan finished', error);
+  });
+}
+
+async function initializeLocalStats(): Promise<void> {
+  const current = await readStoredStats();
+  const next: StoredStats = {
+    postsScanned: current.postsScanned,
+    aiDetected: current.aiDetected,
+    // In-flight scans cannot survive a background-script restart.
+    postsProcessing: 0,
+  };
+
+  if (
+    current.postsScanned !== next.postsScanned ||
+    current.aiDetected !== next.aiDetected ||
+    current.postsProcessing !== next.postsProcessing
+  ) {
+    await persistStats(next);
+  }
 }
 
 // Backend text length limit (must match backend MAX_TEXT_LENGTH).
@@ -82,6 +168,12 @@ if (auth) {
       browser.storage.local.set({
         slopmopUser: { uid: firebaseUser.uid, email: firebaseUser.email },
       });
+      try {
+        const stats = await readStoredStats();
+        await updateDetectionStats(firebaseUser.uid, stats);
+      } catch (e) {
+        console.error('[SlopMop] Failed to sync local stats to Firestore', e);
+      }
       // Sync ignored sites from Firestore to local storage so the content
       // script can read them synchronously without a Firestore round-trip.
       try {
@@ -100,14 +192,18 @@ if (auth) {
 // The popup page is kept in the manifest only so CRXJS bundles it;
 // it's actually rendered by the content script directly in the page DOM.
 browser.action.setPopup({ popup: '' });
+initializeLocalStats().catch((error) => {
+  console.error('[SlopMop] Failed to initialize detection stats', error);
+});
 
 // Initialize default settings on install
 browser.runtime.onInstalled.addListener(async () => {
-  const result = await browser.storage.local.get('settings');
+  const result = await browser.storage.local.get(['settings', ...STATS_STORAGE_KEYS]);
   if (!result.settings) {
     await browser.storage.local.set({
-      postsScanned: 0,
-      aiDetected: 0,
+      postsScanned: typeof result.postsScanned === 'number' ? result.postsScanned : 0,
+      aiDetected: typeof result.aiDetected === 'number' ? result.aiDetected : 0,
+      postsProcessing: typeof result.postsProcessing === 'number' ? result.postsProcessing : 0,
       settings: defaultUserSettings.settings,
     });
   }
@@ -363,6 +459,14 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 // ── Post analysis handlers ──────────────────────────────────────
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  await markScanStarted();
+  let statsFinalized = false;
+  const finalizeStats = async (aiDetected: boolean) => {
+    if (statsFinalized) return;
+    statsFinalized = true;
+    await markScanFinished(aiDetected);
+  };
+
   const settings = await getDetectionSettings();
   const shouldFetchImages = settings.scanImages && post.images.length > 0;
 
@@ -382,6 +486,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
       payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
     });
+    await finalizeStats(false);
     return;
   }
 
@@ -390,6 +495,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message: 'empty text and no images' },
     });
+    await finalizeStats(false);
     return;
   }
 
@@ -400,11 +506,13 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         type: 'DETECTION_RESULT',
         payload: fakeResponse,
       });
+      await finalizeStats(fakeResponse.verdict === 'likely_ai');
     } else {
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_ERROR',
         payload: { postId: enrichedPost.postId, message: 'fake detection returned no result' },
       });
+      await finalizeStats(false);
     }
     return;
   }
@@ -423,6 +531,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
           type: 'DETECTION_RESULT',
           payload: mapped,
         });
+        await finalizeStats(mapped.verdict === 'likely_ai');
         return;
       } catch {
         // No text fallback for image-only posts
@@ -432,6 +541,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message: 'image detection failed' },
     });
+    await finalizeStats(false);
     return;
   }
 
@@ -442,6 +552,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message: 'empty text' },
     });
+    await finalizeStats(false);
     return;
   }
 
@@ -453,6 +564,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
       payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
     });
+    await finalizeStats(false);
     return;
   }
 
@@ -492,6 +604,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         type: 'DETECTION_RESULT',
         payload: imgResponse,
       });
+      await finalizeStats(imgResponse.verdict === 'likely_ai');
       return;
     }
 
@@ -501,6 +614,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         type: 'DETECTION_LANGUAGE_UNSUPPORTED',
         payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
       });
+      await finalizeStats(false);
       return;
     }
 
@@ -514,12 +628,14 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_RESULT',
       payload: mapped,
     });
+    await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
     const message = err instanceof Error ? err.message : 'network error';
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message },
     });
+    await finalizeStats(false);
   }
 }
 

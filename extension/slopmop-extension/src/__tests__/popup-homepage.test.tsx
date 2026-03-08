@@ -5,8 +5,10 @@ import browser from 'webextension-polyfill';
 
 // ── Mocks ────────────────────────────────────────────────────────
 
-// Track the storage.onChanged listener so tests can simulate auth changes
-let storageChangedCallback: ((changes: Record<string, unknown>) => void) | null = null;
+// Track storage listeners so tests can simulate storage updates.
+let storageChangedCallbacks: Array<
+  (changes: Record<string, unknown>, areaName?: string) => void
+> = [];
 
 vi.mock('webextension-polyfill', () => ({
   default: {
@@ -17,10 +19,12 @@ vi.mock('webextension-polyfill', () => ({
         remove: vi.fn().mockResolvedValue(undefined),
       },
       onChanged: {
-        addListener: vi.fn((cb: (changes: Record<string, unknown>) => void) => {
-          storageChangedCallback = cb;
+        addListener: vi.fn((cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+          storageChangedCallbacks.push(cb);
         }),
-        removeListener: vi.fn(),
+        removeListener: vi.fn((cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+          storageChangedCallbacks = storageChangedCallbacks.filter((listener) => listener !== cb);
+        }),
       },
     },
     identity: {
@@ -113,15 +117,20 @@ function renderHomeWithStorage(storageValues: Record<string, unknown>) {
 describe('Popup Homepage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    storageChangedCallback = null;
+    storageChangedCallbacks = [];
     // Default: signed-in user for most tests
     (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
     });
     // Re-capture storage listener
     (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
-      (cb: (changes: Record<string, unknown>) => void) => {
-        storageChangedCallback = cb;
+      (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+        storageChangedCallbacks.push(cb);
+      },
+    );
+    (browser.storage.onChanged.removeListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+        storageChangedCallbacks = storageChangedCallbacks.filter((listener) => listener !== cb);
       },
     );
   });
@@ -129,13 +138,13 @@ describe('Popup Homepage', () => {
   // ── Header ──────────────────────────────────────────────────
 
   it('should render the SlopMop title and logo', async () => {
-    renderHome();
+    renderHomeWithStorage({ postsProcessing: 3 });
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(screen.getByAltText('SlopMop logo')).toBeInTheDocument();
   });
 
   it('should show the settings gear button', async () => {
-    renderHome();
+    renderHomeWithStorage({ postsProcessing: 3 });
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(screen.getByLabelText('Settings')).toBeInTheDocument();
   });
@@ -255,12 +264,36 @@ describe('Popup Homepage', () => {
       stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
       ignoredSites: [],
     });
-    renderHome();
+    renderHomeWithStorage({ postsProcessing: 3 });
 
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(await screen.findByText('42')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  it('should update scanner stats when local storage changes', async () => {
+    renderHome();
+
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    expect(storageChangedCallbacks.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      for (const callback of storageChangedCallbacks) {
+        callback(
+          {
+            postsScanned: { newValue: 5 },
+            aiDetected: { newValue: 2 },
+            postsProcessing: { newValue: 1 },
+          },
+          'local',
+        );
+      }
+    });
+
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
   });
 
   // ── Disclaimer Banner ───────────────────────────────────────

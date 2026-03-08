@@ -1,9 +1,7 @@
 import { DetectionResponse, ImageDetectionResult, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import { getPatternReasons } from "@src/utils/aiTextPatterns";
-import type { SiteAdapter } from "./adapters/SiteAdapter";
  
-
 
 export class OverlayRenderer {
 
@@ -16,13 +14,10 @@ export class OverlayRenderer {
     private mapToPostText = new Map<PostId, string>()
     // map each postId to latest error text so detailed mode can show it in tooltip.
     private mapToErrorMessage = new Map<PostId, string>()
-    // used to get DOM node from postId
-    private adapter: SiteAdapter;
     private settings: DetectionSettings;
 
 
-    constructor(adapter: SiteAdapter, settings: DetectionSettings) {
-        this.adapter = adapter;
+    constructor(settings: DetectionSettings) {
         this.settings = settings;
     }
 
@@ -78,13 +73,16 @@ export class OverlayRenderer {
     // renders Pending badge for the user.
     // plainText is the extracted post text from PostExtractor.
     // we store it so createTooltip can slice out highlighted spans later
-    renderPending(postId: PostId, plainText: string, onDetectNow?: () => void): void {
+    renderPending(
+        postId: PostId,
+        hostNode: HTMLElement,
+        plainText: string,
+        onDetectNow?: () => void,
+    ): void {
         this.mapToPostText.set(postId, plainText);
-        const postNode = this.findPostNode(postId);
-        if (postNode === null) return;
         const overlay = document.createElement("div");
-        postNode.style.position = "relative";
-        postNode.appendChild(overlay);
+        hostNode.style.position = "relative";
+        hostNode.appendChild(overlay);
         // style the overlay object
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
@@ -544,19 +542,5 @@ export class OverlayRenderer {
         overlay.style.backgroundColor = "#6b7280";
         overlay.style.cursor = "default";
         overlay.textContent = "Scanning...";
-    }
-
-    // scan DOM tree for the postNode given a postId. 
-    // returns the postNode, or null if not found
-    private findPostNode(postId: PostId): HTMLElement | null {
-        // check posts
-        for (const node of this.adapter.findPostNodes(document)) {
-            if (this.adapter.getStablePostId(node) === postId) return node as HTMLElement;
-        }
-        // check comments
-        for (const node of this.adapter.findVisibleCommentNodes(document)) {
-            if (this.adapter.getCommentId(node) === postId) return node as HTMLElement;
-        }
-        return null;
     }
 }

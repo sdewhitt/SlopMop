@@ -46,6 +46,14 @@ export default function Popup() {
   const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
 
+  const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
+    setStats({
+      postsScanned: typeof stored.postsScanned === 'number' ? stored.postsScanned : 0,
+      aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
+      postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
+    });
+  }, []);
+
   useEffect(() => {
     browser.storage.local
       .get([
@@ -61,11 +69,7 @@ export default function Popup() {
         'lastDetectLanguageUnsupported',
       ])
       .then((result) => {
-        setStats({
-          postsScanned: (result.postsScanned as number) || 0,
-          aiDetected: (result.aiDetected as number) || 0,
-          postsProcessing: (result.postsProcessing as number) || 0,
-        });
+        syncStatsFromStorage(result);
         if (result.settings) {
           const merged = { ...defaultSettings, ...(result.settings as Settings) };
           setSettings(merged);
@@ -84,14 +88,29 @@ export default function Popup() {
         const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
         setLanguageUnsupported(unsupported?.message ?? null);
       });
-  }, []);
+  }, [syncStatsFromStorage]);
   // ── Sync settings from Firestore when the user signs in ──────
   const loadSettings = useCallback(async () => {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
-      const local = await browser.storage.local.get('settings');
+      const local = await browser.storage.local.get([
+        'settings',
+        'postsScanned',
+        'aiDetected',
+        'postsProcessing',
+      ]);
       const localSettings = local.settings as Partial<Settings> | undefined;
+      const localStats = {
+        postsScanned: typeof local.postsScanned === 'number' ? local.postsScanned : 0,
+        aiDetected: typeof local.aiDetected === 'number' ? local.aiDetected : 0,
+        postsProcessing: typeof local.postsProcessing === 'number' ? local.postsProcessing : 0,
+      };
+      const mergedStats = {
+        postsScanned: Math.max(remote.stats.postsScanned, localStats.postsScanned),
+        aiDetected: Math.max(remote.stats.aiDetected, localStats.aiDetected),
+        postsProcessing: localStats.postsProcessing,
+      };
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
@@ -107,30 +126,22 @@ export default function Popup() {
       };
       setSettings(merged);
       setEnabled(merged.enabled);
-      setStats(remote.stats);
+      setStats(mergedStats);
       browser.storage.local.set({ settings: merged });
-      browser.storage.local.set({
-        postsScanned: remote.stats.postsScanned,
-        aiDetected: remote.stats.aiDetected,
-        postsProcessing: remote.stats.postsProcessing,
-      });
+      browser.storage.local.set(mergedStats);
     } catch (err) {
       console.error('[Popup] Failed to load Firestore settings:', err);
       const result = await browser.storage.local.get([
         'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
       ]);
-      setStats({
-        postsScanned: (result.postsScanned as number) || 0,
-        aiDetected: (result.aiDetected as number) || 0,
-        postsProcessing: (result.postsProcessing as number) || 0,
-      });
+      syncStatsFromStorage(result);
       if (result.settings) {
         const merged = { ...defaultSettings, ...(result.settings as Settings) };
         setSettings(merged);
         setEnabled(merged.enabled);
       }
     }
-  }, [user]);
+  }, [syncStatsFromStorage, user]);
 
   useEffect(() => {
     loadSettings();
@@ -158,6 +169,31 @@ export default function Popup() {
       } else if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
         setLanguageUnsupported(null);
       }
+    };
+
+    browser.storage.onChanged.addListener(handler);
+    return () => browser.storage.onChanged.removeListener(handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      if (!changes.postsScanned && !changes.aiDetected && !changes.postsProcessing) return;
+
+      setStats((prev) => ({
+        postsScanned:
+          typeof changes.postsScanned?.newValue === 'number'
+            ? changes.postsScanned.newValue
+            : prev.postsScanned,
+        aiDetected:
+          typeof changes.aiDetected?.newValue === 'number'
+            ? changes.aiDetected.newValue
+            : prev.aiDetected,
+        postsProcessing:
+          typeof changes.postsProcessing?.newValue === 'number'
+            ? changes.postsProcessing.newValue
+            : prev.postsProcessing,
+      }));
     };
 
     browser.storage.onChanged.addListener(handler);
