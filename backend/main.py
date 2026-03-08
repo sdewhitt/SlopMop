@@ -12,11 +12,11 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Add nonescape's python package to the path so `from nonescape import ...` works
 sys.path.insert(0, os.path.join(_THIS_DIR, "nonescape", "python"))
-from nonescape import NonescapeClassifierMini, preprocess_image
+from nonescape import NonescapeClassifierMini, preprocess_image# type: ignore
 
 # Add text model to path so we can import the detector class
 sys.path.insert(0, os.path.join(_THIS_DIR, "..", "model_training", "text_model"))
-from text_detector import TextDetectors
+from text_detector import TextDetectors # type: ignore
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
