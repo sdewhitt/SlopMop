@@ -28,15 +28,10 @@ export class PostExtractor {
             : adapter.getCommentTextNode(node);
 
         const rawText = textNode?.innerText?.trim() ?? '';
-        if (!rawText) return null;
         // normalize before classification so repeated whitespace doesn't skew downstream heuristics.
         const normalizedText = this.normalizeText(rawText);
-        if (!normalizedText) return null;
 
-        // TODO: process images into some normalized form after basic functionality is working
-        // convert HTMLImageElement[] into a Array<{imageId, bytesBase64, srcUrl, mimeType}
-        // mimeType means file format
-        // for now, we only grab images from main posts. comments rarely have inline images we care about yet
+        // extract images before the empty-text guard so image-only posts aren't dropped.
         const imageNodes = type === "post" ? adapter.getImageNodes(node) : [];
         const images = imageNodes.map((img) => {
             const srcUrl = img.currentSrc || img.src;
@@ -47,6 +42,9 @@ export class PostExtractor {
                 mimeType: this.mimeTypeFromUrl(srcUrl),
             };
         });
+
+        // drop the post only when there's no text AND no images.
+        if (!normalizedText && images.length === 0) return null;
 
         // classify ContentType
         const contentType = classify(normalizedText, images.length);

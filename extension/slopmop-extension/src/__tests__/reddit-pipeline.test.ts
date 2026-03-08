@@ -140,6 +140,46 @@ describe('Reddit extraction pipeline', () => {
     });
   });
 
+  it('extracts image-only post when there is no text body', () => {
+    const extractor = new PostExtractor();
+    const postNode = document.createElement('article');
+
+    const imageNode = document.createElement('img');
+    imageNode.src = 'https://i.redd.it/image-only.jpg';
+
+    const adapter = createAdapter({
+      getStablePostId: () => 't3_imgonly',
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/imgonly/title/',
+      getTextNode: () => null,
+      getImageNodes: () => [imageNode],
+      getAuthorHandle: () => 'u/imagefan',
+      getTimestampText: () => '5m ago',
+    });
+
+    const extracted = extractor.extract(postNode, adapter, 'post');
+
+    expect(extracted).not.toBeNull();
+    expect(extracted?.contentType).toBe(ContentType.IMAGE);
+    expect(extracted?.text.plain).toBe('');
+    expect(extracted?.images).toHaveLength(1);
+    expect(extracted?.images[0].srcUrl).toBe('https://i.redd.it/image-only.jpg');
+  });
+
+  it('returns null when post has neither text nor images', () => {
+    const extractor = new PostExtractor();
+    const postNode = document.createElement('article');
+
+    const adapter = createAdapter({
+      getStablePostId: () => 't3_empty',
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/empty/title/',
+      getTextNode: () => null,
+      getImageNodes: () => [],
+    });
+
+    const extracted = extractor.extract(postNode, adapter, 'post');
+    expect(extracted).toBeNull();
+  });
+
   it('derives a stable reddit post id from permalink when id attributes are absent', () => {
     const adapter = new RedditAdapter();
     const postNode = document.createElement('article');
@@ -187,6 +227,49 @@ describe('Reddit extraction pipeline', () => {
     expect(overlay?.textContent).toBe('likely_ai (86%)');
   });
 
+  it('renders dual text + image results on the badge for mixed posts', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+
+    const adapter = createAdapter({
+      findPostNodes: () => [postNode],
+      getStablePostId: (node) => (node === postNode ? 't3_dual' : null),
+      findVisibleCommentNodes: () => [],
+    });
+    const renderer = new OverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+    const response: DetectionResponse = {
+      requestId: 'req-dual',
+      postId: 't3_dual',
+      verdict: 'likely_ai',
+      confidence: 0.92,
+      explanation: {
+        summary: 'Text looks AI-generated.',
+        highlights: [],
+        model: { name: 'test-model', version: '1.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 200, inferenceMs: 150 },
+      },
+      imageResult: {
+        verdict: 'likely_human',
+        confidence: 0.15,
+        summary: 'Image appears authentic.',
+        model: { name: 'nonescape-mini', version: '0.1' },
+        timingMs: 300,
+      },
+    };
+
+    renderer.renderPending('t3_dual', 'Some text with image');
+    renderer.renderResult('t3_dual', response);
+
+    const overlay = postNode.lastElementChild as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay?.textContent).toContain('Text: likely_ai (92%)');
+    expect(overlay?.textContent).toContain('Img: likely_human (15%)');
+  });
+
   it('shows the detailed tooltip when hovering the badge in detailed mode', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
@@ -231,6 +314,7 @@ describe('Reddit extraction pipeline', () => {
   });
 
   it('renders a retry button when detection fails', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
 
@@ -251,10 +335,12 @@ describe('Reddit extraction pipeline', () => {
     const overlay = postNode.lastElementChild as HTMLElement | null;
     const retryButton = overlay?.querySelector('button');
 
-    expect(retryButton?.textContent).toBe('Retry');
+    expect(overlay?.textContent).toContain('Error');
+    expect(retryButton?.textContent).toBe(' · Retry');
     retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(overlay?.textContent).toBe('Scanning...');
+    errorSpy.mockRestore();
   });
 
   it('retries analysis with the original extracted payload', () => {
@@ -292,5 +378,43 @@ describe('Reddit extraction pipeline', () => {
     expect(observer.retryAnalyze('t3_retryable')).toBe(true);
     expect(sendAnalyze).toHaveBeenCalledTimes(2);
     expect(sendAnalyze.mock.calls[1][0]).toEqual(originalPayload);
+  });
+
+  it('does not block image-only posts with unsupported language in manual mode', () => {
+    const extractor = new PostExtractor();
+    const postNode = document.createElement('article');
+
+    // No text node — image-only post
+    const imageNode = document.createElement('img');
+    imageNode.src = 'https://i.redd.it/some-image.jpg';
+
+    const adapter = createAdapter({
+      getStablePostId: () => 't3_imglang',
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/imglang/title/',
+      getTextNode: () => null,
+      getImageNodes: () => [imageNode],
+      getAuthorHandle: () => 'u/imguser',
+      getTimestampText: () => 'just now',
+    });
+    const renderPending = vi.fn();
+    const renderError = vi.fn();
+    const sendAnalyze = vi.fn();
+    const observer = new FeedObserver(
+      adapter,
+      extractor,
+      { renderPending, renderError } as unknown as OverlayRenderer,
+      { sendAnalyze } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: false, // manual mode
+      },
+    );
+
+    (observer as any).handleCandidatePost(postNode, 'post');
+
+    // Image-only post should get a Detect Now button (renderPending with callback),
+    // NOT an unsupported language error.
+    expect(renderError).not.toHaveBeenCalled();
+    expect(renderPending).toHaveBeenCalledTimes(1);
   });
 });

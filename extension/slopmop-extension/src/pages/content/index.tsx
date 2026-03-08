@@ -63,6 +63,10 @@ function createPanel() {
 
   document.body.appendChild(panelRoot);
 
+  // Prevent scroll events from reaching the host page
+  shadow.addEventListener('wheel', (e) => e.stopPropagation(), { passive: false });
+  shadow.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: false });
+
   // Mount the React tree
   reactRoot = createRoot(container);
   reactRoot.render(

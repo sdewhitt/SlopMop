@@ -16,13 +16,13 @@ import {
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
-import { detectText, type DetectResponse } from '@src/lib/api';
+import { detectText, detectImage, type DetectResponse, type DetectImageResponse } from '@src/lib/api';
 import {
   isTextLanguageSupported,
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
-import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+import type { DetectionResponse, ImageDetectionResult, NormalizedPostContent } from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import {
   getIgnoredSites as getIgnoredSitesLocal,
@@ -43,6 +43,28 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
   const stored = await browser.storage.local.get('settings');
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
   return { ...defaultUserSettings.settings, ...saved };
+}
+
+// Backend text length limit (must match backend MAX_TEXT_LENGTH).
+const MAX_TEXT_LENGTH = 5000;
+
+// Serialise API calls so we don't overwhelm the backend.
+const analysisQueue: Array<() => Promise<void>> = [];
+let analysisRunning = false;
+
+function enqueueAnalysis(task: () => Promise<void>): void {
+  analysisQueue.push(task);
+  drainAnalysisQueue();
+}
+
+async function drainAnalysisQueue(): Promise<void> {
+  if (analysisRunning) return;
+  analysisRunning = true;
+  while (analysisQueue.length > 0) {
+    const next = analysisQueue.shift()!;
+    await next();
+  }
+  analysisRunning = false;
 }
 
 // ── Firebase Auth ────────────────────────────────────────────────
@@ -353,8 +375,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
+  const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
-  if (!isTextLanguageSupported(plainText)) {
+  if (!hasImages && !isTextLanguageSupported(plainText)) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
       payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
@@ -362,10 +385,10 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  if (!plainText.trim()) {
+  if (!plainText.trim() && !hasImages) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
-      payload: { postId: enrichedPost.postId, message: 'empty text' },
+      payload: { postId: enrichedPost.postId, message: 'empty text and no images' },
     });
     return;
   }
@@ -386,11 +409,106 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
+  // IMAGE-only posts: use image detection only
+  if (enrichedPost.contentType === 'IMAGE') {
+    const firstImage = enrichedImages.find((img) => img.bytesBase64);
+    if (firstImage) {
+      try {
+        const start = performance.now();
+        const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+        const elapsedMs = Math.round(performance.now() - start);
+        const mapped = mapToDetectionResponse(imgResult, enrichedPost.postId, elapsedMs);
+
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: mapped,
+        });
+        return;
+      } catch {
+        // No text fallback for image-only posts
+      }
+    }
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'image detection failed' },
+    });
+    return;
+  }
+
+  // TEXT and MIXED posts: run text detection (primary).
+  // For MIXED posts with images, also run image detection in parallel.
+  if (!plainText.trim()) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'empty text' },
+    });
+    return;
+  }
+
+  const textLangSupported = isTextLanguageSupported(plainText);
+
+  // TEXT-only posts with unsupported language: block entirely.
+  if (!textLangSupported && !hasImages) {
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+      payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+    });
+    return;
+  }
+
   try {
-    const start = performance.now();
-    const apiResult = await detectText(plainText);
-    const elapsedMs = Math.round(performance.now() - start);
-    const mapped = mapToDetectionResponse(apiResult, enrichedPost.postId, elapsedMs);
+    // Fire text detection only when language is supported;
+    // for MIXED with fetched images, also fire image detection in parallel.
+    const firstImage = hasImages ? enrichedImages.find((img) => img.bytesBase64) : undefined;
+
+    const textPromise = textLangSupported
+      ? (async () => {
+          const start = performance.now();
+          const result = await detectText(plainText);
+          return { result, elapsedMs: Math.round(performance.now() - start) };
+        })()
+      : Promise.resolve(null);
+
+    const imagePromise = firstImage
+      ? (async () => {
+          try {
+            const start = performance.now();
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+            return { result, elapsedMs: Math.round(performance.now() - start) };
+          } catch {
+            return null; // image detection is best-effort
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [textResult, imageResult] = await Promise.all([textPromise, imagePromise]);
+
+    // If text was skipped (unsupported language) but image succeeded, return image-only result.
+    // Use the image result as the primary verdict (don't also set imageResult, which would
+    // cause the renderer to show the same image data twice).
+    if (!textResult && imageResult) {
+      const imgResponse = mapToDetectionResponse(imageResult.result, enrichedPost.postId, imageResult.elapsedMs);
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: imgResponse,
+      });
+      return;
+    }
+
+    // If both were skipped, report unsupported language.
+    if (!textResult && !imageResult) {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+        payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+      });
+      return;
+    }
+
+    const mapped = mapToDetectionResponse(textResult!.result, enrichedPost.postId, textResult!.elapsedMs);
+
+    if (imageResult) {
+      mapped.imageResult = mapToImageDetectionResult(imageResult.result, imageResult.elapsedMs);
+    }
 
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_RESULT',
@@ -503,7 +621,7 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
 }
 
 function mapToDetectionResponse(
-  apiResult: DetectResponse,
+  apiResult: DetectResponse | DetectImageResponse,
   postId: string,
   timingMs: number,
 ): DetectionResponse {
@@ -531,6 +649,29 @@ function mapToDetectionResponse(
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
     },
+  };
+}
+
+function mapToImageDetectionResult(
+  apiResult: DetectImageResponse,
+  timingMs: number,
+): ImageDetectionResult {
+  const confidencePercent = apiResult.confidence <= 1
+    ? apiResult.confidence * 100
+    : apiResult.confidence;
+
+  const verdict: ImageDetectionResult['verdict'] = confidencePercent > 60
+    ? 'likely_ai'
+    : confidencePercent >= 40
+      ? 'unknown'
+      : 'likely_human';
+
+  return {
+    verdict,
+    confidence: apiResult.confidence,
+    summary: apiResult.explanation,
+    model: { name: 'nonescape-mini', version: '0.1' },
+    timingMs,
   };
 }
 

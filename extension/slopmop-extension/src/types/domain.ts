@@ -57,10 +57,20 @@ export interface DetectionRequest {
     }
 }
 
+export type Verdict = "likely_ai" | "likely_human" | "unknown";
+
+export interface ImageDetectionResult {
+    verdict: Verdict;
+    confidence: number;
+    summary: string;
+    model: { name: string; version: string };
+    timingMs: number;
+}
+
 export interface DetectionResponse {
     requestId: string;
     postId: PostId;
-    verdict: "likely_ai" | "likely_human" | "unknown";
+    verdict: Verdict;
     confidence: number;
     explanation: {
         summary: string;
@@ -81,7 +91,8 @@ export interface DetectionResponse {
             totalMs: number;
             inferenceMs: number;
         }
-    }
+    };
+    imageResult?: ImageDetectionResult;
 }
 export interface FeedbackReport {
     installId: string;
