@@ -48,6 +48,29 @@ vi.mock('firebase/auth', () => ({
   onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
+vi.mock('../lib/firestoreProxy', () => ({
+  getOrCreateUserSettings: vi.fn().mockResolvedValue({
+    settings: {
+      sensitivity: 'medium',
+      highlightStyle: 'badge',
+      showNotifications: true,
+      automaticScanning: false,
+      platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+      enabled: true,
+      scanText: true,
+      scanImages: false,
+      scanComments: 'auto_top_n',
+      uiMode: 'simple',
+    },
+    stats: { postsScanned: 0, aiDetected: 0, postsProcessing: 0 },
+    ignoredSites: [],
+  }),
+  updateDetectionSettings: vi.fn().mockResolvedValue(undefined),
+  resetStats: vi.fn().mockResolvedValue(undefined),
+  resetSettings: vi.fn().mockResolvedValue(undefined),
+  setIgnoredSitesFirestore: vi.fn().mockResolvedValue(undefined),
+}));
+
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
@@ -214,18 +237,23 @@ describe('Popup Homepage', () => {
   });
 
   it('should display stat values loaded from Firestore', async () => {
-    // Mock sendMessage to return Firestore settings via the background proxy
-    (browser.runtime.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
-      success: true,
-      data: {
-        settings: {
-          sensitivity: 'medium',
-          highlightStyle: 'badge',
-          showNotifications: true,
-          platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
-        },
-        stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
+    // Override getOrCreateUserSettings to return non-zero stats
+    const { getOrCreateUserSettings } = await import('../lib/firestoreProxy');
+    (getOrCreateUserSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      settings: {
+        sensitivity: 'medium',
+        highlightStyle: 'badge',
+        showNotifications: true,
+        automaticScanning: false,
+        platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+        enabled: true,
+        scanText: true,
+        scanImages: false,
+        scanComments: 'auto_top_n',
+        uiMode: 'simple',
       },
+      stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
+      ignoredSites: [],
     });
     renderHome();
 

@@ -314,6 +314,7 @@ describe('Reddit extraction pipeline', () => {
   });
 
   it('renders a retry button when detection fails', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
 
@@ -339,6 +340,7 @@ describe('Reddit extraction pipeline', () => {
     retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(overlay?.textContent).toBe('Scanning...');
+    errorSpy.mockRestore();
   });
 
   it('retries analysis with the original extracted payload', () => {

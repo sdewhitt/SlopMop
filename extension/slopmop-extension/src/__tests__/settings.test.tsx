@@ -51,6 +51,29 @@ vi.mock('firebase/auth', () => ({
   onAuthStateChanged: vi.fn(() => vi.fn()),
 }));
 
+vi.mock('../lib/firestoreProxy', () => ({
+  getOrCreateUserSettings: vi.fn().mockResolvedValue({
+    settings: {
+      sensitivity: 'medium',
+      highlightStyle: 'badge',
+      showNotifications: true,
+      automaticScanning: false,
+      platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+      enabled: true,
+      scanText: true,
+      scanImages: false,
+      scanComments: 'auto_top_n',
+      uiMode: 'simple',
+    },
+    stats: { postsScanned: 0, aiDetected: 0, postsProcessing: 0 },
+    ignoredSites: [],
+  }),
+  updateDetectionSettings: vi.fn().mockResolvedValue(undefined),
+  resetStats: vi.fn().mockResolvedValue(undefined),
+  resetSettings: vi.fn().mockResolvedValue(undefined),
+  setIgnoredSitesFirestore: vi.fn().mockResolvedValue(undefined),
+}));
+
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
 import React from 'react';
