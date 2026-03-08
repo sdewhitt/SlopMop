@@ -1,10 +1,23 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
+
+# ── Backend server ──────────────────────────────────────────────
 fastapi
 uvicorn
 pytest
 httpx
-torch
+
+# ── ML / shared (nonescape + text model + training) ────────────
+torch>=2.0.0
 torchvision
-transformers
+transformers>=4.30.0
 safetensors
 Pillow>=9.0.0
+regex>=3.0.0
+datasets>=2.14.0
+tqdm>=4.65.0
+numpy>=1.24.0
+tensorboard>=2.13.0
+nlpaug>=1.1.11
+
+# ── ONNX export (training only) ────────────────────────────────
+onnx>=1.14.0

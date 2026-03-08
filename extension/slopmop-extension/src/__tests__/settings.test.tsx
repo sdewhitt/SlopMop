@@ -176,8 +176,8 @@ describe('Popup Settings Rendering', () => {
     const settingsButton = screen.getByLabelText('Settings');
     await user.click(settingsButton);
 
-    // Check for section headers
-    expect(screen.getByText(/Detection/i)).toBeInTheDocument();
+    // Check for section headers (use exact text to avoid matching substrings elsewhere)
+    expect(screen.getByText('Detection')).toBeInTheDocument();
     expect(screen.getByText(/Platforms/i)).toBeInTheDocument();
     expect(screen.getByText(/Data/i)).toBeInTheDocument();
     expect(screen.getByText(/Account/i)).toBeInTheDocument();

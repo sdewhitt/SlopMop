@@ -114,15 +114,28 @@ export class RedditAdapter implements SiteAdapter {
   }
 
   getImageNodes(postNode: Element): HTMLImageElement[] {
-    // Phase 1 can return []; keeping discoverability here is useful for later.
     const imgs = Array.from(postNode.querySelectorAll<HTMLImageElement>("img"));
 
     return imgs.filter((img) => {
       const src = img.currentSrc || img.src || "";
       if (!src) return false;
-      if (src.startsWith("data:")) return false; // often tiny placeholders
+      if (src.startsWith("data:")) return false; // tiny placeholders
       if (src.includes("emoji")) return false;
       if (src.includes("award")) return false;
+
+      // Reddit non-content images: avatars, thumbnails, icons, flairs
+      if (src.includes("styles.redditmedia.com")) return false;
+      if (src.includes("www.redditstatic.com")) return false;
+      if (src.includes("/avatar/")) return false;
+      if (src.includes("flair")) return false;
+
+      // Only accept images hosted on Reddit's image CDN as actual content
+      const isContentHost =
+        src.includes("i.redd.it") ||
+        src.includes("preview.redd.it") ||
+        src.includes("external-preview.redd.it") ||
+        src.includes("i.imgur.com");
+      if (!isContentHost) return false;
 
       // Filter likely avatars/icons.
       const w = img.naturalWidth || img.width || 0;

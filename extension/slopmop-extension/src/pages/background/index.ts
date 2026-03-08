@@ -22,7 +22,7 @@ import {
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
-import type { DetectionResponse, NormalizedPostContent } from '@src/types/domain';
+import type { DetectionResponse, ImageDetectionResult, NormalizedPostContent } from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import {
   getIgnoredSites as getIgnoredSitesLocal,
@@ -409,8 +409,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  // Route IMAGE and MIXED posts through image detection first
-  if (enrichedPost.contentType === 'IMAGE' || enrichedPost.contentType === 'MIXED') {
+  // IMAGE-only posts: use image detection only
+  if (enrichedPost.contentType === 'IMAGE') {
     const firstImage = enrichedImages.find((img) => img.bytesBase64);
     if (firstImage) {
       try {
@@ -425,12 +425,18 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         });
         return;
       } catch {
-        // Fall through to text detection if image detection fails
+        // No text fallback for image-only posts
       }
     }
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_ERROR',
+      payload: { postId: enrichedPost.postId, message: 'image detection failed' },
+    });
+    return;
   }
 
-  // Text detection for TEXT posts and MIXED fallback
+  // TEXT and MIXED posts: run text detection (primary).
+  // For MIXED posts with images, also run image detection in parallel.
   if (!plainText.trim()) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
@@ -439,7 +445,10 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  if (!isTextLanguageSupported(plainText)) {
+  const textLangSupported = isTextLanguageSupported(plainText);
+
+  // TEXT-only posts with unsupported language: block entirely.
+  if (!textLangSupported && !hasImages) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
       payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
@@ -448,10 +457,58 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   }
 
   try {
-    const start = performance.now();
-    const apiResult = await detectText(plainText);
-    const elapsedMs = Math.round(performance.now() - start);
-    const mapped = mapToDetectionResponse(apiResult, enrichedPost.postId, elapsedMs);
+    // Fire text detection only when language is supported;
+    // for MIXED with fetched images, also fire image detection in parallel.
+    const firstImage = hasImages ? enrichedImages.find((img) => img.bytesBase64) : undefined;
+
+    const textPromise = textLangSupported
+      ? (async () => {
+          const start = performance.now();
+          const result = await detectText(plainText);
+          return { result, elapsedMs: Math.round(performance.now() - start) };
+        })()
+      : Promise.resolve(null);
+
+    const imagePromise = firstImage
+      ? (async () => {
+          try {
+            const start = performance.now();
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+            return { result, elapsedMs: Math.round(performance.now() - start) };
+          } catch {
+            return null; // image detection is best-effort
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [textResult, imageResult] = await Promise.all([textPromise, imagePromise]);
+
+    // If text was skipped (unsupported language) but image succeeded, return image-only result.
+    // Use the image result as the primary verdict (don't also set imageResult, which would
+    // cause the renderer to show the same image data twice).
+    if (!textResult && imageResult) {
+      const imgResponse = mapToDetectionResponse(imageResult.result, enrichedPost.postId, imageResult.elapsedMs);
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: imgResponse,
+      });
+      return;
+    }
+
+    // If both were skipped, report unsupported language.
+    if (!textResult && !imageResult) {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_LANGUAGE_UNSUPPORTED',
+        payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+      });
+      return;
+    }
+
+    const mapped = mapToDetectionResponse(textResult!.result, enrichedPost.postId, textResult!.elapsedMs);
+
+    if (imageResult) {
+      mapped.imageResult = mapToImageDetectionResult(imageResult.result, imageResult.elapsedMs);
+    }
 
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_RESULT',
@@ -592,6 +649,29 @@ function mapToDetectionResponse(
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
     },
+  };
+}
+
+function mapToImageDetectionResult(
+  apiResult: DetectImageResponse,
+  timingMs: number,
+): ImageDetectionResult {
+  const confidencePercent = apiResult.confidence <= 1
+    ? apiResult.confidence * 100
+    : apiResult.confidence;
+
+  const verdict: ImageDetectionResult['verdict'] = confidencePercent > 60
+    ? 'likely_ai'
+    : confidencePercent >= 40
+      ? 'unknown'
+      : 'likely_human';
+
+  return {
+    verdict,
+    confidence: apiResult.confidence,
+    summary: apiResult.explanation,
+    model: { name: 'nonescape-mini', version: '0.1' },
+    timingMs,
   };
 }
 

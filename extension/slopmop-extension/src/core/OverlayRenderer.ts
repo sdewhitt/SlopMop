@@ -1,4 +1,4 @@
-import { DetectionResponse, PostId } from "@src/types/domain";
+import { DetectionResponse, ImageDetectionResult, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import { getPatternReasons } from "@src/utils/aiTextPatterns";
 import type { SiteAdapter } from "./adapters/SiteAdapter";
@@ -52,7 +52,12 @@ export class OverlayRenderer {
             overlay.style.padding = "6px 12px";
         }
 
-        overlay.textContent = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
+        const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
+        if (res.imageResult) {
+            overlay.textContent = `Text: ${textLabel} · Img: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+        } else {
+            overlay.textContent = textLabel;
+        }
 
         let tooltip: HTMLElement | null = null;
         const postText = this.mapToPostText.get(postId) ?? "";
@@ -229,12 +234,19 @@ export class OverlayRenderer {
             marginBottom: "8px",
         });
         header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        if (res.imageResult) {
+            header.textContent = `Text: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        }
         tip.appendChild(header);
 
         const summary = document.createElement("div");
         Object.assign(summary.style, { fontSize: "14px" });
         summary.textContent = res.explanation.summary;
         tip.appendChild(summary);
+
+        if (res.imageResult) {
+            this.appendImageSection(tip, res.imageResult, "16px", "14px");
+        }
 
         return tip;
     }
@@ -281,7 +293,9 @@ export class OverlayRenderer {
             fontSize: "14px",
             marginBottom: "6px",
         });
-        header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        header.textContent = res.imageResult
+            ? `Text: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`
+            : `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
         tip.appendChild(header);
 
         // confidence progress bar
@@ -407,6 +421,10 @@ export class OverlayRenderer {
         }
         tip.appendChild(meta);
 
+        if (res.imageResult) {
+            this.appendImageSection(tip, res.imageResult, "13px", "11px");
+        }
+
         return tip;
     }
 
@@ -445,6 +463,72 @@ export class OverlayRenderer {
         tip.appendChild(body);
 
         return tip;
+    }
+
+    private appendImageSection(
+        container: HTMLElement,
+        imgRes: ImageDetectionResult,
+        headerSize: string,
+        bodySize: string,
+    ): void {
+        const verdictLabel: Record<ImageDetectionResult["verdict"], string> = {
+            likely_ai: "Likely AI-generated",
+            likely_human: "Likely authentic",
+            unknown: "Inconclusive",
+        };
+
+        const section = document.createElement("div");
+        Object.assign(section.style, {
+            borderTop: "1px solid #374151",
+            paddingTop: "8px",
+            marginTop: "8px",
+        });
+
+        const imgHeader = document.createElement("div");
+        Object.assign(imgHeader.style, {
+            fontWeight: "700",
+            fontSize: headerSize,
+            marginBottom: "4px",
+        });
+        imgHeader.textContent = `Image: ${Math.round(imgRes.confidence * 100)}% — ${verdictLabel[imgRes.verdict]}`;
+        section.appendChild(imgHeader);
+
+        const pct = Math.round(imgRes.confidence * 100);
+        const barColor = pct >= 70 ? "#ef4444" : pct >= 40 ? "#f59e0b" : "#22c55e";
+        const track = document.createElement("div");
+        Object.assign(track.style, {
+            width: "100%",
+            height: "5px",
+            backgroundColor: "#374151",
+            borderRadius: "3px",
+            marginBottom: "6px",
+            overflow: "hidden",
+        });
+        const fill = document.createElement("div");
+        Object.assign(fill.style, {
+            width: `${pct}%`,
+            height: "100%",
+            backgroundColor: barColor,
+            borderRadius: "3px",
+        });
+        track.appendChild(fill);
+        section.appendChild(track);
+
+        const imgSummary = document.createElement("div");
+        Object.assign(imgSummary.style, { fontSize: bodySize, color: "#d1d5db" });
+        imgSummary.textContent = imgRes.summary;
+        section.appendChild(imgSummary);
+
+        const imgMeta = document.createElement("div");
+        Object.assign(imgMeta.style, {
+            fontSize: "10px",
+            color: "#9ca3af",
+            marginTop: "4px",
+        });
+        imgMeta.textContent = `Model: ${imgRes.model.name} v${imgRes.model.version} · ${imgRes.timingMs}ms`;
+        section.appendChild(imgMeta);
+
+        container.appendChild(section);
     }
 
     private resetOverlayInteractions(overlay: HTMLElement): void {

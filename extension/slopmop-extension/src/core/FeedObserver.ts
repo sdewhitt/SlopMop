@@ -197,8 +197,9 @@ export class FeedObserver {
             return;
         }
 
-        // manual mode: if language unsupported, show badge only (no Detect Now button).
-        if (!isTextLanguageSupported(extracted.text.plain)) {
+        // manual mode: if language unsupported AND post is text-only, show badge only (no Detect Now button).
+        // IMAGE and MIXED posts can still be analyzed via image detection.
+        if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain)) {
             this.overlay.renderPending(extracted.postId, extracted.text.plain);
             this.overlay.renderError(extracted.postId, UNSUPPORTED_LANGUAGE_BADGE);
             return;

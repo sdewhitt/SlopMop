@@ -1,14 +1,4 @@
-# install by running: pip3 install -r requirements.txt
-
-# model training & text detection
-torch>=2.0.0
-transformers>=4.30.0
-regex>=3.0.0
-datasets>=2.14.0
-tqdm>=4.65.0
-tensorboard>=2.13.0
-numpy>=1.24.0
-nlpaug>=1.1.11
-
-# ONNX export & inference
-onnx>=1.14.0
+# All dependencies are consolidated in backend/requirements.txt.
+# Use the backend virtual environment for both serving and training:
+#   pip install -r ../../backend/requirements.txt
+-r ../../backend/requirements.txt

@@ -16,7 +16,7 @@ const MIN_TEXT_LENGTH_FOR_DETECTION = 10;
 /**
  * Only treat as unsupported when the top language is not supported AND franc's confidence is at least this (0–1).
  */
-const UNSUPPORTED_CONFIDENCE_THRESHOLD = 0.6;
+const UNSUPPORTED_CONFIDENCE_THRESHOLD = 0.85;
 
 /**
  * Detects the language of the text (ISO 639-3 code).

@@ -8,9 +8,15 @@ import io
 from PIL import Image
 import torch
 
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Add nonescape's python package to the path so `from nonescape import ...` works
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "nonescape", "python"))
+sys.path.insert(0, os.path.join(_THIS_DIR, "nonescape", "python"))
 from nonescape import NonescapeClassifierMini, preprocess_image
+
+# Add text model to path so we can import the detector class
+sys.path.insert(0, os.path.join(_THIS_DIR, "..", "model_training", "text_model"))
+from text_detector import TextDetectors
 
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
@@ -26,13 +32,31 @@ app.add_middleware(
 
 # ── Load image detection model once at startup ─────────────────
 MODEL_PATH = os.path.join(
-    os.path.dirname(__file__),
+    _THIS_DIR,
     "nonescape",
     "nonescape-mini-v0.safetensors",
 )
 
 image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
 image_model.eval()
+
+# ── Load text detection model once at startup ──────────────────
+TEXT_MODEL_WEIGHTS = os.path.join(
+    _THIS_DIR,
+    "..",
+    "model_training",
+    "text_model",
+    "best_text_detector_smaller.pt",
+)
+
+text_detector = TextDetectors()
+if os.path.exists(TEXT_MODEL_WEIGHTS):
+    state = torch.load(TEXT_MODEL_WEIGHTS, map_location=text_detector.device)
+    text_detector.model.load_state_dict(state, strict=True)
+    text_detector.model.eval()
+    print(f"Loaded text model weights from {TEXT_MODEL_WEIGHTS}")
+else:
+    print(f"WARNING: No text model weights at {TEXT_MODEL_WEIGHTS}, using base model")
 
 MAX_TEXT_LENGTH = 5000
 
@@ -63,23 +87,14 @@ def root():
     return {"status": "ok", "message": "SlopMop Detection API"}
 
 
-# helper function to score text
-def score_text(text:str) -> tuple[float, str]:
-    # convert text to lowercase for mock heuristic
-    clean_lowered_text = text.lower()
-
-    # count ai-ish phrases using a list of common ai-ish phrases
-    ai_markers = ["in conclusion", "furthermore", "overall", "additionally", "as an ai"]
-    marker_count = sum(1 for marker in ai_markers if marker in clean_lowered_text)
-
-    # base confidence is 0.45 then increases by 0.1 for each ai marker found
-    confidence = 0.45 + (marker_count * 0.1)
-    confidence = max(0.0, min(confidence, 0.99))
-    confidence = round(confidence, 2)
-
-    # label is "ai" if confidence is >= 0.6
-    label = "ai" if confidence >= 0.6 else "human"
-    return confidence, label
+# helper function to score text using the trained model
+def score_text(text: str) -> tuple[float, str]:
+    confidence, label = text_detector.calculate_confidence(text, clean=True)
+    # calculate_confidence returns float 0..1 and label "human"/"mixed"/"ai"
+    # normalize label to "ai" or "human" for the API response
+    if label == "mixed":
+        label = "ai" if confidence >= 0.5 else "human"
+    return round(confidence, 4), label
 
 def generate_explanation(confidence: float, label: str) -> str:
     if label == "ai":
