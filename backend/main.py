@@ -41,13 +41,26 @@ image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
 image_model.eval()
 
 # ── Load text detection model once at startup ──────────────────
-TEXT_MODEL_WEIGHTS = os.path.join(
-    _THIS_DIR,
-    "..",
-    "model_training",
-    "text_model",
-    "best_text_detector_smaller.pt",
-)
+TEXT_MODEL_FILENAME = "best_text_detector_smaller.pt"
+HF_TEXT_MODEL_REPO = os.environ.get("HF_TEXT_MODEL_REPO", "").strip()
+
+if HF_TEXT_MODEL_REPO:
+    from huggingface_hub import hf_hub_download
+    print(f"[SlopMop] Downloading text model from Hugging Face ({HF_TEXT_MODEL_REPO})...", flush=True)
+    TEXT_MODEL_WEIGHTS = hf_hub_download(
+        repo_id=HF_TEXT_MODEL_REPO,
+        filename=TEXT_MODEL_FILENAME,
+        local_dir=os.path.join(_THIS_DIR, "..", "model_training", "text_model"),
+    )
+    print(f"[SlopMop] Text model downloaded: {TEXT_MODEL_WEIGHTS}", flush=True)
+else:
+    TEXT_MODEL_WEIGHTS = os.path.join(
+        _THIS_DIR,
+        "..",
+        "model_training",
+        "text_model",
+        TEXT_MODEL_FILENAME,
+    )
 
 text_detector = TextDetectors()
 if os.path.exists(TEXT_MODEL_WEIGHTS):
