@@ -15,6 +15,7 @@ export interface PlatformToggles {
   facebook: boolean;
   youtube: boolean;
   linkedin: boolean;
+  instagram: boolean;
 }
 
 /** Extension detection preferences persisted to Firestore. */
@@ -66,6 +67,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
       facebook: true,
       youtube: true,
       linkedin: true,
+      instagram: true,
     },
     enabled: true,
     scanText: true,

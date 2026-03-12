@@ -21,6 +21,14 @@ export class OverlayRenderer {
         this.settings = settings;
     }
 
+    protected getBadgePosition(): Record<string, string> {
+        return { bottom: "8px", right: "8px" };
+    }
+
+    protected getTooltipPosition(): Record<string, string> {
+        return { bottom: "calc(100% + 8px)", right: "0" };
+    }
+
 
     // render DetectionResponse as a badge on the page
     // for now, start with basic appearance, then we can match the UI mockups
@@ -87,8 +95,7 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            bottom: "8px",
-            right: "8px",
+            ...this.getBadgePosition(),
             padding: isSimple ? "6px 12px" : "4px 8px",
             borderRadius: "4px",
             fontSize: isSimple ? "14px" : "12px",
@@ -210,8 +217,7 @@ export class OverlayRenderer {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
             position: "absolute",
-            bottom: "calc(100% + 8px)",
-            right: "0",
+            ...this.getTooltipPosition(),
             minWidth: "200px",
             maxWidth: "300px",
             padding: "14px",
@@ -261,8 +267,7 @@ export class OverlayRenderer {
         // maxHeight + overflowY: "auto" prevents it from growing taller than the viewport
         Object.assign(tip.style, {
             position: "absolute",
-            bottom: "calc(100% + 8px)", // float above the badge with 8px gap
-            right: "0", // right-align with the badge so it doesn't overflow offscreen
+            ...this.getTooltipPosition(),
             minWidth: hasHighlights ? "320px" : "240px",
             maxWidth: hasHighlights ? "420px" : "300px",
             maxHeight: "400px",
@@ -430,8 +435,7 @@ export class OverlayRenderer {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
             position: "absolute",
-            bottom: "calc(100% + 8px)",
-            right: "0",
+            ...this.getTooltipPosition(),
             minWidth: "240px",
             maxWidth: "320px",
             padding: "12px",

@@ -24,7 +24,9 @@
     "https://i.redd.it/*",
     "https://preview.redd.it/*",
     "https://external-preview.redd.it/*",
-    "https://i.imgur.com/*"
+    "https://i.imgur.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*"
   ],  
   "content_scripts": [
     {
