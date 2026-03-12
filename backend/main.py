@@ -31,11 +31,24 @@ app.add_middleware(
 )
 
 # ── Load image detection model once at startup ─────────────────
-MODEL_PATH = os.path.join(
-    _THIS_DIR,
-    "nonescape",
-    "nonescape-mini-v0.safetensors",
-)
+IMAGE_MODEL_FILENAME = os.environ.get("HF_IMAGE_MODEL_FILENAME", "nonescape-mini-v0.safetensors").strip() or "nonescape-mini-v0.safetensors"
+HF_IMAGE_MODEL_REPO = os.environ.get("HF_IMAGE_MODEL_REPO", "").strip()
+
+if HF_IMAGE_MODEL_REPO:
+    from huggingface_hub import hf_hub_download
+    print(f"[SlopMop] Downloading image model from Hugging Face ({HF_IMAGE_MODEL_REPO})...", flush=True)
+    MODEL_PATH = hf_hub_download(
+        repo_id=HF_IMAGE_MODEL_REPO,
+        filename=IMAGE_MODEL_FILENAME,
+        local_dir=os.path.join(_THIS_DIR, "nonescape"),
+    )
+    print(f"[SlopMop] Image model downloaded: {MODEL_PATH}", flush=True)
+else:
+    MODEL_PATH = os.path.join(
+        _THIS_DIR,
+        "nonescape",
+        IMAGE_MODEL_FILENAME,
+    )
 
 image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
 image_model.eval()
