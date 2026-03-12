@@ -139,8 +139,14 @@ export class FeedObserver {
         // Scan for comments
         if (this.settings.scanComments !== "off") {
             // TODO: add limit to settings and read limit from settings
-            const maxComments = 20
-            const commentNodes = this.adapter.findVisibleCommentNodes(document, maxComments);
+            const maxComments = 20;
+            const rawCommentNodes = this.adapter.findVisibleCommentNodes(
+                document,
+                this.settings.scanComments === "auto_top_n" ? Number.MAX_SAFE_INTEGER : maxComments,
+            );
+            const commentNodes = this.settings.scanComments === "auto_top_n"
+                ? this.filterTopLevelCommentNodes(rawCommentNodes).slice(0, maxComments)
+                : rawCommentNodes;
             numComments = commentNodes.length;
             for (const node of commentNodes) {
                 this.handleCandidatePost(node, "comment");
@@ -192,7 +198,7 @@ export class FeedObserver {
 
         if (this.settings.automaticScanning) {
             // automatic mode: render scanning state immediately and dispatch analysis now.
-            this.overlay.renderPending(extracted.postId, extracted.text.plain);
+            this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain);
             this.dispatchAnalyze(extracted);
             return;
         }
@@ -201,13 +207,13 @@ export class FeedObserver {
         // IMAGE and MIXED posts can still be analyzed via image detection.
         if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain)) {
             const langInfo = getLanguageSupportInfo(extracted.text.plain);
-            this.overlay.renderPending(extracted.postId, extracted.text.plain);
+            this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain);
             this.overlay.renderError(extracted.postId, buildUnsupportedBadge(langInfo));
             return;
         }
 
         // manual mode: render Detect Now button and wait for user click.
-        this.overlay.renderPending(extracted.postId, extracted.text.plain, () => {
+        this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain, () => {
             this.dispatchAnalyze(extracted);
         });
     }
@@ -275,5 +281,17 @@ export class FeedObserver {
         }
 
         return true;
+    }
+
+    private filterTopLevelCommentNodes(nodes: Element[]): Element[] {
+        const nodeSet = new Set(nodes);
+        return nodes.filter((node) => {
+            let parent = node.parentElement;
+            while (parent) {
+                if (nodeSet.has(parent)) return false;
+                parent = parent.parentElement;
+            }
+            return true;
+        });
     }
 }

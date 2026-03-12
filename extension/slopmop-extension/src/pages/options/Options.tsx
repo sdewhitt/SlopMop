@@ -72,7 +72,7 @@ export default function Options() {
   };
 
   const resetStats = () => {
-    browser.storage.local.set({ postsScanned: 0, aiDetected: 0 });
+    browser.storage.local.set({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
     flashSaved();
   };
 

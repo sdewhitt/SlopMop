@@ -7,6 +7,7 @@ pytest
 httpx
 
 # ── ML / shared (nonescape + text model + training) ────────────
+huggingface_hub
 torch>=2.0.0
 torchvision
 transformers>=4.30.0

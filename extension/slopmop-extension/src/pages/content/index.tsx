@@ -157,6 +157,7 @@ function startObserver(settings: DetectionSettings): void {
   }
 
   const extractor = new PostExtractor();
+  const overlay = new OverlayRenderer(settings);
   const bus = new ExtensionMessageBus();
   activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
 

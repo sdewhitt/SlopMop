@@ -17,7 +17,7 @@ export class RedditAdapter implements SiteAdapter {
     const out: Element[] = [];
 
     for (const sel of selectors) {
-      const nodes = Array.from(root.querySelectorAll(sel));
+      const nodes = this.querySelectorAllIncludingRoot(root, sel);
       for (const node of nodes) {
         if (seen.has(node)) continue;
         seen.add(node);
@@ -145,9 +145,10 @@ export class RedditAdapter implements SiteAdapter {
   }
 
   findVisibleCommentNodes(root: ParentNode = document, limit = 20): Element[] {
+    // Only match outer comment containers; inner text blocks reuse some of the
+    // same test ids and caused badges to be anchored to nested content nodes.
     const selectors = [
       "shreddit-comment",
-      "[data-testid='comment']",
       "article[data-testid='comment']",
       "article[id^='t1_']",
     ];
@@ -156,7 +157,7 @@ export class RedditAdapter implements SiteAdapter {
     const out: Element[] = [];
 
     for (const sel of selectors) {
-      const nodes = Array.from(root.querySelectorAll(sel));
+      const nodes = this.querySelectorAllIncludingRoot(root, sel);
       for (const node of nodes) {
         if (seen.has(node)) continue;
         seen.add(node);
@@ -244,6 +245,15 @@ export class RedditAdapter implements SiteAdapter {
     // reddit.com/r/{sub}/comments/{postId}/{slug}/{commentId}
     const m = url.match(/\/comments\/[a-z0-9]+\/[^/]*\/([a-z0-9]+)(?:\/|$)/i);
     return m?.[1] ?? null;
+  }
+
+  private querySelectorAllIncludingRoot(root: ParentNode, selector: string): Element[] {
+    const nodes: Element[] = [];
+    if (root instanceof Element && root.matches(selector)) {
+      nodes.push(root);
+    }
+    nodes.push(...Array.from(root.querySelectorAll(selector)));
+    return nodes;
   }
 
   private isElementVisibleInViewport(element: Element): boolean {

@@ -17,6 +17,23 @@ function setInnerText(element: HTMLElement, value: string): void {
   });
 }
 
+function setVisibleRect(element: Element): void {
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      width: 300,
+      height: 80,
+      top: 10,
+      right: 310,
+      bottom: 90,
+      left: 10,
+      x: 10,
+      y: 10,
+      toJSON: () => ({}),
+    }),
+  });
+}
+
 function createAdapter(overrides: Partial<SiteAdapter> = {}): SiteAdapter {
   return {
     getSiteId: () => 'reddit.com',
@@ -195,13 +212,7 @@ describe('Reddit extraction pipeline', () => {
   it('renders a badge with the backend classification and confidence', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
-
-    const adapter = createAdapter({
-      findPostNodes: () => [postNode],
-      getStablePostId: (node) => (node === postNode ? 't3_overlay123' : null),
-      findVisibleCommentNodes: () => [],
-    });
-    const renderer = new OverlayRenderer(adapter, {
+    const renderer = new OverlayRenderer({
       ...defaultUserSettings.settings,
       uiMode: 'simple',
     });
@@ -219,7 +230,7 @@ describe('Reddit extraction pipeline', () => {
       },
     };
 
-    renderer.renderPending('t3_overlay123', 'Example reddit post');
+    renderer.renderPending('t3_overlay123', postNode, 'Example reddit post');
     renderer.renderResult('t3_overlay123', response);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
@@ -230,13 +241,7 @@ describe('Reddit extraction pipeline', () => {
   it('renders dual text + image results on the badge for mixed posts', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
-
-    const adapter = createAdapter({
-      findPostNodes: () => [postNode],
-      getStablePostId: (node) => (node === postNode ? 't3_dual' : null),
-      findVisibleCommentNodes: () => [],
-    });
-    const renderer = new OverlayRenderer(adapter, {
+    const renderer = new OverlayRenderer({
       ...defaultUserSettings.settings,
       uiMode: 'simple',
     });
@@ -261,7 +266,7 @@ describe('Reddit extraction pipeline', () => {
       },
     };
 
-    renderer.renderPending('t3_dual', 'Some text with image');
+    renderer.renderPending('t3_dual', postNode, 'Some text with image');
     renderer.renderResult('t3_dual', response);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
@@ -273,13 +278,7 @@ describe('Reddit extraction pipeline', () => {
   it('shows the detailed tooltip when hovering the badge in detailed mode', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
-
-    const adapter = createAdapter({
-      findPostNodes: () => [postNode],
-      getStablePostId: (node) => (node === postNode ? 't3_overlay_detailed' : null),
-      findVisibleCommentNodes: () => [],
-    });
-    const renderer = new OverlayRenderer(adapter, {
+    const renderer = new OverlayRenderer({
       ...defaultUserSettings.settings,
       uiMode: 'detailed',
     });
@@ -299,6 +298,7 @@ describe('Reddit extraction pipeline', () => {
 
     renderer.renderPending(
       't3_overlay_detailed',
+      postNode,
       "It's worth noting -- this text includes a common AI phrase.",
     );
     renderer.renderResult('t3_overlay_detailed', response);
@@ -317,19 +317,13 @@ describe('Reddit extraction pipeline', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
-
-    const adapter = createAdapter({
-      findPostNodes: () => [postNode],
-      getStablePostId: (node) => (node === postNode ? 't3_overlay_error' : null),
-      findVisibleCommentNodes: () => [],
-    });
-    const renderer = new OverlayRenderer(adapter, {
+    const renderer = new OverlayRenderer({
       ...defaultUserSettings.settings,
       uiMode: 'simple',
     });
     const onRetry = vi.fn();
 
-    renderer.renderPending('t3_overlay_error', 'Example reddit post');
+    renderer.renderPending('t3_overlay_error', postNode, 'Example reddit post');
     renderer.renderError('t3_overlay_error', 'Backend failed', onRetry);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
@@ -416,5 +410,103 @@ describe('Reddit extraction pipeline', () => {
     // NOT an unsupported language error.
     expect(renderError).not.toHaveBeenCalled();
     expect(renderPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('anchors comment overlays to the exact extracted node', () => {
+    const commentNode = document.createElement('article');
+    document.body.appendChild(commentNode);
+
+    const renderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+
+    renderer.renderPending('t1_comment_overlay', commentNode, 'Example comment', vi.fn());
+
+    expect(commentNode.lastElementChild).not.toBeNull();
+    expect(commentNode.lastElementChild?.textContent).toBe('Detect Now');
+  });
+
+  it('prefers top-level comments for auto_top_n scanning', () => {
+    const extractor = new PostExtractor();
+    const rootComment = document.createElement('article');
+    rootComment.id = 't1_root';
+    const rootText = document.createElement('p');
+    setInnerText(rootText, 'This is a clear top-level English comment.');
+    rootComment.appendChild(rootText);
+
+    const nestedComment = document.createElement('article');
+    nestedComment.id = 't1_nested';
+    const nestedText = document.createElement('p');
+    setInnerText(nestedText, 'This nested reply should be skipped in auto mode.');
+    nestedComment.appendChild(nestedText);
+    rootComment.appendChild(nestedComment);
+
+    const secondRootComment = document.createElement('article');
+    secondRootComment.id = 't1_root_two';
+    const secondRootText = document.createElement('p');
+    setInnerText(secondRootText, 'This is the second top-level English comment.');
+    secondRootComment.appendChild(secondRootText);
+
+    const renderPending = vi.fn();
+    const renderError = vi.fn();
+    const observer = new FeedObserver(
+      createAdapter({
+        findPostNodes: () => [],
+        findVisibleCommentNodes: () => [rootComment, nestedComment, secondRootComment],
+        getCommentId: (node) => node.id || null,
+        getCommentTextNode: (node) => node.querySelector('p'),
+      }),
+      extractor,
+      { renderPending, renderError } as unknown as OverlayRenderer,
+      { sendAnalyze: vi.fn() } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: false,
+        scanComments: 'auto_top_n',
+      },
+    );
+
+    (observer as any).scanAndProcess();
+
+    expect(renderPending).toHaveBeenCalledTimes(2);
+    expect(renderPending).toHaveBeenNthCalledWith(
+      1,
+      't1_root',
+      rootComment,
+      'This is a clear top-level English comment.',
+      expect.any(Function),
+    );
+    expect(renderPending).toHaveBeenNthCalledWith(
+      2,
+      't1_root_two',
+      secondRootComment,
+      'This is the second top-level English comment.',
+      expect.any(Function),
+    );
+  });
+
+  it('includes the root node when scanning a comment subtree', () => {
+    const adapter = new RedditAdapter();
+    const rootComment = document.createElement('article');
+    rootComment.id = 't1_root_subtree';
+    rootComment.setAttribute('data-testid', 'comment');
+    const body = document.createElement('div');
+    body.setAttribute('data-testid', 'comment');
+    const paragraph = document.createElement('p');
+    setInnerText(paragraph, 'Visible root comment');
+    body.appendChild(paragraph);
+    rootComment.appendChild(body);
+    document.body.appendChild(rootComment);
+
+    setVisibleRect(rootComment);
+    Object.defineProperty(window, 'getComputedStyle', {
+      configurable: true,
+      value: () => ({ display: 'block', visibility: 'visible', opacity: '1' } as CSSStyleDeclaration),
+    });
+
+    const found = adapter.findVisibleCommentNodes(rootComment, 5);
+
+    expect(found).toContain(rootComment);
   });
 });
