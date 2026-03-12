@@ -1,7 +1,7 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
-import { isTextLanguageSupported, UNSUPPORTED_LANGUAGE_BADGE } from "@src/utils/languageSupport";
+import { isTextLanguageSupported, getLanguageSupportInfo, buildUnsupportedBadge } from "@src/utils/languageSupport";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -200,8 +200,9 @@ export class FeedObserver {
         // manual mode: if language unsupported AND post is text-only, show badge only (no Detect Now button).
         // IMAGE and MIXED posts can still be analyzed via image detection.
         if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain)) {
+            const langInfo = getLanguageSupportInfo(extracted.text.plain);
             this.overlay.renderPending(extracted.postId, extracted.text.plain);
-            this.overlay.renderError(extracted.postId, UNSUPPORTED_LANGUAGE_BADGE);
+            this.overlay.renderError(extracted.postId, buildUnsupportedBadge(langInfo));
             return;
         }
 

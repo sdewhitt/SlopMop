@@ -19,6 +19,9 @@ import {
 import { detectText, detectImage, type DetectResponse, type DetectImageResponse } from '@src/lib/api';
 import {
   isTextLanguageSupported,
+  getLanguageSupportInfo,
+  buildUnsupportedBadge,
+  buildUnsupportedMessage,
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
@@ -340,12 +343,14 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 
 async function handleDetect(text: string): Promise<MessageResponse> {
   if (!isTextLanguageSupported(text)) {
+    const langInfo = getLanguageSupportInfo(text);
+    const verboseMessage = buildUnsupportedMessage(langInfo);
     await browser.storage.local.set({
       lastDetectResponse: null,
       detectResponse: null,
-      lastDetectLanguageUnsupported: { message: UNSUPPORTED_LANGUAGE_MESSAGE },
+      lastDetectLanguageUnsupported: { message: verboseMessage },
     });
-    return { success: false, error: UNSUPPORTED_LANGUAGE_MESSAGE };
+    return { success: false, error: verboseMessage };
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
@@ -378,9 +383,10 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
   if (!hasImages && !isTextLanguageSupported(plainText)) {
+    const langInfo = getLanguageSupportInfo(plainText);
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+      payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo) },
     });
     return;
   }
@@ -446,12 +452,13 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   }
 
   const textLangSupported = isTextLanguageSupported(plainText);
+  const langInfo = !textLangSupported ? getLanguageSupportInfo(plainText) : null;
 
   // TEXT-only posts with unsupported language: block entirely.
   if (!textLangSupported && !hasImages) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+      payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo!) },
     });
     return;
   }
@@ -499,7 +506,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     if (!textResult && !imageResult) {
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-        payload: { postId: enrichedPost.postId, message: UNSUPPORTED_LANGUAGE_BADGE },
+        payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo!) },
       });
       return;
     }

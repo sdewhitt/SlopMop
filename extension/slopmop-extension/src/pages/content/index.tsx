@@ -13,9 +13,11 @@ import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
 import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
+import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
+import { InstagramOverlayRenderer } from '@src/core/InstagramOverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
@@ -131,6 +133,7 @@ function shouldRunOnCurrentSite(
   if (isHostIgnored(hostname, ignoredSites)) return false;
 
   if (hostname.includes('reddit.com')) return settings.platforms.reddit;
+  if (hostname.includes('instagram.com')) return settings.platforms.instagram;
   if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
   if (hostname.includes('facebook.com')) return settings.platforms.facebook;
   if (hostname.includes('youtube.com')) return settings.platforms.youtube;
@@ -142,14 +145,18 @@ function shouldRunOnCurrentSite(
 function startObserver(settings: DetectionSettings): void {
   const hostname = getCurrentHost();
   let adapter;
+  let overlay;
   if (hostname.includes('reddit.com')) {
     adapter = new RedditAdapter();
+    overlay = new OverlayRenderer(adapter, settings);
+  } else if (hostname.includes('instagram.com')) {
+    adapter = new InstagramAdapter();
+    overlay = new InstagramOverlayRenderer(adapter, settings);
   } else {
     return;
   }
 
   const extractor = new PostExtractor();
-  const overlay = new OverlayRenderer(adapter, settings);
   const bus = new ExtensionMessageBus();
   activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
 
