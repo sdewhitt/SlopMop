@@ -54,7 +54,7 @@ describe('Instagram overlay rendering', () => {
       },
     };
 
-    renderer.renderPending('CxTest12345', 'Example Instagram caption');
+    renderer.renderPending('CxTest12345', postNode, 'Example Instagram caption');
     renderer.renderResult('CxTest12345', response);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
@@ -76,7 +76,7 @@ describe('Instagram overlay rendering', () => {
       uiMode: 'simple',
     });
 
-    renderer.renderPending('CxPos123', 'Position test');
+    renderer.renderPending('CxPos123', postNode, 'Position test');
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
@@ -120,7 +120,7 @@ describe('Instagram overlay rendering', () => {
       },
     };
 
-    renderer.renderPending('CxMixed001', 'Caption with image');
+    renderer.renderPending('CxMixed001', postNode, 'Caption with image');
     renderer.renderResult('CxMixed001', response);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
@@ -156,7 +156,7 @@ describe('Instagram overlay rendering', () => {
       },
     };
 
-    renderer.renderPending('CxColor01', 'Human post text');
+    renderer.renderPending('CxColor01', postNode, 'Human post text');
     renderer.renderResult('CxColor01', response);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
@@ -181,7 +181,7 @@ describe('Instagram overlay rendering', () => {
     });
     const onRetry = vi.fn();
 
-    renderer.renderPending('CxErr001', 'Example Instagram post');
+    renderer.renderPending('CxErr001', postNode, 'Example Instagram post');
     renderer.renderError('CxErr001', 'Backend failed', onRetry);
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
