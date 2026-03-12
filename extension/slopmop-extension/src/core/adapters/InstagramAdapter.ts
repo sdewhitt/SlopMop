@@ -6,20 +6,39 @@ export class InstagramAdapter implements SiteAdapter {
   }
 
   findPostNodes(root: ParentNode = document): Element[] {
-    const articles = Array.from(root.querySelectorAll("article"));
     const out: Element[] = [];
+    const seen = new Set<Element>();
 
+    // 1) Standard feed & modal posts: <article> elements with post permalinks.
+    //    This covers the home feed, profile pages, and the dialog/modal that
+    //    opens when a user clicks an explore-grid thumbnail.
+    const articles = Array.from(root.querySelectorAll("article"));
     for (const article of articles) {
-      // Only treat articles that contain a post permalink (/p/ or /reel/)
-      // as feed posts. This excludes profile-picture-only containers,
-      // story trays, and other non-post article elements.
       if (!this.getPermalink(article)) continue;
-
-      // Skip articles that are part of the stories tray. Story containers
-      // hold links to /stories/{username}/ and should never be scanned.
       if (article.querySelector('a[href*="/stories/"]')) continue;
-
+      seen.add(article);
       out.push(article);
+    }
+
+    // 2) Explore-page grid items: clickable thumbnail tiles that are NOT
+    //    wrapped in <article>.  On /explore/ Instagram renders each post as
+    //    a <div> containing an <a href="/p/…"> or <a href="/reel/…"> with an
+    //    <img> inside.  We use the link's parent <div> as the post container.
+    const postLinks = Array.from(
+      root.querySelectorAll<HTMLAnchorElement>(
+        'a[href*="/p/"], a[href*="/reel/"]',
+      ),
+    );
+    for (const link of postLinks) {
+      // Links inside articles are already captured above.
+      if (link.closest("article")) continue;
+      // Ignore story links that somehow match the selector.
+      if (link.getAttribute("href")?.includes("/stories/")) continue;
+      // The grid cell wrapper is the link's nearest parent <div>.
+      const container = link.closest("div");
+      if (!container || seen.has(container)) continue;
+      seen.add(container);
+      out.push(container);
     }
 
     return out;

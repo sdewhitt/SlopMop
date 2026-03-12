@@ -464,4 +464,88 @@ describe('Instagram extraction pipeline', () => {
     const comments = adapter.findVisibleCommentNodes(document, 25);
     expect(comments).toHaveLength(0);
   });
+
+  it('finds explore-page grid items that are not wrapped in <article>', () => {
+    const adapter = new InstagramAdapter();
+
+    // Explore grid: each tile is a <div> containing an <a href="/p/...">
+    // with an <img> inside — no <article> wrapper.
+    const grid = document.createElement('div');
+    for (const code of ['ExploreA01', 'ExploreB02', 'ExploreC03']) {
+      const cell = document.createElement('div');
+      const link = document.createElement('a');
+      link.href = `/p/${code}/`;
+      const img = document.createElement('img');
+      img.src = 'https://scontent.cdninstagram.com/v/thumb.jpg';
+      link.appendChild(img);
+      cell.appendChild(link);
+      grid.appendChild(cell);
+    }
+    document.body.appendChild(grid);
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toHaveLength(3);
+  });
+
+  it('does not duplicate explore grid items already inside an <article>', () => {
+    const adapter = new InstagramAdapter();
+
+    // A normal feed article with a /p/ link
+    const article = document.createElement('article');
+    const link = document.createElement('a');
+    link.href = '/p/FeedPost01/';
+    article.appendChild(link);
+    document.body.appendChild(article);
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toBe(article);
+  });
+
+  it('returns the post shortcode as stable id for explore grid items', () => {
+    const adapter = new InstagramAdapter();
+
+    const cell = document.createElement('div');
+    const link = document.createElement('a');
+    link.href = '/p/ExplGridId1/';
+    cell.appendChild(link);
+    document.body.appendChild(cell);
+
+    expect(adapter.getStablePostId(cell)).toBe('ExplGridId1');
+  });
+
+  it('extracts CDN images from explore grid items', () => {
+    const adapter = new InstagramAdapter();
+
+    const cell = document.createElement('div');
+    const link = document.createElement('a');
+    link.href = '/p/ExplImg01/';
+    const img = document.createElement('img');
+    img.src = 'https://scontent-lga3-2.cdninstagram.com/v/explore_thumb.jpg';
+    Object.defineProperty(img, 'naturalWidth', { value: 640 });
+    Object.defineProperty(img, 'naturalHeight', { value: 640 });
+    link.appendChild(img);
+    cell.appendChild(link);
+
+    const images = adapter.getImageNodes(cell);
+    expect(images).toHaveLength(1);
+    expect(images[0].src).toContain('explore_thumb.jpg');
+  });
+
+  it('ignores explore grid story links', () => {
+    const adapter = new InstagramAdapter();
+
+    // A link to /stories/ should not be picked up as an explore grid item
+    const cell = document.createElement('div');
+    const link = document.createElement('a');
+    link.href = '/stories/someuser/';
+    cell.appendChild(link);
+    document.body.appendChild(cell);
+
+    // A link to /p/ that also has a /stories/ ancestor shouldn't either
+    // but that's covered by the article-stories test above
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toHaveLength(0);
+  });
 });
