@@ -8,7 +8,7 @@ export class InstagramOverlayRenderer extends OverlayRenderer {
     }
 
     protected override getBadgePosition(): Record<string, string> {
-        return { top: "8px", right: "8px" };
+        return { top: "48px", right: "8px" };
     }
 
     protected override getTooltipPosition(): Record<string, string> {
