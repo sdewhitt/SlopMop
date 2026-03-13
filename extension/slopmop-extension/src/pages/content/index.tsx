@@ -148,7 +148,7 @@ function startObserver(settings: DetectionSettings): void {
   let overlay;
   if (hostname.includes('reddit.com')) {
     adapter = new RedditAdapter();
-    overlay = new OverlayRenderer(adapter, settings);
+    overlay = new OverlayRenderer(settings);
   } else if (hostname.includes('instagram.com')) {
     adapter = new InstagramAdapter();
     overlay = new InstagramOverlayRenderer(adapter, settings);
@@ -157,7 +157,6 @@ function startObserver(settings: DetectionSettings): void {
   }
 
   const extractor = new PostExtractor();
-  const overlay = new OverlayRenderer(settings);
   const bus = new ExtensionMessageBus();
   activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
 

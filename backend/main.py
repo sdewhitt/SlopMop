@@ -12,7 +12,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Add nonescape's python package to the path so `from nonescape import ...` works
 sys.path.insert(0, os.path.join(_THIS_DIR, "nonescape", "python"))
-from nonescape import NonescapeClassifierMini, preprocess_image# type: ignore
+from nonescape import NonescapeClassifier, NonescapeClassifierMini, preprocess_image# type: ignore
 
 # Add text model to path so we can import the detector class
 sys.path.insert(0, os.path.join(_THIS_DIR, "..", "model_training", "text_model"))
@@ -50,8 +50,8 @@ else:
         IMAGE_MODEL_FILENAME,
     )
 
-image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
 image_model.eval()
+print(f"[SlopMop] Loaded image model: {_IMAGE_MODEL_VARIANT} ({MODEL_PATH})", flush=True)
 
 # ── Load text detection model once at startup ──────────────────
 TEXT_MODEL_FILENAME = "best_text_detector_smaller.pt"
