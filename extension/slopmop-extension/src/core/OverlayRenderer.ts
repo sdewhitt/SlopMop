@@ -42,11 +42,9 @@ export class OverlayRenderer {
 
         const isSimple = this.settings.uiMode === "simple";
 
-        const colorMap: Record<DetectionResponse["verdict"], string> = {
-            likely_ai: "#ef4444",
-            likely_human: "#22c55e",
-            unknown: "#6b7280",
-        };
+        const colorMap: Record<DetectionResponse["verdict"], string> = isSimple
+            ? { likely_ai: "#ea580c", likely_human: "#16a34a", unknown: "#6b7280" } // orange / green for simple
+            : { likely_ai: "#ef4444", likely_human: "#22c55e", unknown: "#6b7280" };
         overlay.style.backgroundColor = colorMap[res.verdict];
         overlay.style.cursor = "pointer";
 
@@ -55,9 +53,17 @@ export class OverlayRenderer {
             overlay.style.padding = "6px 12px";
         }
 
-        const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
+        const verdictLabelSimple: Record<DetectionResponse["verdict"], string> = {
+            likely_ai: "Likely AI",
+            likely_human: "Likely Human",
+            unknown: "Inconclusive",
+        };
+        const textLabel = isSimple
+            ? verdictLabelSimple[res.verdict]
+            : `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
         if (res.imageResult) {
-            overlay.textContent = `Text: ${textLabel} · Img: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+            const imgLabel = isSimple ? verdictLabelSimple[res.imageResult.verdict] : `${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+            overlay.textContent = isSimple ? `Text: ${textLabel} · Img: ${imgLabel}` : `Text: ${textLabel} · Img: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
         } else {
             overlay.textContent = textLabel;
         }

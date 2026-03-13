@@ -29,6 +29,7 @@ type DetectResponse = {
   confidence?: number;
   explanation?: string;
   metadataComplete?: boolean;
+  verdict?: 'likely_ai' | 'likely_human' | 'unknown';
   // Some backends may use alternative field names.
   confidenceScore?: number;
   confidence_score?: number;
@@ -404,7 +405,13 @@ export default function Popup() {
           {languageUnsupported}
         </div>
       )}
-      {confidence != null && !languageUnsupported && <ConfidenceDisplay confidenceScore={confidence} />}
+      {confidence != null && !languageUnsupported && (
+        <ConfidenceDisplay
+          confidenceScore={confidence}
+          simpleMode={simpleMode}
+          verdict={detectResponse?.verdict}
+        />
+      )}
 
       <button
         onClick={() => logOut()}
@@ -415,9 +422,19 @@ export default function Popup() {
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
       {detectResponse && !languageUnsupported && (
         <section className="mt-4 text-left">
-          <p className="text-sm font-medium text-gray-200">
-            Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
-          </p>
+          {simpleMode ? (
+            <p className="text-sm font-medium text-gray-200">
+              {detectResponse.verdict === 'likely_ai'
+                ? 'Likely AI'
+                : detectResponse.verdict === 'likely_human'
+                  ? 'Likely Human'
+                  : 'Inconclusive'}
+            </p>
+          ) : (
+            <p className="text-sm font-medium text-gray-200">
+              Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
+            </p>
+          )}
           <p className="confidence-explanation mt-1.5 text-xs text-gray-400 leading-snug">
             {explanation}
           </p>

@@ -38,11 +38,12 @@ export default function Options() {
 
   useEffect(() => {
     browser.storage.local.get(['settings', 'simpleMode']).then((result) => {
-      if (result.settings) {
-        setSettings({ ...defaultSettings, ...(result.settings as Settings) });
-      }
+      const nextSettings = result.settings ? { ...defaultSettings, ...(result.settings as Settings) } : defaultSettings;
+      setSettings(nextSettings);
       if (typeof result.simpleMode === 'boolean') {
         setSimpleMode(result.simpleMode);
+      } else {
+        setSimpleMode(nextSettings.uiMode === 'simple');
       }
     });
   }, []);
@@ -140,7 +141,10 @@ export default function Options() {
               checked={simpleMode}
               onChange={(v) => {
                 setSimpleMode(v);
-                browser.storage.local.set({ simpleMode: v });
+                const uiMode = v ? ('simple' as const) : ('detailed' as const);
+                const nextSettings = { ...settings, uiMode };
+                setSettings(nextSettings);
+                browser.storage.local.set({ simpleMode: v, settings: nextSettings });
                 flashSaved();
               }}
               label="Simple Mode"
