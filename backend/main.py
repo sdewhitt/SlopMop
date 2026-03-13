@@ -50,8 +50,9 @@ else:
         IMAGE_MODEL_FILENAME,
     )
 
+image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
 image_model.eval()
-print(f"[SlopMop] Loaded image model: {_IMAGE_MODEL_VARIANT} ({MODEL_PATH})", flush=True)
+print(f"[SlopMop] Loaded image model: {IMAGE_MODEL_FILENAME} ({MODEL_PATH})", flush=True)
 
 # ── Load text detection model once at startup ──────────────────
 TEXT_MODEL_FILENAME = "best_text_detector_smaller.pt"
