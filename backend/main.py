@@ -35,12 +35,12 @@ app.add_middleware(
 # for the higher-accuracy model.
 _IMAGE_MODEL_VARIANT = os.environ.get("IMAGE_MODEL", "full").strip().lower()
 
-if _IMAGE_MODEL_VARIANT == "mini":
-    MODEL_PATH = os.path.join(_THIS_DIR, "nonescape", "nonescape-mini-v0.safetensors")
-    image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
-else:
+if _IMAGE_MODEL_VARIANT != "mini":
     MODEL_PATH = os.path.join(_THIS_DIR, "nonescape", "nonescape-v0.safetensors")
     image_model = NonescapeClassifier.from_pretrained(MODEL_PATH)
+else:
+    MODEL_PATH = os.path.join(_THIS_DIR, "nonescape", "nonescape-mini-v0.safetensors")
+    image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
 
 image_model.eval()
 print(f"[SlopMop] Loaded image model: {_IMAGE_MODEL_VARIANT} ({MODEL_PATH})", flush=True)

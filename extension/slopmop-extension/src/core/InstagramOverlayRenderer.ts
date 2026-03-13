@@ -4,7 +4,7 @@ import type { DetectionSettings } from "@src/utils/userSettings";
 
 export class InstagramOverlayRenderer extends OverlayRenderer {
     constructor(adapter: SiteAdapter, settings: DetectionSettings) {
-        super(adapter, settings);
+        super(settings);
     }
 
     protected override getBadgePosition(): Record<string, string> {
