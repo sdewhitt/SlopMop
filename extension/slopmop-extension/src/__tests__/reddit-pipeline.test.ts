@@ -486,6 +486,109 @@ describe('Reddit extraction pipeline', () => {
     );
   });
 
+  it('re-processes all visible posts when scanEntirePage is called', () => {
+    const extractor = new PostExtractor();
+    const postNodes: HTMLElement[] = [];
+    const postIds = ['t3_1', 't3_2', 't3_3', 't3_4', 't3_5'];
+
+    for (let i = 0; i < 5; i++) {
+      const node = document.createElement('article');
+      const textNode = document.createElement('div');
+      setInnerText(textNode, `Post content ${i + 1}`);
+      node.appendChild(textNode);
+      node.setAttribute('data-post-id', postIds[i]);
+      postNodes.push(node);
+    }
+
+    const adapter = createAdapter({
+      findPostNodes: () => postNodes,
+      findVisibleCommentNodes: () => [],
+      getStablePostId: (node) => node.getAttribute('data-post-id'),
+      getPermalink: (node) =>
+        `https://www.reddit.com/r/test/comments/${node.getAttribute('data-post-id')?.replace('t3_', '')}/title/`,
+      getTextNode: (node) => node.querySelector('div'),
+      getAuthorHandle: () => 'u/test',
+      getTimestampText: () => '1h ago',
+    });
+
+    const extractSpy = vi.spyOn(extractor, 'extract');
+    const sendAnalyze = vi.fn();
+    const observer = new FeedObserver(
+      adapter,
+      extractor,
+      { renderPending: vi.fn() } as unknown as OverlayRenderer,
+      { sendAnalyze } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: true,
+        scanComments: 'off',
+      },
+    );
+
+    observer.scanEntirePage();
+
+    expect(extractSpy).toHaveBeenCalledTimes(5);
+    for (let i = 0; i < 5; i++) {
+      expect(extractSpy).toHaveBeenNthCalledWith(i + 1, postNodes[i], adapter, 'post');
+    }
+    expect(sendAnalyze).toHaveBeenCalledTimes(5);
+  });
+
+  it('scanEntirePage skips already-seen posts and only processes new ones', () => {
+    const extractor = new PostExtractor();
+    const postNodes: HTMLElement[] = [];
+    const postIds = ['t3_seen1', 't3_seen2', 't3_seen3', 't3_new1', 't3_new2'];
+
+    for (let i = 0; i < 5; i++) {
+      const node = document.createElement('article');
+      const textNode = document.createElement('div');
+      setInnerText(textNode, `Post content ${i + 1}`);
+      node.appendChild(textNode);
+      node.setAttribute('data-post-id', postIds[i]);
+      postNodes.push(node);
+    }
+
+    const adapter = createAdapter({
+      findPostNodes: () => postNodes,
+      findVisibleCommentNodes: () => [],
+      getStablePostId: (node) => node.getAttribute('data-post-id'),
+      getPermalink: (node) =>
+        `https://www.reddit.com/r/test/comments/${node.getAttribute('data-post-id')?.replace('t3_', '')}/title/`,
+      getTextNode: (node) => node.querySelector('div'),
+      getAuthorHandle: () => 'u/test',
+      getTimestampText: () => '1h ago',
+    });
+
+    const sendAnalyze = vi.fn();
+    const observer = new FeedObserver(
+      adapter,
+      extractor,
+      { renderPending: vi.fn() } as unknown as OverlayRenderer,
+      { sendAnalyze } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: true,
+        scanComments: 'off',
+      },
+    );
+
+    (observer as any).seenPostIds.add('t3_seen1');
+    (observer as any).seenPostIds.add('t3_seen2');
+    (observer as any).seenPostIds.add('t3_seen3');
+
+    observer.scanEntirePage();
+
+    expect(sendAnalyze).toHaveBeenCalledTimes(2);
+    expect(sendAnalyze).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ postId: 't3_new1' }),
+    );
+    expect(sendAnalyze).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ postId: 't3_new2' }),
+    );
+  });
+
   it('includes the root node when scanning a comment subtree', () => {
     const adapter = new RedditAdapter();
     const rootComment = document.createElement('article');

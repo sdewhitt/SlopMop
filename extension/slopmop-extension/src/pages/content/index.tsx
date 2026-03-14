@@ -93,14 +93,17 @@ function togglePanel() {
   }
 }
 
-// Listen for toggle messages from the background service worker
+// Listen for messages from the background service worker
 browser.runtime.onMessage.addListener((message: unknown) => {
-  if (
-    typeof message === 'object' &&
-    message !== null &&
-    (message as Record<string, unknown>).type === 'SLOPMOP_TOGGLE_PANEL'
-  ) {
+  if (typeof message !== 'object' || message === null) return;
+  const msg = message as Record<string, unknown>;
+  if (msg.type === 'SLOPMOP_TOGGLE_PANEL') {
     togglePanel();
+    return;
+  }
+  if (msg.type === 'SLOPMOP_SCAN_ENTIRE_PAGE') {
+    activeObserver?.scanEntirePage();
+    return;
   }
 });
 

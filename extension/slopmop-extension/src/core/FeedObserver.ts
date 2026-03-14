@@ -128,6 +128,14 @@ export class FeedObserver {
         }, DEBOUNCE_MS);
     }
 
+    // force an immediate full page scan. fallback when mutation-based
+    // detection misses posts (e.g. virtual scrolling, non-standard DOM updates).
+    // (strange reddit cases)
+    // all visible posts from adapter.findPostNodes() are processed in one batch.
+    scanEntirePage(): void {
+        this.scanAndProcess();
+    }
+
     private scanAndProcess(): void {
         // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
@@ -263,7 +271,7 @@ export class FeedObserver {
     }
 
     private isEligible(post: NormalizedPostContent): boolean {
-        // check 1: is the extension turned on at all?
+        // check if extension enabled
         if (!this.settings.enabled) return false;
 
         // check 2: does the content type match what the user wants to scan?

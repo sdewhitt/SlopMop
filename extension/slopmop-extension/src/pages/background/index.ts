@@ -269,6 +269,14 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleAddIgnoredSite(msg.uid, msg.site!);
     case 'SLOPMOP_REMOVE_IGNORED_SITE':
       return handleRemoveIgnoredSite(msg.uid, msg.site!);
+    case 'SLOPMOP_SCAN_ENTIRE_PAGE': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return;
+      browser.tabs.sendMessage(tabId, { type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {
+        // Content script may not be available (e.g. standalone popup tab)
+      });
+      return true;
+    }
     default:
       return;
   }

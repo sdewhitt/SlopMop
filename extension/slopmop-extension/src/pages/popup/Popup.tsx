@@ -220,6 +220,14 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
+  const isSupportedFeedSite =
+    typeof window !== 'undefined' &&
+    (window.location.hostname.includes('reddit.com') || window.location.hostname.includes('instagram.com'));
+
+  const handleScanEntirePage = () => {
+    browser.runtime.sendMessage({ type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {});
+  };
+
   const toggleEnabled = () => {
     const next = !enabled;
     setEnabled(next);
@@ -396,6 +404,16 @@ export default function Popup() {
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
 
       <StatsGrid stats={stats} />
+
+      {isSupportedFeedSite && (
+        <button
+          type="button"
+          onClick={handleScanEntirePage}
+          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-700 text-gray-200 hover:bg-gray-600 hover:text-white transition-colors cursor-pointer"
+        >
+          Scan Entire Page
+        </button>
+      )}
 
       <DisclaimerBanner />
 
