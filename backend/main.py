@@ -91,10 +91,18 @@ class DetectRequest(BaseModel):
     text: str
 
 
+class HighlightSpan(BaseModel):
+    """Character span that contributed to the AI detection score."""
+    start: int  # character offset (inclusive)
+    end: int    # character offset (exclusive)
+    score: float  # 0–1, contribution to AI confidence
+
+
 class DetectResponse(BaseModel):
     confidence: float  # 0.0 = human, 1.0 = AI
     label: str  # "ai" or "human"
     explanation: str  # explanation for the detection
+    highlights: list[HighlightSpan] = []  # spans for segment highlighting
 
 
 class DetectImageRequest(BaseModel):
@@ -113,14 +121,13 @@ def root():
     return {"status": "ok", "message": "SlopMop Detection API"}
 
 
-# helper function to score text using the trained model
-def score_text(text: str) -> tuple[float, str]:
-    confidence, label = text_detector.calculate_confidence(text, clean=True)
-    # calculate_confidence returns float 0..1 and label "human"/"mixed"/"ai"
-    # normalize label to "ai" or "human" for the API response
+# helper function to score text and get segment highlights
+def score_text_with_spans(text: str) -> tuple[float, str, list[HighlightSpan]]:
+    confidence, label, spans = text_detector.score_text_with_spans(text, clean=True)
     if label == "mixed":
         label = "ai" if confidence >= 0.5 else "human"
-    return round(confidence, 4), label
+    highlights = [HighlightSpan(start=s, end=e, score=sc) for s, e, sc in spans]
+    return round(confidence, 4), label, highlights
 
 def generate_explanation(confidence: float, label: str) -> str:
     if label == "ai":
@@ -149,10 +156,9 @@ def detect(request: DetectRequest):
             detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
         )
     
-    # connect to model here in week 2 of sprint 1
-    confidence, label = score_text(clean_text)
+    confidence, label, highlights = score_text_with_spans(clean_text)
     explanation = generate_explanation(confidence, label)
-    return DetectResponse(confidence=confidence, label=label, explanation=explanation)
+    return DetectResponse(confidence=confidence, label=label, explanation=explanation, highlights=highlights)
 
 
 @app.post("/detect-image", response_model=DetectImageResponse)
