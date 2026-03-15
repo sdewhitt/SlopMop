@@ -23,6 +23,7 @@ import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
+import HistoryPage from '../options/HistoryPage';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 
 type DetectResponse = {
@@ -37,7 +38,7 @@ type DetectResponse = {
 export default function Popup() {
   const { user, loading: authLoading, logOut } = useAuth();
 
-  const [view, setView] = useState<'home' | 'settings'>('home');
+  const [view, setView] = useState<'home' | 'settings' | 'history'>('home');
   const [enabled, setEnabled] = useState(true);
   const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
   const [settings, setSettings] = useState<Settings>(defaultSettings);
@@ -384,6 +385,22 @@ export default function Popup() {
   const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
 
+  // ── History view ──────────────────────────────────────────────
+  if (view === 'history') {
+    return (
+      <div
+        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+          simpleMode ? 'simple-mode' : ''
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+      >
+        <SettingsHeader title="History" onBack={() => setView('home')} />
+        <div className="px-4 py-3 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
+          <HistoryPage />
+        </div>
+      </div>
+    );
+  }
+
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div
@@ -391,7 +408,7 @@ export default function Popup() {
         simpleMode ? 'simple-mode' : ''
       } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
-      <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} />
+      <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
 
