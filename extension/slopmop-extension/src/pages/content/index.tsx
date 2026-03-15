@@ -14,10 +14,12 @@ import { AuthProvider } from '../../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
 import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
+import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { InstagramOverlayRenderer } from '@src/core/InstagramOverlayRenderer';
+import { LinkedInOverlayRenderer } from '@src/core/LinkedInOverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
@@ -155,6 +157,9 @@ function startObserver(settings: DetectionSettings): void {
   } else if (hostname.includes('instagram.com')) {
     adapter = new InstagramAdapter();
     overlay = new InstagramOverlayRenderer(adapter, settings);
+  } else if (hostname.includes('linkedin.com')) {
+    adapter = new LinkedInAdapter();
+    overlay = new LinkedInOverlayRenderer(adapter, settings);
   } else {
     return;
   }
@@ -224,3 +229,29 @@ browser.storage.onChanged.addListener((changes, areaName) => {
 initFeedObserver().catch((e) => {
   console.error('[SlopMop] observer init error', e);
 });
+
+// When the user navigates within an SPA (e.g. clicks a post on LinkedIn), the URL changes
+// but the page does not reload. seenPostIds still has the post from the feed, so we skip it.
+// Rescan with a cleared cache so the post gets a badge.
+function setupNavigationListener(): void {
+  let lastPath = location.pathname + location.search;
+  const checkUrl = (): void => {
+    const current = location.pathname + location.search;
+    if (current !== lastPath) {
+      lastPath = current;
+      activeObserver?.rescanForNewPage?.();
+    }
+  };
+  window.addEventListener('popstate', checkUrl);
+  const origPush = history.pushState;
+  const origReplace = history.replaceState;
+  history.pushState = function (...args) {
+    origPush.apply(this, args);
+    checkUrl();
+  };
+  history.replaceState = function (...args) {
+    origReplace.apply(this, args);
+    checkUrl();
+  };
+}
+setupNavigationListener();

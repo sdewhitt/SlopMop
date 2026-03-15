@@ -6,7 +6,7 @@ import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
 
-const DEBUG_EXTRACTION = false;
+const DEBUG_EXTRACTION = true;
 // debounce wait time in ms. mutations that fire within this window
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
@@ -133,6 +133,15 @@ export class FeedObserver {
     // (strange reddit cases)
     // all visible posts from adapter.findPostNodes() are processed in one batch.
     scanEntirePage(): void {
+        this.scanAndProcess();
+    }
+
+    /**
+     * Clear seen posts and rescan. Use when the user navigates to a new page (e.g. SPA
+     * route change). Same post in a new view was previously skipped due to seenPostIds.
+     */
+    rescanForNewPage(): void {
+        this.seenPostIds.clear();
         this.scanAndProcess();
     }
 
