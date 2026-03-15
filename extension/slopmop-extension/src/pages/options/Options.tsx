@@ -220,6 +220,15 @@ export default function Options() {
                   ))}
                 </div>
               </div>
+
+              <div className="pt-4 border-t border-gray-800">
+                <Toggle
+                  checked={settings.highlightSegments}
+                  onChange={(v) => update('highlightSegments', v)}
+                  label="Highlight segments that triggered detection"
+                  description="Show which parts of the text contributed most to the AI score"
+                />
+              </div>
             </div>
           </section>
         )}

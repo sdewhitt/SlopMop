@@ -124,6 +124,7 @@ export default function Popup() {
         scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
+        highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
       };
       setSettings(merged);
       setEnabled(merged.enabled);
@@ -291,6 +292,7 @@ export default function Popup() {
       scanComments: defaultUserSettings.settings.scanComments,
       uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
+      highlightSegments: defaultUserSettings.settings.highlightSegments,
     };
     setSettings(defaults);
     setEnabled(defaults.enabled);
