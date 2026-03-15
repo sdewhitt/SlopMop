@@ -12,6 +12,7 @@ from datasets import load_dataset, Dataset  # type: ignore[import-untyped]
 from torch.utils.data import DataLoader, Dataset as TorchDataset, Subset  # type: ignore[import-untyped]
 
 # for training loop
+from torch.optim import AdamW
 import copy
 import numpy as np  # type: ignore[import-untyped]
 
@@ -22,39 +23,58 @@ import regex  # type: ignore[import-untyped]
 from tqdm.auto import tqdm  # type: ignore[import-untyped]
 from typing import Optional, List, Dict, Tuple
 
+# remove all emojis
+def emoji_removal(text):
+  emoji_pattern = regex.compile(r'\p{Emoji}', flags=regex.UNICODE)
+  return emoji_pattern.sub(r'', text)
 
-# ── Social media text preprocessing ─────────────────────────────────────────
-def emoji_removal(text: str) -> str:
-  emoji_pattern = regex.compile(r"\p{Emoji}", flags=regex.UNICODE)
-  return emoji_pattern.sub(r"", text)
+# preprocess a single text 
+def preprocess_text(text):
+  # url pattern so that even the shortened versions also gets removed
+  text = re.sub(r'\b(?:https?://|www\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*[a-zA-Z0-9/_-])?', '', text)
 
+  # remove all HTML tags
+  text = re.sub(r'<[^>]*>', '', text)
 
-def preprocess_social_media_text(text: str) -> str:
-  """Preprocess text for social media: URLs, emojis, handles, etc."""
-  if not text or not isinstance(text, str):
-    return ""
-  # URL removal
-  text = re.sub(
-    r"\b(?:https?://|www\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*[a-zA-Z0-9/_-])?",
-    "",
-    text,
-  )
-  # HTML tags
-  text = re.sub(r"<[^>]*>", "", text)
-  # User handles (@username)
-  text = re.sub(r"@\w+", "", text)
-  # Emojis
+  # remove all braille art
+  text = re.sub(r'[\u2800-\u28FF]+', '', text)
+  
+  # remove dingbats, stars etc
+  text = re.sub(r'[\u2500-\u27BF]+', '', text)
+
+  # remove <3 / </3 heart emoticons (ASCII 3 and Unicode 𝟑 U+1D7F9) in one step so nothing is left behind
+  _bold_three = '\U0001d7f9'
+  heart_pattern = r'(^|\s)</?\s*[3' + _bold_three + r']\s*(?=\s|$|[.,!?])'
+  text = re.sub(heart_pattern, r'\1', text)
+
+  # remove all other emots :3 :) etc
+  emoticon_pattern = r'(?i)(^|\s)(:3|:\)|:\)\)|:\(|:\(\(|:0|:-?[pdxo)(]|x-?d|;-?\))(?=\s|$|[.,!?])'
+  text = re.sub(emoticon_pattern, r'\1', text)
+
+  # remove katakana/special characters used for faces
+  text = re.sub(r'[ツᴥꈍᴗꈊ・ω・｀ω´╥﹏╥⋆𝜗𝜚₊✩‧˚౨ৎ𓂃˖˳·ִֶָ𝟑ᐟ]+', '', text)
+
+  # remove all empty brackets
+  text = re.sub(r'\(\s*\)|\[\s*\]|\{\s*\}', '', text)
+
+  # remove _/¯ ¯\_
+  text = re.sub(r'[\\_/<>\-¯]{2,}', '', text)
+  # print("text after _/¯ ¯\_ removal: ", text)
+
+  # remove all emojis
   text = emoji_removal(text)
-  # Emoticons :3 :) etc
-  emoticon_pattern = r"(?i)(^|\s)(:3|:\)|:\)\)|:\(|:\(\(|:0|:-?[pdxo)(]|x-?d|;-?\))(?=\s|$|[.,!?])"
-  text = re.sub(emoticon_pattern, r"\1", text)
-  # Collapse whitespace
-  text = re.sub(r"\n+", " ", text)
-  return re.sub(r"\s+", " ", text).strip()
+
+  # remove user handles
+  text = re.sub(r'@\w+', '', text)
+
+  # clean up leaftover gaps
+  clean_up = re.sub(r'\n+', ' ', text)
+
+  return re.sub(r'\s+', ' ', clean_up).strip()
 
 
 def clean_example(example: dict, text_column: str = "text") -> dict:
-  example[text_column] = preprocess_social_media_text(example[text_column])
+  example[text_column] = preprocess_text(example[text_column])
   return example
 
 
@@ -104,7 +124,7 @@ class SatireDataset(TorchDataset):
 
     self.tokenizer = tokenizer
     self.max_length = max_length
-    self.preprocess_fn = preprocess_fn or preprocess_social_media_text
+    self.preprocess_fn = preprocess_fn or preprocess_text
 
     # Preprocess and tokenize all examples
     self.input_ids = []
@@ -262,6 +282,9 @@ class SatireDetector:
 def train_on_social_media_data(
   detector: SatireDetector,
   csv_path: str,
+  epochs: int = 2,
+  batch_size: int = 16,
+  lr: float = 5e-5,
   val_ratio: float = 0.2,
   test_ratio: float = 0.1,
   seed: int = 42,
@@ -272,15 +295,93 @@ def train_on_social_media_data(
   train_loader, val_loader, test_loader, train_n, val_n, test_n = create_satire_dataloaders(
     csv_path=csv_path,
     tokenizer=detector.tokenizer,
-    batch_size=16,
+    batch_size=batch_size,
     val_ratio=val_ratio,
     test_ratio=test_ratio,
     seed=seed,
   )
 
+  # create the optimizer and loss function
+  optimizer = AdamW(detector.model.parameters(), lr=lr)
+  loss_fn = torch.nn.CrossEntropyLoss()
+  best_val_loss = float("inf")
+  best_model_state = None
+  best_epoch = 0
 
   print(f"Training on {train_n} examples, validation {val_n}, test {test_n}")
+  print(f"Epochs: {epochs}, batch_size: {batch_size}, lr: {lr}\n")
 
+  # train the model
+  for epoch in range(epochs):
+    # set the model to training mode
+    detector.model.train()
+    total_loss = 0
+    total_correct = 0
+    total_samples = 0
+
+    # train the model
+    for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", unit="batch"):
+      # move the batch to the device
+      input_ids = batch["input_ids"].to(detector.device)
+      # move the attention mask to the device
+      attention_mask = batch["attention_mask"].to(detector.device)
+      # move the labels to the device
+      labels = batch["label"].to(detector.device)
+
+      optimizer.zero_grad()
+      # get the outputs from the model
+      outputs = detector.model(input_ids, attention_mask=attention_mask)
+      # get the loss
+      loss = loss_fn(outputs.logits, labels)
+      # backward pass to update the weights
+      loss.backward()
+      # update the weights
+      optimizer.step()
+
+      total_loss += loss.item()
+      preds = outputs.logits.argmax(dim=1)
+      total_correct += (preds == labels).sum().item()
+      total_samples += labels.size(0)
+
+    avg_train_loss = total_loss / len(train_loader)
+    train_acc = 100 * total_correct / total_samples
+
+    # validate the model
+    detector.model.eval()
+    # initialize the validation loss
+    val_loss = 0
+    # initialize the validation correct
+    val_correct = 0
+    # initialize the validation samples
+    val_samples = 0
+    # validate the model
+    with torch.no_grad():
+      for batch in val_loader:
+        input_ids = batch["input_ids"].to(detector.device)
+        attention_mask = batch["attention_mask"].to(detector.device)
+        labels = batch["label"].to(detector.device)
+        outputs = detector.model(input_ids, attention_mask=attention_mask)
+        val_loss += loss_fn(outputs.logits, labels).item()
+        preds = outputs.logits.argmax(dim=1)
+        val_correct += (preds == labels).sum().item()
+        val_samples += labels.size(0)
+
+    avg_val_loss = val_loss / len(val_loader)
+    val_acc = 100 * val_correct / val_samples
+
+    print(f"Epoch {epoch+1}: train loss={avg_train_loss:.4f} acc={train_acc:.2f}% | val loss={avg_val_loss:.4f} acc={val_acc:.2f}%")
+
+    if avg_val_loss < best_val_loss:
+      best_val_loss = avg_val_loss
+      best_model_state = copy.deepcopy(detector.model.state_dict())
+      best_epoch = epoch + 1
+
+  # save the best model
+  if best_model_state:
+    detector.model.load_state_dict(best_model_state)
+    best_model_path = os.path.join(os.path.dirname(__file__), "best_satire_detector.pt")
+    torch.save(best_model_state, best_model_path)
+    print(f"\nBest model (epoch {best_epoch}) saved to {best_model_path}")
 
   # evaluate the model
   detector.model.eval()
@@ -321,6 +422,9 @@ if __name__ == "__main__":
     train_on_social_media_data(
       detector,
       csv_path=test_dataset_path,
+      epochs=4,
+      batch_size=16,
+      lr=5e-5,
     )
   else:
     print(f"No test_dataset.csv found at {test_dataset_path}")
