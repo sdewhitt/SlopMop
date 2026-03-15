@@ -1,6 +1,11 @@
 *.venv
 .DS_Store
 
+archive/*
+runs/*
+unit_test/*
+__pycache__/*
+
 # large model weights (do not commit)
 *.pt
 *.pt.gz
