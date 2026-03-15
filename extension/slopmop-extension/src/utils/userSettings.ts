@@ -30,6 +30,7 @@ export interface DetectionSettings {
   scanImages: boolean;
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
+  highlightSegments: boolean;
 }
 
 /** Aggregate stats the extension reports back. */
@@ -74,6 +75,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanImages: true,
     scanComments: 'auto_top_n',
     uiMode: 'simple',
+    highlightSegments: true,
   },
   stats: {
     postsScanned: 0,

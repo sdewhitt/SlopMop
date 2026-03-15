@@ -834,6 +834,11 @@ function mapToDetectionResponse(
       ? 'unknown'
       : 'likely_human';
 
+  const spans =
+    'highlights' in apiResult && Array.isArray(apiResult.highlights)
+      ? apiResult.highlights.map((h) => ({ start: h.start, end: h.end, score: h.score }))
+      : undefined;
+
   return {
     requestId: crypto.randomUUID(),
     postId,
@@ -842,6 +847,7 @@ function mapToDetectionResponse(
     explanation: {
       summary: apiResult.explanation,
       highlights: [],
+      ...(spans && spans.length > 0 ? { highlightedSpans: spans } : {}),
       model: { name: 'slopmop-api', version: '1.0' },
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
