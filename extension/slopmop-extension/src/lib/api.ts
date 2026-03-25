@@ -22,6 +22,7 @@ export interface DetectResponse {
     confidence: number;
     label: string;
     explanation: string;
+    highlights?: Array<{ start: number; end: number; score: number }>;
 }
 
 /*
