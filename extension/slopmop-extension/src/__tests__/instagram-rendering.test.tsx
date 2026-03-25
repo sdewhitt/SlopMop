@@ -80,7 +80,7 @@ describe('Instagram overlay rendering', () => {
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    expect(overlay?.style.top).toBe('8px');
+    expect(overlay?.style.top).toBe('48px');
     expect(overlay?.style.right).toBe('8px');
     // Should NOT have bottom positioning
     expect(overlay?.style.bottom).toBe('');

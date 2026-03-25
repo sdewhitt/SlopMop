@@ -284,6 +284,14 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleClearHistory();
     case 'SLOPMOP_TOGGLE_PIN':
       return handleTogglePin(msg.postId!);
+    case 'SLOPMOP_SCAN_ENTIRE_PAGE': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return;
+      browser.tabs.sendMessage(tabId, { type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {
+        // Content script may not be available (e.g. standalone popup tab)
+      });
+      return true;
+    }
     default:
       return;
   }
@@ -743,9 +751,22 @@ async function fetchImagesThrottled(
 }
 
 // Fetches a single image by URL and returns its contents as a base64 string.
+// Skips fetch when srcUrl is empty, a data/blob URL, or otherwise invalid —
+// e.g. LinkedIn lazy-loading can yield empty src before the real URL loads,
+// and fetch("") in a service worker can resolve to chrome-extension://invalid/.
 async function fetchImageAsBase64(srcUrl: string): Promise<string> {
+  const trimmed = (srcUrl ?? "").trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("chrome-extension:") ||
+    (!trimmed.startsWith("http://") && !trimmed.startsWith("https://"))
+  ) {
+    return "";
+  }
   try {
-    const response = await fetch(srcUrl);
+    const response = await fetch(trimmed);
     if (!response.ok) return '';
     const arrayBuffer = await response.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
