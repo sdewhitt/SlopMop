@@ -96,14 +96,59 @@ def tokenize_batch(batch: dict, tokenizer, text_column: str = "text") -> dict:
     max_length=512,
   )
 
+# satire keywords
+SATIRE_KEYWORDS: List[str] = [
+  "satire",
+  "parody",
+  "shit post",
+  "shitpost",
+  "shitposting",
+  "sarcasm",
+  "sarcastic",
+  "joke",
+  "satirical",
+  "humor",
+  "comedic",
+  "tongue-in-cheek",
+  "not serious",
+  "for laughs",
+  "meme",
+  "satire post",
+  "parody post",
+]
 
-# ── Dataset & DataLoader Implementation ──────────────────────────────────────
+
+# build regex pattern from SATIRE_KEYWORDS for whole-word matching
+def _build_keyword_pattern() -> re.Pattern:
+  escaped = [re.escape(kw) for kw in SATIRE_KEYWORDS]
+  return re.compile(r"\b(" + "|".join(escaped) + r")\b", re.IGNORECASE)
+
+
+_SATIRE_PATTERN = _build_keyword_pattern()
+
+
+# scan text for satire-indicator keywords/tags
+def extract_satire_keywords(text: str) -> List[str]:
+  if not text or not isinstance(text, str):
+    return []
+  # return list of matched keywords
+  return list(set(m.group(0).lower() for m in _SATIRE_PATTERN.finditer(text)))
+
+
+# return true if text contains any satire-indicator keyword
+def has_satire_keywords(text: str) -> bool:
+  return len(extract_satire_keywords(text)) > 0
+
+
+# add new keyword to the dictionary and rebuild the pattern
+def add_satire_keyword(keyword: str) -> None:
+  global _SATIRE_PATTERN
+  kw = keyword.strip().lower()
+  if kw and kw not in SATIRE_KEYWORDS:
+    SATIRE_KEYWORDS.append(kw)
+    _SATIRE_PATTERN = _build_keyword_pattern()
+
 class SatireDataset(TorchDataset):
-  """
-  PyTorch Dataset for satire detection. Loads from CSV, preprocesses text,
-  and tokenizes for DistilBERT. Expects columns: text, label (0=non_satire, 1=satire).
-  """
-
   def __init__(
     self,
     csv_path: Optional[str] = None,
@@ -146,6 +191,7 @@ class SatireDataset(TorchDataset):
         texts.append(str(text) if text else "")
         labels.append(int(label) if label is not None and str(label).strip() else 0)
     return texts, labels
+
 
   # tokenize the text
   def _tokenize_all(self) -> None:
