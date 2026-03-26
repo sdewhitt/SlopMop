@@ -192,7 +192,6 @@ class SatireDataset(TorchDataset):
         labels.append(int(label) if label is not None and str(label).strip() else 0)
     return texts, labels
 
-
   # tokenize the text
   def _tokenize_all(self) -> None:
     if self.tokenizer is None:
@@ -219,6 +218,81 @@ class SatireDataset(TorchDataset):
     }
 
 
+def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
+  rng = random.Random(seed)
+  indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
+  indices_1 = [i for i in range(len(dataset)) if dataset["label"][i] == 1]
+  rng.shuffle(indices_0)
+  rng.shuffle(indices_1)
+  human_idx = indices_0[:n_human]
+  ai_idx = indices_1[:n_ai]
+  remainder = [i for i in range(len(dataset)) if i not in set(human_idx) | set(ai_idx)]
+  rng.shuffle(remainder)
+  mixed_idx = remainder[:n_mixed]
+  sel = human_idx + ai_idx + mixed_idx
+  rng.shuffle(sel)
+  return dataset.select(sel)
+
+
+# using hugging face (Thewillonline/reddit-sarcasm) dataset
+REDDIT_SARCASM_DATASET = "Thewillonline/reddit-sarcasm"
+_WEAK_SARCASM = re.compile(
+  r"(?i)(?:^|\s)/s(?:\s|$|[.,!?…])|"
+  r"\b(sarcasm|sarcastic|\/s|obvious\s+sarcasm|totally\s+serious|not\s+serious\s+at\s+all)\b"
+)
+
+
+def weak_sarcasm_label_from_text(text: str) -> int:
+  if not text or not isinstance(text, str):
+    return 0
+  return 1 if _WEAK_SARCASM.search(text) else 0
+
+
+
+# add weak binary labels for supervised fine-tuning:
+# 1 = likely sarcasm (/s tag, common markers), 0 = otherwise
+def load_reddit_sarcasm_hf_with_weak_labels(
+  split_slice: str = "train[:100000]",
+) -> Dataset:
+  raw = load_dataset(REDDIT_SARCASM_DATASET, split=split_slice)
+
+  def add_label(ex: dict) -> dict:
+    t = ex.get("text") or ""
+    return {"label": weak_sarcasm_label_from_text(t)}
+
+  return raw.map(add_label)
+
+
+# merge the hugging face reddit-sarcasm dataset with the local CSV dataset
+def merge_hf_reddit_sarcasm_with_csv(
+  csv_path: str,
+  tokenizer,
+  hf_split_slice: str = "train[:100000]",
+  n_label0: int = 250,
+  n_label1: int = 250,
+  n_mixed: int = 100,
+  seed: Optional[int] = None,
+) -> SatireDataset:
+  hf_ds = load_reddit_sarcasm_hf_with_weak_labels(split_slice=hf_split_slice)
+  hf_ds = sample_subset(hf_ds, n_human=n_label0, n_ai=n_label1, n_mixed=n_mixed, seed=seed)
+  hf_texts = [hf_ds[i]["text"] for i in range(len(hf_ds))]
+  hf_labels = [int(hf_ds[i]["label"]) for i in range(len(hf_ds))]
+
+  csv_texts: List[str] = []
+  csv_labels: List[int] = []
+  with open(csv_path, newline="", encoding="utf-8") as f:
+    reader = csv.DictReader(f)
+    cols = reader.fieldnames or []
+    tc = "text" if "text" in cols else cols[0]
+    for row in reader:
+      csv_texts.append(str(row.get(tc, "") or ""))
+      csv_labels.append(int(row["label"]) if row.get("label") not in (None, "") else 0)
+
+  merged_texts = hf_texts + csv_texts
+  merged_labels = hf_labels + csv_labels
+  return SatireDataset(texts=merged_texts, labels=merged_labels, tokenizer=tokenizer)
+
+
 # create the dataloaders
 def create_satire_dataloaders(
   csv_path: str,
@@ -228,9 +302,25 @@ def create_satire_dataloaders(
   test_ratio: float = 0.1,
   seed: int = 42,
   num_workers: int = 0,
+  use_hf_reddit_sarcasm: bool = False,
+  hf_split_slice: str = "train[:100000]",
+  n_hf_label0: int = 250,
+  n_hf_label1: int = 250,
+  n_hf_mixed: int = 100,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, int, int, int]:
-  # create the dataset
-  full_dataset = SatireDataset(csv_path=csv_path, tokenizer=tokenizer)
+  # create the dataset (optional: mix Thewillonline/reddit-sarcasm + local CSV)
+  if use_hf_reddit_sarcasm:
+    full_dataset = merge_hf_reddit_sarcasm_with_csv(
+      csv_path=csv_path,
+      tokenizer=tokenizer,
+      hf_split_slice=hf_split_slice,
+      n_label0=n_hf_label0,
+      n_label1=n_hf_label1,
+      n_mixed=n_hf_mixed,
+      seed=seed,
+    )
+  else:
+    full_dataset = SatireDataset(csv_path=csv_path, tokenizer=tokenizer)
   n = len(full_dataset)
   if n == 0:
     raise ValueError(f"No examples found in {csv_path}")
@@ -334,9 +424,18 @@ def train_on_social_media_data(
   val_ratio: float = 0.2,
   test_ratio: float = 0.1,
   seed: int = 42,
+  use_hf_reddit_sarcasm: bool = False,
+  hf_split_slice: str = "train[:100000]",
+  n_hf_label0: int = 50,
+  n_hf_label1: int = 50,
+  n_hf_mixed: int = 100,
 ) -> None:
   # load the dataset
   print(f"Loading dataset from {csv_path}...")
+  if use_hf_reddit_sarcasm:
+    print(
+      f"Mixing Hugging Face {REDDIT_SARCASM_DATASET} ({hf_split_slice}, sample_subset) with CSV for sarcasm/satire cues."
+    )
   # create the dataloaders
   train_loader, val_loader, test_loader, train_n, val_n, test_n = create_satire_dataloaders(
     csv_path=csv_path,
@@ -345,6 +444,11 @@ def train_on_social_media_data(
     val_ratio=val_ratio,
     test_ratio=test_ratio,
     seed=seed,
+    use_hf_reddit_sarcasm=use_hf_reddit_sarcasm,
+    hf_split_slice=hf_split_slice,
+    n_hf_label0=n_hf_label0,
+    n_hf_label1=n_hf_label1,
+    n_hf_mixed=n_hf_mixed,
   )
 
   # create the optimizer and loss function
@@ -471,6 +575,11 @@ if __name__ == "__main__":
       epochs=4,
       batch_size=16,
       lr=5e-5,
+      use_hf_reddit_sarcasm=True,
+      hf_split_slice="train[:100000]",
+      n_hf_label0=250,
+      n_hf_label1=250,
+      n_hf_mixed=100,
     )
   else:
     print(f"No test_dataset.csv found at {test_dataset_path}")
