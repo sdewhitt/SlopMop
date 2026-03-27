@@ -234,15 +234,16 @@ initFeedObserver().catch((e) => {
 // but the page does not reload. seenPostIds still has the post from the feed, so we skip it.
 // Rescan with a cleared cache so the post gets a badge.
 function setupNavigationListener(): void {
-  let lastPath = location.pathname + location.search;
+  let lastUrl = location.href;
   const checkUrl = (): void => {
-    const current = location.pathname + location.search;
-    if (current !== lastPath) {
-      lastPath = current;
+    const current = location.href;
+    if (current !== lastUrl) {
+      lastUrl = current;
       activeObserver?.rescanForNewPage?.();
     }
   };
   window.addEventListener('popstate', checkUrl);
+  window.addEventListener('hashchange', checkUrl);
   const origPush = history.pushState;
   const origReplace = history.replaceState;
   history.pushState = function (...args) {

@@ -7,8 +7,8 @@ const COMMENT_COMPONENTKEY_HINT = "COMMENT";
 /**
  * SiteAdapter for LinkedIn feed.
  * Locates posts via URN/href when present; otherwise uses current feed markup:
- * `data-testid="expandable-text-box"`, `div[role="listitem"][componentkey*="MAIN_FEED"]`, and
- * `componentkey`-derived ids for stable postIds. LinkedIn class names are hashed — avoid them.
+ * `data-testid="expandable-text-box"`, `componentkey` hints (MAIN_FEED, profile activity, etc.),
+ * and `componentkey`-derived ids for stable postIds. LinkedIn class names are hashed — avoid them.
  */
 export class LinkedInAdapter implements SiteAdapter {
   getSiteId(): string {
@@ -119,7 +119,7 @@ export class LinkedInAdapter implements SiteAdapter {
     if (fromUrl) return fromUrl;
 
     // 3) Modern feed: stable-ish id from componentkey (see findModernFeedPostRoots).
-    const ck = this.getMainFeedComponentKey(postNode);
+    const ck = this.getPostSurfaceComponentKey(postNode);
     if (ck) return `linkedin-ck-${this.fnv1a(ck)}`;
 
     // 4) Deterministic fallback hash when URN not in DOM.
@@ -305,7 +305,7 @@ export class LinkedInAdapter implements SiteAdapter {
     return roots;
   }
 
-  /** First main-post text box: not inside a componentkey comment block; prefer MAIN_FEED row. */
+  /** First main-post text box: not inside a componentkey comment block; prefer feed/profile row. */
   private findPrimaryPostExpandableIndex(
     expandables: HTMLElement[],
     post: Element,
@@ -328,19 +328,18 @@ export class LinkedInAdapter implements SiteAdapter {
 
   private looksLikeCommentExpandableNoPrimary(tb: HTMLElement, post: Element): boolean {
     const li = tb.closest("div[role='listitem']");
-    const ck = (li?.getAttribute("componentkey") ?? "").toUpperCase();
-    if (ck.includes(COMMENT_COMPONENTKEY_HINT)) return true;
+    const ck = li?.getAttribute("componentkey") ?? "";
+    if (this.componentKeyLooksLikeCommentBlock(ck)) return true;
     if (this.isInCommentOrReplyAriaRegion(tb, post)) return true;
     return false;
   }
 
-  /** First listitem whose componentkey looks like the main feed story (not a comment row). */
+  /** Listitem whose componentkey looks like the main story (feed or profile), not a comment row. */
   private isPrimaryFeedPostExpandable(tb: HTMLElement, _post: Element): boolean {
     const li = tb.closest("div[role='listitem']");
-    const ck = (li?.getAttribute("componentkey") ?? "").toUpperCase();
-    if (ck.includes(COMMENT_COMPONENTKEY_HINT)) return false;
-    if (ck.includes(MAIN_FEED_COMPONENTKEY)) return true;
-    return false;
+    const ck = li?.getAttribute("componentkey") ?? "";
+    if (this.componentKeyLooksLikeCommentBlock(ck)) return false;
+    return this.componentKeyLooksLikePostSurface(ck);
   }
 
   private looksLikeCommentExpandable(
@@ -350,10 +349,12 @@ export class LinkedInAdapter implements SiteAdapter {
   ): boolean {
     if (this.isInsideCommentComponentKeyBlock(tb, post)) return true;
     const li = tb.closest("div[role='listitem']");
-    const ck = (li?.getAttribute("componentkey") ?? "").toUpperCase();
-    if (ck.includes(COMMENT_COMPONENTKEY_HINT)) return true;
+    const ck = li?.getAttribute("componentkey") ?? "";
+    if (this.componentKeyLooksLikeCommentBlock(ck)) return true;
     if (this.isInCommentOrReplyAriaRegion(tb, post)) return true;
-    if (ck.includes(MAIN_FEED_COMPONENTKEY)) return false;
+    if (this.componentKeyLooksLikePostSurface(ck) && !this.componentKeyLooksLikeCommentBlock(ck)) {
+      return false;
+    }
     return Boolean(
       primaryEl.compareDocumentPosition(tb) & Node.DOCUMENT_POSITION_FOLLOWING,
     );
@@ -412,9 +413,9 @@ export class LinkedInAdapter implements SiteAdapter {
       if (postRoot && this.isPlausibleModernFeedPost(postRoot)) raw.add(postRoot);
     }
 
-    for (const li of root.querySelectorAll(
-      `div[role="listitem"][componentkey*="${MAIN_FEED_COMPONENTKEY}"]`,
-    )) {
+    for (const li of root.querySelectorAll('div[role="listitem"][componentkey]')) {
+      const ck = li.getAttribute("componentkey") ?? "";
+      if (!this.componentKeyLooksLikePostSurface(ck)) continue;
       let insideOther = false;
       for (const r of raw) {
         if (r !== li && r.contains(li)) {
@@ -431,7 +432,60 @@ export class LinkedInAdapter implements SiteAdapter {
     return this.dedupeToMinimalRoots(Array.from(raw));
   }
 
+  /** True when componentkey identifies a LinkedIn post/update (feed, profile activity, etc.). */
+  private componentKeyLooksLikePostSurface(ck: string): boolean {
+    const u = ck.toUpperCase();
+    if (this.componentKeyLooksLikeCommentBlock(ck)) return false;
+    if (
+      u.includes("COMMENT_THREAD") ||
+      u.includes("COMMENT_VIEW") ||
+      u.includes("COMMENT_LIST") ||
+      u.includes("REPLY_THREAD")
+    ) {
+      return false;
+    }
+    if (u.includes(MAIN_FEED_COMPONENTKEY)) return true;
+    if (u.includes("FEEDTYPE") || u.includes("FEED_TYPE")) return true;
+    if (u.includes("URN:LI:ACTIVITY") || u.includes("URN:LI:UGCPOST")) return true;
+    if (u.includes("RECENT_ACTIVITY") || u.includes("RECENTACTIVITY")) return true;
+    if (u.includes("SINGLE_POST") || u.includes("POST_DETAIL") || u.includes("FULL_UPDATE")) {
+      return true;
+    }
+    if (
+      u.includes("PROFILE") &&
+      (u.includes("FEED") ||
+        u.includes("ACTIVITY") ||
+        u.includes("POST") ||
+        u.includes("UPDATE") ||
+        u.includes("RECENT"))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  /** urn:li:comment in componentkey — comment row, not post root. */
+  private componentKeyLooksLikeCommentBlock(ck: string): boolean {
+    return ck.toUpperCase().includes("URN:LI:COMMENT");
+  }
+
   private findModernPostRootFromTextBox(tb: Element): Element | null {
+    let el: Element | null = tb;
+    let depth = 0;
+    const maxDepth = 52;
+    while (el && el !== document.body && depth++ < maxDepth) {
+      const ck = el.getAttribute("componentkey")?.trim() ?? "";
+      if (ck) {
+        if (this.componentKeyLooksLikeCommentBlock(ck)) {
+          el = el.parentElement;
+          continue;
+        }
+        if (this.componentKeyLooksLikePostSurface(ck)) {
+          return el;
+        }
+      }
+      el = el.parentElement;
+    }
     return (
       tb.closest(`div[role="listitem"][componentkey*="${MAIN_FEED_COMPONENTKEY}"]`) ??
       tb.closest(`[componentkey*="${MAIN_FEED_COMPONENTKEY}"]`)
@@ -465,11 +519,11 @@ export class LinkedInAdapter implements SiteAdapter {
     );
   }
 
-  private getMainFeedComponentKey(node: Element): string | null {
+  private getPostSurfaceComponentKey(node: Element): string | null {
     let el: Element | null = node;
     while (el && el !== document.body) {
       const ck = el.getAttribute("componentkey")?.trim();
-      if (ck && ck.includes(MAIN_FEED_COMPONENTKEY)) return ck;
+      if (ck && this.componentKeyLooksLikePostSurface(ck)) return ck;
       el = el.parentElement;
     }
     return null;

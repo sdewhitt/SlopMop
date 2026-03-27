@@ -22,6 +22,22 @@ describe('LinkedInAdapter', () => {
     expect(adapter.getSiteId()).toBe('linkedin.com');
   });
 
+  it('finds post nodes on profile / activity surfaces without MAIN_FEED in componentkey', () => {
+    const postOuter = document.createElement('div');
+    postOuter.setAttribute('role', 'listitem');
+    postOuter.setAttribute('componentkey', 'xProfileFeedType_RECENT_ACTIVITY_y');
+    const textBox = document.createElement('span');
+    textBox.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(textBox, 'Post on profile view');
+    postOuter.appendChild(textBox);
+    document.body.appendChild(postOuter);
+
+    const found = adapter.findPostNodes(document);
+    expect(found.length).toBeGreaterThanOrEqual(1);
+    expect(found).toContain(postOuter);
+    expect(adapter.getStablePostId(postOuter)).toMatch(/^linkedin-ck-/);
+  });
+
   it('finds post nodes via role=listitem + MAIN_FEED componentkey + expandable-text-box', () => {
     const li = document.createElement('div');
     li.setAttribute('role', 'listitem');
