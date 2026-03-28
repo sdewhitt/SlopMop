@@ -352,6 +352,12 @@ class TextDetectors:
       conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
       return round(conf, 4), label, []
 
+    # Too little text for meaningful token-level attribution; same confidence, no spans.
+    min_chars_for_spans = 5
+    if len(text.strip()) < min_chars_for_spans:
+      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      return round(conf, 4), label, []
+
     enc = self.tokenizer(
       text,
       padding="max_length",

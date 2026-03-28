@@ -1,4 +1,4 @@
-# Segment Attribution (Token Masking)
+﻿# Segment Attribution (Token Masking)
 
 This document describes how we attribute AI detection scores to specific character spans in the input text.
 

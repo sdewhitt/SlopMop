@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import sys
@@ -130,6 +130,14 @@ def score_text_with_spans(text: str) -> tuple[float, str, list[HighlightSpan]]:
     highlights = [HighlightSpan(start=s, end=e, score=sc) for s, e, sc in spans]
     return round(confidence, 4), label, highlights
 
+
+def score_text_without_spans(text: str) -> tuple[float, str]:
+    """Single forward pass; no token masking (faster)."""
+    confidence, label = text_detector.calculate_confidence(text, clean=True)
+    if label == "mixed":
+        label = "ai" if confidence >= 0.5 else "human"
+    return round(float(confidence), 4), label
+
 def generate_explanation(confidence: float, label: str) -> str:
     if label == "ai":
         return (
@@ -142,7 +150,13 @@ def generate_explanation(confidence: float, label: str) -> str:
     )
 
 @app.post("/detect", response_model=DetectResponse)
-def detect(request: DetectRequest):
+def detect(
+    request: DetectRequest,
+    include_spans: bool = Query(
+        default=True,
+        description="If false, skip segment attribution (one forward pass only).",
+    ),
+):
     # strip spaces from head and tail of text
     clean_text = request.text.strip()
 
@@ -156,8 +170,13 @@ def detect(request: DetectRequest):
             status_code=400,
             detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
         )
-    
-    confidence, label, highlights = score_text_with_spans(clean_text)
+
+    if include_spans:
+        confidence, label, highlights = score_text_with_spans(clean_text)
+    else:
+        confidence, label = score_text_without_spans(clean_text)
+        highlights = []
+
     explanation = generate_explanation(confidence, label)
     return DetectResponse(confidence=confidence, label=label, explanation=explanation, highlights=highlights)
 
