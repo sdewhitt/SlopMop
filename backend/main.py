@@ -88,6 +88,24 @@ else:
 MAX_TEXT_LENGTH = 5000
 
 
+def _span_mask_eval_cap() -> int:
+    """Max token-mask forward passes for /detect?include_spans=true (latency knob)."""
+    raw = os.environ.get("SPAN_MAX_MASK_EVALS", "32").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 32
+    return max(4, min(n, 128))
+
+
+SPAN_MASK_EVAL_CAP = _span_mask_eval_cap()
+print(
+    f"[SlopMop] Span attribution: up to {SPAN_MASK_EVAL_CAP} mask passes per request "
+    "(env SPAN_MAX_MASK_EVALS)",
+    flush=True,
+)
+
+
 class DetectRequest(BaseModel):
     text: str
 
@@ -124,7 +142,11 @@ def root():
 
 # helper function to score text and get segment highlights
 def score_text_with_spans(text: str) -> tuple[float, str, list[HighlightSpan]]:
-    confidence, label, spans = text_detector.score_text_with_spans(text, clean=True)
+    confidence, label, spans = text_detector.score_text_with_spans(
+        text,
+        clean=True,
+        max_tokens_to_evaluate=SPAN_MASK_EVAL_CAP,
+    )
     if label == "mixed":
         label = "ai" if confidence >= 0.5 else "human"
     highlights = [HighlightSpan(start=s, end=e, score=sc) for s, e, sc in spans]

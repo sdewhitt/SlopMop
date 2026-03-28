@@ -507,7 +507,8 @@ async function handleDetect(text: string): Promise<MessageResponse> {
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
-    const result = await detectText(text);
+    const popupSettings = await getDetectionSettings();
+    const result = await detectText(text, popupSettings.highlightSegments);
     await browser.storage.local.set({
       detectResponse: result,
       lastDetectResponse: result,
@@ -668,7 +669,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     const textPromise = textLangSupported
       ? (async () => {
           const start = performance.now();
-          const result = await detectText(plainText);
+          const result = await detectText(plainText, settings.highlightSegments);
           return { result, elapsedMs: Math.round(performance.now() - start) };
         })()
       : Promise.resolve(null);

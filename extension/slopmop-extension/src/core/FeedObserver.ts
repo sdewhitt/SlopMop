@@ -11,7 +11,8 @@ const DEBUG_EXTRACTION = true;
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
 // if analysis takes longer than this, we show a timeout badge to the user.
-const ANALYZE_TIMEOUT_MS = 15_000;
+// Remote ML APIs (e.g. Render) often need >15s after deploy or cold start.
+const ANALYZE_TIMEOUT_MS = 60_000;
 
 export class FeedObserver {
     // Orchestrator for the content script pipeline.

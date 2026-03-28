@@ -339,12 +339,13 @@ class TextDetectors:
     clean: bool = True,
     human_max: float = 0.40,
     ai_min: float = 0.70,
-    max_tokens_to_evaluate: int = 64,
+    max_tokens_to_evaluate: int = 32,
     top_k_spans: int = 8,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
     """
     Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
     Uses token masking: mask each token, re-run inference, contribution = baseline - masked.
+    max_tokens_to_evaluate caps how many *content* tokens are masked (each = one forward pass).
     """
     if clean:
       text = preprocess_text(text)
@@ -383,9 +384,12 @@ class TextDetectors:
       mask_token_id = self.tokenizer.pad_token_id or 0
 
     contributions: list[tuple[int, int, float]] = []
-    num_tokens = min(input_ids.shape[1], max_tokens_to_evaluate)
-
-    for i in range(num_tokens):
+    # Only mask real content tokens, and cap at max_tokens_to_evaluate forwards.
+    # (Previously we iterated fixed sequence positions 0..63; long text used almost
+    # all of them as real tokens while short text hit padding early → huge latency skew.)
+    mask_indices: list[int] = []
+    seq_len = int(input_ids.shape[1])
+    for i in range(seq_len):
       o = offset_mapping[i]
       start, end = (o.tolist() if hasattr(o, "tolist") else o)
       if start == 0 and end == 0:
@@ -393,6 +397,11 @@ class TextDetectors:
       token_id = input_ids[0, i].item()
       if token_id in (self.tokenizer.pad_token_id, self.tokenizer.cls_token_id, self.tokenizer.sep_token_id):
         continue
+      mask_indices.append(i)
+
+    for i in mask_indices[:max_tokens_to_evaluate]:
+      o = offset_mapping[i]
+      start, end = (o.tolist() if hasattr(o, "tolist") else o)
 
       masked_ids = input_ids.clone()
       masked_ids[0, i] = mask_token_id
