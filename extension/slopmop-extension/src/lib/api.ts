@@ -3,6 +3,8 @@
  * Must be called from extension context as vite injects env at build time.
  */
 
+import type { HighlightSpan } from '@src/types/domain';
+
 const getBaseUrl = (): string => {
     const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
 
@@ -22,13 +24,17 @@ export interface DetectResponse {
     confidence: number;
     label: string;
     explanation: string;
-    highlights?: Array<{ start: number; end: number; score: number }>;
+    highlights?: HighlightSpan[];
 }
 
 /*
 * Sends text to backend API and returns detection result.
+* @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
 */
-export async function detectText(text: string): Promise<DetectResponse> {
+export async function detectText(
+    text: string,
+    includeSpans: boolean = true,
+): Promise<DetectResponse> {
 const baseUrl: string = getBaseUrl();
 
 // remove extra spaces before sending to server
@@ -38,7 +44,12 @@ const requestBody = {
     text: cleanedText
 };
 
-const response = await fetch(baseUrl + "/detect", {
+const detectUrl =
+    baseUrl +
+    '/detect?include_spans=' +
+    (includeSpans ? 'true' : 'false');
+
+const response = await fetch(detectUrl, {
     method: "POST",
     headers: {
     "Content-Type": "application/json"

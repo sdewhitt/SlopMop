@@ -26,7 +26,12 @@ import {
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
-import type { DetectionResponse, ImageDetectionResult, NormalizedPostContent } from '@src/types/domain';
+import type {
+  DetectionResponse,
+  HighlightSpan,
+  ImageDetectionResult,
+  NormalizedPostContent,
+} from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import {
   getIgnoredSites as getIgnoredSitesLocal,
@@ -838,6 +843,26 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
   return fakeResponse;
 }
 
+/** Image `/detect-image` JSON has no `highlights`; text `/detect` does. */
+function isTextDetectApiResult(
+  result: DetectResponse | DetectImageResponse,
+): result is DetectResponse {
+  return 'highlights' in result;
+}
+
+function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
+  return raw.filter(
+    (s) =>
+      Number.isFinite(s.start) &&
+      Number.isFinite(s.end) &&
+      Number.isFinite(s.score) &&
+      s.start >= 0 &&
+      s.end > s.start &&
+      Number.isInteger(s.start) &&
+      Number.isInteger(s.end),
+  );
+}
+
 function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
@@ -855,10 +880,27 @@ function mapToDetectionResponse(
       ? 'unknown'
       : 'likely_human';
 
-  const spans =
-    'highlights' in apiResult && Array.isArray(apiResult.highlights)
-      ? apiResult.highlights.map((h) => ({ start: h.start, end: h.end, score: h.score }))
-      : undefined;
+  const rawSpans: HighlightSpan[] =
+    isTextDetectApiResult(apiResult) && Array.isArray(apiResult.highlights)
+      ? apiResult.highlights.map((h) => ({
+          start: h.start,
+          end: h.end,
+          score: h.score,
+        }))
+      : [];
+
+  const highlightedSpans = normalizeApiHighlightSpans(rawSpans);
+
+  const highlights =
+    highlightedSpans.length > 0
+      ? highlightedSpans.map((s) => ({
+          start: s.start,
+          end: s.end,
+          reason:
+            'Segment influence (leave-one-token-out): ' +
+            `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
+        }))
+      : [];
 
   return {
     requestId: crypto.randomUUID(),
@@ -867,8 +909,8 @@ function mapToDetectionResponse(
     confidence: apiResult.confidence,
     explanation: {
       summary: apiResult.explanation,
-      highlights: [],
-      ...(spans && spans.length > 0 ? { highlightedSpans: spans } : {}),
+      highlights,
+      ...(highlightedSpans.length > 0 ? { highlightedSpans } : {}),
       model: { name: 'slopmop-api', version: '1.0' },
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
