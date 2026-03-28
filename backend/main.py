@@ -89,12 +89,12 @@ MAX_TEXT_LENGTH = 5000
 
 
 def _span_mask_eval_cap() -> int:
-    """Max token-mask forward passes for /detect?include_spans=true (latency knob)."""
-    raw = os.environ.get("SPAN_MAX_MASK_EVALS", "32").strip()
+    """Max masked tokens evaluated per request (batched into one forward pass)."""
+    raw = os.environ.get("SPAN_MAX_MASK_EVALS", "24").strip()
     try:
         n = int(raw)
     except ValueError:
-        n = 32
+        n = 24
     return max(4, min(n, 128))
 
 

@@ -333,19 +333,38 @@ class TextDetectors:
       return torch.sigmoid(logits.squeeze(-1)).item()
     return torch.softmax(logits, dim=1)[0, 1].item()
 
+  def _get_raw_probs_batch(
+    self,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+  ) -> list[float]:
+    """Batched probabilities (0-1 each); tensors shaped [batch, seq_len]."""
+    enc = {"input_ids": input_ids, "attention_mask": attention_mask}
+    enc = {k: v.to(self.device) for k, v in enc.items()}
+    self.model.eval()
+    with torch.no_grad():
+      outputs = self.model(**enc)
+    logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+    if self.use_binary_logit:
+      probs = torch.sigmoid(logits.squeeze(-1))
+    else:
+      probs = torch.softmax(logits, dim=1)[:, 1]
+    return [float(x) for x in probs.detach().cpu().flatten().tolist()]
+
   def score_text_with_spans(
     self,
     text: str,
     clean: bool = True,
     human_max: float = 0.40,
     ai_min: float = 0.70,
-    max_tokens_to_evaluate: int = 32,
+    max_tokens_to_evaluate: int = 24,
     top_k_spans: int = 8,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
     """
     Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
     Uses token masking: mask each token, re-run inference, contribution = baseline - masked.
-    max_tokens_to_evaluate caps how many *content* tokens are masked (each = one forward pass).
+    Masked variants are run in **one batched forward** (not N sequential passes).
+    max_tokens_to_evaluate caps how many *content* tokens are masked.
     """
     if clean:
       text = preprocess_text(text)
@@ -399,16 +418,20 @@ class TextDetectors:
         continue
       mask_indices.append(i)
 
-    for i in mask_indices[:max_tokens_to_evaluate]:
-      o = offset_mapping[i]
-      start, end = (o.tolist() if hasattr(o, "tolist") else o)
-
-      masked_ids = input_ids.clone()
-      masked_ids[0, i] = mask_token_id
-      masked_prob = self._get_raw_prob(text, masked_ids, attention_mask)
-      contribution = max(0.0, baseline_prob - masked_prob)
-      if contribution > 0.001:
-        contributions.append((start, end, round(contribution, 4)))
+    to_eval = mask_indices[:max_tokens_to_evaluate]
+    if to_eval:
+      k = len(to_eval)
+      batch_ids = input_ids.expand(k, -1).clone()
+      batch_attn = attention_mask.expand(k, -1).clone()
+      for row, i in enumerate(to_eval):
+        batch_ids[row, i] = mask_token_id
+      masked_probs = self._get_raw_probs_batch(batch_ids, batch_attn)
+      for row, i in enumerate(to_eval):
+        o = offset_mapping[i]
+        start, end = (o.tolist() if hasattr(o, "tolist") else o)
+        contribution = max(0.0, baseline_prob - masked_probs[row])
+        if contribution > 0.001:
+          contributions.append((start, end, round(contribution, 4)))
 
     contributions.sort(key=lambda x: x[2], reverse=True)
     top = contributions[:top_k_spans]

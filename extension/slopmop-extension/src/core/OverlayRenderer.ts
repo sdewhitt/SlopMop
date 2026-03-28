@@ -307,12 +307,10 @@ export class OverlayRenderer {
         }
         tip.appendChild(header);
 
-        if (this.settings.highlightSegments) {
-            const summary = document.createElement("div");
-            Object.assign(summary.style, { fontSize: "14px" });
-            summary.textContent = res.explanation.summary;
-            tip.appendChild(summary);
-        }
+        const summary = document.createElement("div");
+        Object.assign(summary.style, { fontSize: "14px", marginTop: "8px" });
+        summary.textContent = res.explanation.summary;
+        tip.appendChild(summary);
 
         if (res.imageResult) {
             this.appendImageSection(tip, res.imageResult, "16px", "14px");
@@ -394,7 +392,7 @@ export class OverlayRenderer {
 
         const showSegmentDetail = this.settings.highlightSegments;
 
-        // pattern-based reasons (local heuristics); tie to segment highlighting preference
+        // pattern-based reasons (local heuristics); only when segment highlights are on
         const tooltipPatternReasons = showSegmentDetail ? getPatternReasons(postText) : [];
         if (tooltipPatternReasons.length > 0) {
             const patternEl = document.createElement("div");
@@ -408,16 +406,16 @@ export class OverlayRenderer {
             tip.appendChild(patternEl);
         }
 
-        if (showSegmentDetail) {
-            const summary = document.createElement("div");
-            Object.assign(summary.style, {
-                marginBottom: "8px",
-                fontSize: tooltipPatternReasons.length > 0 ? "11px" : "12px",
-                color: tooltipPatternReasons.length > 0 ? "#9ca3af" : "#e5e7eb",
-            });
-            summary.textContent = res.explanation.summary;
-            tip.appendChild(summary);
-        }
+        // Backend explanation (e.g. mock heuristic copy) — show whenever highlights are off,
+        // and when on (above per-segment detail below).
+        const summary = document.createElement("div");
+        Object.assign(summary.style, {
+            marginBottom: "8px",
+            fontSize: tooltipPatternReasons.length > 0 ? "11px" : "12px",
+            color: tooltipPatternReasons.length > 0 ? "#9ca3af" : "#e5e7eb",
+        });
+        summary.textContent = res.explanation.summary;
+        tip.appendChild(summary);
 
         // highlights section 
         // each highlight has start/end character offsets into postText and a reason.
