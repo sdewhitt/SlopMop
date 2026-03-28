@@ -21,6 +21,14 @@ export class OverlayRenderer {
         this.settings = settings;
     }
 
+    /** Merge new settings and re-apply visible badges/tooltip wiring for completed scans. */
+    updateSettings(settings: DetectionSettings): void {
+        this.settings = settings;
+        for (const [postId, res] of this.mapToResponse) {
+            this.renderResult(postId, res);
+        }
+    }
+
     protected getBadgePosition(): Record<string, string> {
         return { bottom: "8px", right: "8px" };
     }
@@ -243,10 +251,12 @@ export class OverlayRenderer {
         }
         tip.appendChild(header);
 
-        const summary = document.createElement("div");
-        Object.assign(summary.style, { fontSize: "14px" });
-        summary.textContent = res.explanation.summary;
-        tip.appendChild(summary);
+        if (this.settings.highlightSegments) {
+            const summary = document.createElement("div");
+            Object.assign(summary.style, { fontSize: "14px" });
+            summary.textContent = res.explanation.summary;
+            tip.appendChild(summary);
+        }
 
         if (res.imageResult) {
             this.appendImageSection(tip, res.imageResult, "16px", "14px");
@@ -256,7 +266,9 @@ export class OverlayRenderer {
     }
 
     private createTooltip(res: DetectionResponse, postText: string): HTMLElement {
-        const highlights = res.explanation.highlights ?? [];
+        const highlights = this.settings.highlightSegments
+            ? (res.explanation.highlights ?? [])
+            : [];
         // if there are highlights to show, use a wider tooltip to fit quoted excerpts.
         // otherwise keep it compact. height is always auto so it grows with content
         const hasHighlights = highlights.length > 0 && postText.length > 0;
@@ -324,8 +336,10 @@ export class OverlayRenderer {
         track.appendChild(fill);
         tip.appendChild(track);
 
-        // pattern-based reasons first (em dashes, common AI phrases) when present — main "why" for the user
-        const tooltipPatternReasons = getPatternReasons(postText);
+        const showSegmentDetail = this.settings.highlightSegments;
+
+        // pattern-based reasons (local heuristics); tie to segment highlighting preference
+        const tooltipPatternReasons = showSegmentDetail ? getPatternReasons(postText) : [];
         if (tooltipPatternReasons.length > 0) {
             const patternEl = document.createElement("div");
             Object.assign(patternEl.style, {
@@ -338,15 +352,16 @@ export class OverlayRenderer {
             tip.appendChild(patternEl);
         }
 
-        // model summary (generic explanation from backend/fake)
-        const summary = document.createElement("div");
-        Object.assign(summary.style, {
-            marginBottom: "8px",
-            fontSize: tooltipPatternReasons.length > 0 ? "11px" : "12px",
-            color: tooltipPatternReasons.length > 0 ? "#9ca3af" : "#e5e7eb",
-        });
-        summary.textContent = res.explanation.summary;
-        tip.appendChild(summary);
+        if (showSegmentDetail) {
+            const summary = document.createElement("div");
+            Object.assign(summary.style, {
+                marginBottom: "8px",
+                fontSize: tooltipPatternReasons.length > 0 ? "11px" : "12px",
+                color: tooltipPatternReasons.length > 0 ? "#9ca3af" : "#e5e7eb",
+            });
+            summary.textContent = res.explanation.summary;
+            tip.appendChild(summary);
+        }
 
         // highlights section 
         // each highlight has start/end character offsets into postText and a reason.

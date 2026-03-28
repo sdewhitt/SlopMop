@@ -102,6 +102,12 @@ export class FeedObserver {
         }
     }
 
+    /** Apply updated detection settings and refresh overlay UI for posts already scanned. */
+    updateSettings(settings: DetectionSettings): void {
+        this.settings = settings;
+        this.overlay.updateSettings(settings);
+    }
+
     private onDomMutated(): void {
         // debounce: Reddit fires many mutations in rapid succession
         // (e.g. 30 mutations in 50ms when loading a batch of posts).

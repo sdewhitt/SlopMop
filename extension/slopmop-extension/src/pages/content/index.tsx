@@ -211,6 +211,13 @@ browser.storage.onChanged.addListener((changes, areaName) => {
       (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
     const shouldRun = shouldRunOnCurrentSite(newSettings, newIgnoredSites);
 
+    if (!newSettings.enabled && activeObserver) {
+      activeObserver.stop();
+      activeObserver = null;
+      console.log('[SlopMop] FeedObserver stopped (extension disabled)');
+      return;
+    }
+
     if (!shouldRun && activeObserver) {
       activeObserver.stop();
       activeObserver = null;
@@ -218,7 +225,12 @@ browser.storage.onChanged.addListener((changes, areaName) => {
       return;
     }
 
-    if (shouldRun && !activeObserver) {
+    if (shouldRun && newSettings.enabled && activeObserver) {
+      activeObserver.updateSettings(newSettings);
+      return;
+    }
+
+    if (shouldRun && newSettings.enabled && !activeObserver) {
       initFeedObserver().catch((e) => {
         console.error('[SlopMop] observer re-init error', e);
       });
