@@ -26,7 +26,12 @@ import {
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
-import type { DetectionResponse, ImageDetectionResult, NormalizedPostContent } from '@src/types/domain';
+import type {
+  DetectionResponse,
+  HighlightSpan,
+  ImageDetectionResult,
+  NormalizedPostContent,
+} from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
 import {
   getIgnoredSites as getIgnoredSitesLocal,
@@ -34,6 +39,13 @@ import {
   normalizeHost,
   validateHost,
 } from '@src/utils/disabledWebsites';
+import {
+  buildHistoryEntry,
+  saveHistoryEntry,
+  getHistory,
+  clearHistory,
+  togglePin,
+} from '@src/utils/detectionHistory';
 
 console.log('background script loaded');
 
@@ -223,6 +235,7 @@ interface BackgroundMessage {
   patch?: Partial<DetectionSettings>;
   text?: string;
   payload?: NormalizedPostContent;
+  postId?: string;
 }
 
 interface MessageResponse {
@@ -269,6 +282,21 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleAddIgnoredSite(msg.uid, msg.site!);
     case 'SLOPMOP_REMOVE_IGNORED_SITE':
       return handleRemoveIgnoredSite(msg.uid, msg.site!);
+    // ── History ──
+    case 'SLOPMOP_GET_HISTORY':
+      return handleGetHistory();
+    case 'SLOPMOP_CLEAR_HISTORY':
+      return handleClearHistory();
+    case 'SLOPMOP_TOGGLE_PIN':
+      return handleTogglePin(msg.postId!);
+    case 'SLOPMOP_SCAN_ENTIRE_PAGE': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return;
+      browser.tabs.sendMessage(tabId, { type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {
+        // Content script may not be available (e.g. standalone popup tab)
+      });
+      return true;
+    }
     default:
       return;
   }
@@ -437,6 +465,35 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
   }
 }
 
+// ── History handlers ──────────────────────────────────────────────
+
+async function handleGetHistory(): Promise<MessageResponse> {
+  try {
+    const entries = await getHistory();
+    return { success: true, data: entries };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleClearHistory(): Promise<MessageResponse> {
+  try {
+    await clearHistory();
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleTogglePin(postId: string): Promise<MessageResponse> {
+  try {
+    await togglePin(postId);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
 async function handleDetect(text: string): Promise<MessageResponse> {
   if (!isTextLanguageSupported(text)) {
     const langInfo = getLanguageSupportInfo(text);
@@ -450,7 +507,8 @@ async function handleDetect(text: string): Promise<MessageResponse> {
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
-    const result = await detectText(text);
+    const popupSettings = await getDetectionSettings();
+    const result = await detectText(text, popupSettings.highlightSegments);
     await browser.storage.local.set({
       detectResponse: result,
       lastDetectResponse: result,
@@ -462,6 +520,32 @@ async function handleDetect(text: string): Promise<MessageResponse> {
 }
 
 // ── Post analysis handlers ──────────────────────────────────────
+
+/**
+ * Saves a successful detection result to history, guarded by incognito check.
+ * Failures are swallowed — history is best-effort and must never affect detection.
+ */
+async function maybeSaveToHistory(
+  post: NormalizedPostContent,
+  response: DetectionResponse,
+  tabId: number,
+): Promise<void> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return;
+    const entry = buildHistoryEntry(
+      post.postId,
+      post.url,
+      post.site,
+      post.text?.plain ?? '',
+      response.confidence,
+      response.verdict,
+    );
+    await saveHistoryEntry(entry);
+  } catch (err) {
+    console.error('[SlopMop] Failed to save history entry', err);
+  }
+}
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
   await markScanStarted();
@@ -512,6 +596,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         type: 'DETECTION_RESULT',
         payload: fakeResponse,
       });
+      maybeSaveToHistory(enrichedPost, fakeResponse, tabId).catch(() => {});
       await finalizeStats(fakeResponse.verdict === 'likely_ai');
     } else {
       await browser.tabs.sendMessage(tabId, {
@@ -537,6 +622,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
           type: 'DETECTION_RESULT',
           payload: mapped,
         });
+        maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
         await finalizeStats(mapped.verdict === 'likely_ai');
         return;
       } catch {
@@ -583,7 +669,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     const textPromise = textLangSupported
       ? (async () => {
           const start = performance.now();
-          const result = await detectText(plainText);
+          const result = await detectText(plainText, settings.highlightSegments);
           return { result, elapsedMs: Math.round(performance.now() - start) };
         })()
       : Promise.resolve(null);
@@ -611,6 +697,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         type: 'DETECTION_RESULT',
         payload: imgResponse,
       });
+      maybeSaveToHistory(enrichedPost, imgResponse, tabId).catch(() => {});
       await finalizeStats(imgResponse.verdict === 'likely_ai');
       return;
     }
@@ -635,6 +722,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       type: 'DETECTION_RESULT',
       payload: mapped,
     });
+    maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
     const message = err instanceof Error ? err.message : 'network error';
@@ -669,9 +757,22 @@ async function fetchImagesThrottled(
 }
 
 // Fetches a single image by URL and returns its contents as a base64 string.
+// Skips fetch when srcUrl is empty, a data/blob URL, or otherwise invalid —
+// e.g. LinkedIn lazy-loading can yield empty src before the real URL loads,
+// and fetch("") in a service worker can resolve to chrome-extension://invalid/.
 async function fetchImageAsBase64(srcUrl: string): Promise<string> {
+  const trimmed = (srcUrl ?? "").trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("chrome-extension:") ||
+    (!trimmed.startsWith("http://") && !trimmed.startsWith("https://"))
+  ) {
+    return "";
+  }
   try {
-    const response = await fetch(srcUrl);
+    const response = await fetch(trimmed);
     if (!response.ok) return '';
     const arrayBuffer = await response.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
@@ -743,6 +844,26 @@ function buildFakeResponse(post: NormalizedPostContent): DetectionResponse | nul
   return fakeResponse;
 }
 
+/** Image `/detect-image` JSON has no `highlights`; text `/detect` does. */
+function isTextDetectApiResult(
+  result: DetectResponse | DetectImageResponse,
+): result is DetectResponse {
+  return 'highlights' in result;
+}
+
+function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
+  return raw.filter(
+    (s) =>
+      Number.isFinite(s.start) &&
+      Number.isFinite(s.end) &&
+      Number.isFinite(s.score) &&
+      s.start >= 0 &&
+      s.end > s.start &&
+      Number.isInteger(s.start) &&
+      Number.isInteger(s.end),
+  );
+}
+
 function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
@@ -760,6 +881,28 @@ function mapToDetectionResponse(
       ? 'unknown'
       : 'likely_human';
 
+  const rawSpans: HighlightSpan[] =
+    isTextDetectApiResult(apiResult) && Array.isArray(apiResult.highlights)
+      ? apiResult.highlights.map((h) => ({
+          start: h.start,
+          end: h.end,
+          score: h.score,
+        }))
+      : [];
+
+  const highlightedSpans = normalizeApiHighlightSpans(rawSpans);
+
+  const highlights =
+    highlightedSpans.length > 0
+      ? highlightedSpans.map((s) => ({
+          start: s.start,
+          end: s.end,
+          reason:
+            'Segment influence (leave-one-token-out): ' +
+            `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
+        }))
+      : [];
+
   return {
     requestId: crypto.randomUUID(),
     postId,
@@ -767,7 +910,8 @@ function mapToDetectionResponse(
     confidence: apiResult.confidence,
     explanation: {
       summary: apiResult.explanation,
-      highlights: [],
+      highlights,
+      ...(highlightedSpans.length > 0 ? { highlightedSpans } : {}),
       model: { name: 'slopmop-api', version: '1.0' },
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },

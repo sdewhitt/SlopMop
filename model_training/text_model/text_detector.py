@@ -321,6 +321,146 @@ class TextDetectors:
       return "mixed"
     return "ai"
 
+  def _get_raw_prob(self, text: str, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> float:
+    """Return model output probability (0-1) without LLM metadata adjustment."""
+    enc = {"input_ids": input_ids, "attention_mask": attention_mask}
+    enc = {k: v.to(self.device) for k, v in enc.items()}
+    self.model.eval()
+    with torch.no_grad():
+      outputs = self.model(**enc)
+    logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+    if self.use_binary_logit:
+      return torch.sigmoid(logits.squeeze(-1)).item()
+    return torch.softmax(logits, dim=1)[0, 1].item()
+
+  def _get_raw_probs_batch(
+    self,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+  ) -> list[float]:
+    """Batched probabilities (0-1 each); tensors shaped [batch, seq_len]."""
+    enc = {"input_ids": input_ids, "attention_mask": attention_mask}
+    enc = {k: v.to(self.device) for k, v in enc.items()}
+    self.model.eval()
+    with torch.no_grad():
+      outputs = self.model(**enc)
+    logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+    if self.use_binary_logit:
+      probs = torch.sigmoid(logits.squeeze(-1))
+    else:
+      probs = torch.softmax(logits, dim=1)[:, 1]
+    return [float(x) for x in probs.detach().cpu().flatten().tolist()]
+
+  def score_text_with_spans(
+    self,
+    text: str,
+    clean: bool = True,
+    human_max: float = 0.40,
+    ai_min: float = 0.70,
+    max_tokens_to_evaluate: int = 24,
+    top_k_spans: int = 8,
+  ) -> tuple[float, str, list[tuple[int, int, float]]]:
+    """
+    Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
+    Uses token masking: mask each token, re-run inference, contribution = baseline - masked.
+    Masked variants are run in **one batched forward** (not N sequential passes).
+    max_tokens_to_evaluate caps how many *content* tokens are masked.
+    """
+    if clean:
+      text = preprocess_text(text)
+    if not text.strip():
+      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      return round(conf, 4), label, []
+
+    # Too little text for meaningful token-level attribution; same confidence, no spans.
+    min_chars_for_spans = 5
+    if len(text.strip()) < min_chars_for_spans:
+      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      return round(conf, 4), label, []
+
+    enc = self.tokenizer(
+      text,
+      padding="max_length",
+      truncation=True,
+      max_length=512,
+      return_tensors="pt",
+      return_offsets_mapping=True,
+    )
+    input_ids = enc["input_ids"]
+    attention_mask = enc["attention_mask"]
+    offset_mapping = enc.get("offset_mapping")
+    if offset_mapping is None:
+      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      return round(conf, 4), label, []
+
+    input_ids = input_ids.to(self.device)
+    attention_mask = attention_mask.to(self.device)
+    offset_mapping = offset_mapping[0]
+
+    baseline_prob = self._get_raw_prob(text, input_ids, attention_mask)
+    mask_token_id = self.tokenizer.mask_token_id
+    if mask_token_id is None:
+      mask_token_id = self.tokenizer.pad_token_id or 0
+
+    contributions: list[tuple[int, int, float]] = []
+    # Only mask real content tokens, and cap at max_tokens_to_evaluate forwards.
+    # (Previously we iterated fixed sequence positions 0..63; long text used almost
+    # all of them as real tokens while short text hit padding early → huge latency skew.)
+    mask_indices: list[int] = []
+    seq_len = int(input_ids.shape[1])
+    for i in range(seq_len):
+      o = offset_mapping[i]
+      start, end = (o.tolist() if hasattr(o, "tolist") else o)
+      if start == 0 and end == 0:
+        continue
+      token_id = input_ids[0, i].item()
+      if token_id in (self.tokenizer.pad_token_id, self.tokenizer.cls_token_id, self.tokenizer.sep_token_id):
+        continue
+      mask_indices.append(i)
+
+    to_eval = mask_indices[:max_tokens_to_evaluate]
+    if to_eval:
+      k = len(to_eval)
+      batch_ids = input_ids.expand(k, -1).clone()
+      batch_attn = attention_mask.expand(k, -1).clone()
+      for row, i in enumerate(to_eval):
+        batch_ids[row, i] = mask_token_id
+      masked_probs = self._get_raw_probs_batch(batch_ids, batch_attn)
+      for row, i in enumerate(to_eval):
+        o = offset_mapping[i]
+        start, end = (o.tolist() if hasattr(o, "tolist") else o)
+        contribution = max(0.0, baseline_prob - masked_probs[row])
+        if contribution > 0.001:
+          contributions.append((start, end, round(contribution, 4)))
+
+    contributions.sort(key=lambda x: x[2], reverse=True)
+    top = contributions[:top_k_spans]
+
+    prob = baseline_prob
+    if has_llm_metadata(text):
+      if prob <= 0.1:
+        prob = prob + 0.7
+      elif prob <= 0.2:
+        prob = prob + 0.6
+      elif prob <= 0.3:
+        prob = prob + 0.5
+      elif prob <= 0.4:
+        prob = prob + 0.4
+      elif prob <= 0.5:
+        prob = prob + 0.3
+      elif prob <= 0.6:
+        prob = prob + 0.2
+
+    if prob < human_max:
+      label = "human"
+    elif prob < ai_min:
+      label = "mixed"
+    else:
+      label = "ai"
+
+    confidence = round(prob, 4)
+    return confidence, label, top
+
 if __name__ == "__main__":
     datasets.disable_progress_bars()
     detector = TextDetectors()

@@ -1,0 +1,10 @@
+/* In-post segment highlights (AI attribution spans) */
+mark.slopmop-highlight {
+  background-color: rgba(245, 158, 11, 0.35);
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+  font: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
 import DisabledWebsitesManager from './DisabledWebsitesManager';
+import HistoryPage from './HistoryPage';
 
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean;
@@ -31,7 +32,10 @@ function Toggle({ checked, onChange, label, description }: {
   );
 }
 
+type OptionsTab = 'settings' | 'history';
+
 export default function Options() {
+  const [tab, setTab] = useState<OptionsTab>('settings');
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
@@ -87,12 +91,35 @@ export default function Options() {
     <div className={`min-h-screen bg-gray-950 text-white ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}>
       <div className="max-w-2xl mx-auto px-6 py-10">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <h1 className="text-2xl font-bold tracking-tight">SlopMop Settings</h1>
+        <div className="flex items-center gap-3 mb-6">
+          <h1 className="text-2xl font-bold tracking-tight">SlopMop</h1>
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full transition-opacity duration-300 ${
             saved ? 'opacity-100 bg-green-500/20 text-green-400' : 'opacity-0'
           }`}>Saved</span>
         </div>
+
+        {/* Tab bar */}
+        <div className="flex gap-1 bg-gray-900 p-1 rounded-xl mb-8">
+          {(['settings', 'history'] as OptionsTab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg capitalize transition-colors ${
+                tab === t
+                  ? 'bg-gray-800 text-white'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* History tab */}
+        {tab === 'history' && <HistoryPage />}
+
+        {/* Settings tab */}
+        {tab === 'settings' && <>
 
         {/* General */}
         <section className="mb-8">
@@ -193,6 +220,15 @@ export default function Options() {
                   ))}
                 </div>
               </div>
+
+              <div className="pt-4 border-t border-gray-800">
+                <Toggle
+                  checked={settings.highlightSegments}
+                  onChange={(v) => update('highlightSegments', v)}
+                  label="Highlight segments that triggered detection"
+                  description="Show which parts of the text contributed most to the AI score"
+                />
+              </div>
             </div>
           </section>
         )}
@@ -240,6 +276,7 @@ export default function Options() {
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-600">SlopMop v1.0 &middot; Detect AI-generated content</p>
+        </>}
       </div>
     </div>
   );

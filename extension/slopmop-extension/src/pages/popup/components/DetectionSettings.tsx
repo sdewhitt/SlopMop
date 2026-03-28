@@ -96,6 +96,12 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
             ))}
           </div>
         </div>
+        <Toggle
+          checked={settings.highlightSegments}
+          onChange={(v) => onUpdateSetting('highlightSegments', v)}
+          label="Highlight segments that triggered detection"
+          description="Show which parts of the text contributed most to the AI score"
+        />
         <div className="py-2.5">
           <p className="text-sm font-medium text-gray-200 mb-1.5">Detail Mode</p>
           <div className="flex gap-1.5">

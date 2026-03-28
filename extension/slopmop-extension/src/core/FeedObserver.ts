@@ -6,12 +6,13 @@ import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
 
-const DEBUG_EXTRACTION = false;
+const DEBUG_EXTRACTION = true;
 // debounce wait time in ms. mutations that fire within this window
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
 // if analysis takes longer than this, we show a timeout badge to the user.
-const ANALYZE_TIMEOUT_MS = 15_000;
+// Remote ML APIs (e.g. Render) often need >15s after deploy or cold start.
+const ANALYZE_TIMEOUT_MS = 60_000;
 
 export class FeedObserver {
     // Orchestrator for the content script pipeline.
@@ -102,6 +103,12 @@ export class FeedObserver {
         }
     }
 
+    /** Apply updated detection settings and refresh overlay UI for posts already scanned. */
+    updateSettings(settings: DetectionSettings): void {
+        this.settings = settings;
+        this.overlay.updateSettings(settings);
+    }
+
     private onDomMutated(): void {
         // debounce: Reddit fires many mutations in rapid succession
         // (e.g. 30 mutations in 50ms when loading a batch of posts).
@@ -126,6 +133,23 @@ export class FeedObserver {
             this.debounceTimer = null;
             this.scanAndProcess();
         }, DEBOUNCE_MS);
+    }
+
+    // force an immediate full page scan. fallback when mutation-based
+    // detection misses posts (e.g. virtual scrolling, non-standard DOM updates).
+    // (strange reddit cases)
+    // all visible posts from adapter.findPostNodes() are processed in one batch.
+    scanEntirePage(): void {
+        this.scanAndProcess();
+    }
+
+    /**
+     * Clear seen posts and rescan. Use when the user navigates to a new page (e.g. SPA
+     * route change). Same post in a new view was previously skipped due to seenPostIds.
+     */
+    rescanForNewPage(): void {
+        this.seenPostIds.clear();
+        this.scanAndProcess();
     }
 
     private scanAndProcess(): void {
@@ -196,9 +220,20 @@ export class FeedObserver {
             });
         }
 
+        const textContainer =
+            type === "post"
+                ? this.adapter.getTextNode(node)
+                : this.adapter.getCommentTextNode(node);
+
         if (this.settings.automaticScanning) {
             // automatic mode: render scanning state immediately and dispatch analysis now.
-            this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain);
+            this.overlay.renderPending(
+                extracted.postId,
+                node as HTMLElement,
+                extracted.text.plain,
+                undefined,
+                textContainer,
+            );
             this.dispatchAnalyze(extracted);
             return;
         }
@@ -207,15 +242,27 @@ export class FeedObserver {
         // IMAGE and MIXED posts can still be analyzed via image detection.
         if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain)) {
             const langInfo = getLanguageSupportInfo(extracted.text.plain);
-            this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain);
+            this.overlay.renderPending(
+                extracted.postId,
+                node as HTMLElement,
+                extracted.text.plain,
+                undefined,
+                textContainer,
+            );
             this.overlay.renderError(extracted.postId, buildUnsupportedBadge(langInfo));
             return;
         }
 
         // manual mode: render Detect Now button and wait for user click.
-        this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain, () => {
-            this.dispatchAnalyze(extracted);
-        });
+        this.overlay.renderPending(
+            extracted.postId,
+            node as HTMLElement,
+            extracted.text.plain,
+            () => {
+                this.dispatchAnalyze(extracted);
+            },
+            textContainer,
+        );
     }
 
     // send extracted post to background and start timeout tracking.
@@ -263,7 +310,7 @@ export class FeedObserver {
     }
 
     private isEligible(post: NormalizedPostContent): boolean {
-        // check 1: is the extension turned on at all?
+        // check if extension enabled
         if (!this.settings.enabled) return false;
 
         // check 2: does the content type match what the user wants to scan?

@@ -1,6 +1,12 @@
 import { DetectionResponse, ImageDetectionResult, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import { getPatternReasons } from "@src/utils/aiTextPatterns";
+import {
+    buildHighlightedHtml,
+    canApplyInnerHtmlHighlights,
+    normalizePlainText,
+    sanitizeHighlightSpans,
+} from "@src/utils/highlightSpans";
  
 
 export class OverlayRenderer {
@@ -14,11 +20,23 @@ export class OverlayRenderer {
     private mapToPostText = new Map<PostId, string>()
     // map each postId to latest error text so detailed mode can show it in tooltip.
     private mapToErrorMessage = new Map<PostId, string>()
+    /** Post/comment body element used for in-post <mark> highlights (adapter text node). */
+    private mapToTextBody = new Map<PostId, HTMLElement>()
+    /** Saved innerHTML before highlights so we can restore on clear / re-render / toggle off. */
+    private mapToOriginalBodyHtml = new Map<PostId, string>()
     private settings: DetectionSettings;
 
 
     constructor(settings: DetectionSettings) {
         this.settings = settings;
+    }
+
+    /** Merge new settings and re-apply visible badges/tooltip wiring for completed scans. */
+    updateSettings(settings: DetectionSettings): void {
+        this.settings = settings;
+        for (const [postId, res] of this.mapToResponse) {
+            this.renderResult(postId, res);
+        }
     }
 
     protected getBadgePosition(): Record<string, string> {
@@ -36,6 +54,7 @@ export class OverlayRenderer {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
 
+        this.restorePostBodyHtml(postId);
         this.mapToResponse.set(postId, res);
         this.resetOverlayInteractions(overlay);
         overlay.style.whiteSpace = "normal";
@@ -76,6 +95,8 @@ export class OverlayRenderer {
             tooltip?.remove();
             tooltip = null;
         };
+
+        this.applyInPostHighlights(postId, res);
     }
 
     // renders Pending badge for the user.
@@ -86,8 +107,14 @@ export class OverlayRenderer {
         hostNode: HTMLElement,
         plainText: string,
         onDetectNow?: () => void,
+        textContainer?: HTMLElement | null,
     ): void {
         this.mapToPostText.set(postId, plainText);
+        if (textContainer) {
+            this.mapToTextBody.set(postId, textContainer);
+        } else {
+            this.mapToTextBody.delete(postId);
+        }
         const overlay = document.createElement("div");
         hostNode.style.position = "relative";
         hostNode.appendChild(overlay);
@@ -136,6 +163,7 @@ export class OverlayRenderer {
     renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.restorePostBodyHtml(postId);
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
         this.resetOverlayInteractions(overlay);
@@ -191,6 +219,7 @@ export class OverlayRenderer {
     renderTimeout(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.restorePostBodyHtml(postId);
         this.resetOverlayInteractions(overlay);
         overlay.style.whiteSpace = "normal";
         overlay.style.backgroundColor = "#f59e0b";
@@ -200,11 +229,46 @@ export class OverlayRenderer {
     clear(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.restorePostBodyHtml(postId);
         overlay.remove();
         this.mapToOverlay.delete(postId);
         this.mapToResponse.delete(postId);
         this.mapToPostText.delete(postId);
         this.mapToErrorMessage.delete(postId);
+        this.mapToTextBody.delete(postId);
+    }
+
+    private restorePostBodyHtml(postId: PostId): void {
+        const el = this.mapToTextBody.get(postId);
+        const snapshot = this.mapToOriginalBodyHtml.get(postId);
+        if (el && snapshot !== undefined) {
+            el.innerHTML = snapshot;
+        }
+        this.mapToOriginalBodyHtml.delete(postId);
+    }
+
+    private applyInPostHighlights(postId: PostId, res: DetectionResponse): void {
+        if (!this.settings.highlightSegments) return;
+        const spans = res.explanation.highlightedSpans;
+        if (!spans || spans.length === 0) return;
+        const plain = this.mapToPostText.get(postId) ?? "";
+        const el = this.mapToTextBody.get(postId);
+        if (!plain || !el) return;
+        if (!canApplyInnerHtmlHighlights(el)) return;
+        if (normalizePlainText(el.innerText ?? "") !== plain) return;
+
+        const usable = sanitizeHighlightSpans(spans, plain.length);
+        if (usable.length === 0) return;
+
+        this.mapToOriginalBodyHtml.set(postId, el.innerHTML);
+        el.innerHTML = buildHighlightedHtml(plain, usable);
+    }
+
+    private findPostIdForOverlay(overlay: HTMLElement): PostId | null {
+        for (const [pid, el] of this.mapToOverlay) {
+            if (el === overlay) return pid;
+        }
+        return null;
     }
 
     private createSimpleTooltip(res: DetectionResponse): HTMLElement {
@@ -244,7 +308,7 @@ export class OverlayRenderer {
         tip.appendChild(header);
 
         const summary = document.createElement("div");
-        Object.assign(summary.style, { fontSize: "14px" });
+        Object.assign(summary.style, { fontSize: "14px", marginTop: "8px" });
         summary.textContent = res.explanation.summary;
         tip.appendChild(summary);
 
@@ -256,7 +320,9 @@ export class OverlayRenderer {
     }
 
     private createTooltip(res: DetectionResponse, postText: string): HTMLElement {
-        const highlights = res.explanation.highlights ?? [];
+        const highlights = this.settings.highlightSegments
+            ? (res.explanation.highlights ?? [])
+            : [];
         // if there are highlights to show, use a wider tooltip to fit quoted excerpts.
         // otherwise keep it compact. height is always auto so it grows with content
         const hasHighlights = highlights.length > 0 && postText.length > 0;
@@ -324,8 +390,10 @@ export class OverlayRenderer {
         track.appendChild(fill);
         tip.appendChild(track);
 
-        // pattern-based reasons first (em dashes, common AI phrases) when present — main "why" for the user
-        const tooltipPatternReasons = getPatternReasons(postText);
+        const showSegmentDetail = this.settings.highlightSegments;
+
+        // pattern-based reasons (local heuristics); only when segment highlights are on
+        const tooltipPatternReasons = showSegmentDetail ? getPatternReasons(postText) : [];
         if (tooltipPatternReasons.length > 0) {
             const patternEl = document.createElement("div");
             Object.assign(patternEl.style, {
@@ -338,7 +406,8 @@ export class OverlayRenderer {
             tip.appendChild(patternEl);
         }
 
-        // model summary (generic explanation from backend/fake)
+        // Backend explanation (e.g. mock heuristic copy) — show whenever highlights are off,
+        // and when on (above per-segment detail below).
         const summary = document.createElement("div");
         Object.assign(summary.style, {
             marginBottom: "8px",
@@ -541,6 +610,8 @@ export class OverlayRenderer {
     }
 
     private showScanningState(overlay: HTMLElement): void {
+        const postId = this.findPostIdForOverlay(overlay);
+        if (postId) this.restorePostBodyHtml(postId);
         this.resetOverlayInteractions(overlay);
         overlay.style.whiteSpace = "normal";
         overlay.style.backgroundColor = "#6b7280";

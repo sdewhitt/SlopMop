@@ -2,11 +2,12 @@ import React from 'react';
 import CloseButton from './CloseButton';
 
 interface SettingsHeaderProps {
-  saved: boolean;
+  saved?: boolean;
   onBack: () => void;
+  title?: string;
 }
 
-export default function SettingsHeader({ saved, onBack }: SettingsHeaderProps) {
+export default function SettingsHeader({ saved = false, onBack, title = 'Settings' }: SettingsHeaderProps) {
   return (
     <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-gray-800 shrink-0">
       <button
@@ -25,7 +26,7 @@ export default function SettingsHeader({ saved, onBack }: SettingsHeaderProps) {
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
         </svg>
       </button>
-      <h2 className="text-sm font-semibold">Settings</h2>
+      <h2 className="text-sm font-semibold">{title}</h2>
       <span
         className={`ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full transition-opacity duration-300 bg-green-500/20 text-green-400 ${
           saved ? 'opacity-100' : 'opacity-0'

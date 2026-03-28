@@ -59,6 +59,12 @@ export interface DetectionRequest {
 
 export type Verdict = "likely_ai" | "likely_human" | "unknown";
 
+export interface HighlightSpan {
+  start: number;
+  end: number;
+  score: number;
+}
+
 export interface ImageDetectionResult {
     verdict: Verdict;
     confidence: number;
@@ -79,6 +85,7 @@ export interface DetectionResponse {
             end: number;
             reason: string;
         }>;
+        highlightedSpans?: HighlightSpan[];
         model: {
             name: string;
             version: string;
