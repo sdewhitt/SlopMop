@@ -219,9 +219,20 @@ export class FeedObserver {
             });
         }
 
+        const textContainer =
+            type === "post"
+                ? this.adapter.getTextNode(node)
+                : this.adapter.getCommentTextNode(node);
+
         if (this.settings.automaticScanning) {
             // automatic mode: render scanning state immediately and dispatch analysis now.
-            this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain);
+            this.overlay.renderPending(
+                extracted.postId,
+                node as HTMLElement,
+                extracted.text.plain,
+                undefined,
+                textContainer,
+            );
             this.dispatchAnalyze(extracted);
             return;
         }
@@ -230,15 +241,27 @@ export class FeedObserver {
         // IMAGE and MIXED posts can still be analyzed via image detection.
         if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain)) {
             const langInfo = getLanguageSupportInfo(extracted.text.plain);
-            this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain);
+            this.overlay.renderPending(
+                extracted.postId,
+                node as HTMLElement,
+                extracted.text.plain,
+                undefined,
+                textContainer,
+            );
             this.overlay.renderError(extracted.postId, buildUnsupportedBadge(langInfo));
             return;
         }
 
         // manual mode: render Detect Now button and wait for user click.
-        this.overlay.renderPending(extracted.postId, node as HTMLElement, extracted.text.plain, () => {
-            this.dispatchAnalyze(extracted);
-        });
+        this.overlay.renderPending(
+            extracted.postId,
+            node as HTMLElement,
+            extracted.text.plain,
+            () => {
+                this.dispatchAnalyze(extracted);
+            },
+            textContainer,
+        );
     }
 
     // send extracted post to background and start timeout tracking.
