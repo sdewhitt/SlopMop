@@ -59,7 +59,8 @@ function EntryCard({ entry, onTogglePin }: EntryCardProps) {
   const pct = Math.round(entry.confidence * 100);
 
   const handleOpenPost = () => {
-    browser.tabs.create({ url: entry.url });
+    if (!entry.url) return;
+    browser.runtime.sendMessage({ type: 'SLOPMOP_OPEN_URL', url: entry.url });
   };
 
   return (

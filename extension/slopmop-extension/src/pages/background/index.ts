@@ -297,6 +297,19 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleClearHistory();
     case 'SLOPMOP_TOGGLE_PIN':
       return handleTogglePin(msg.postId!);
+    case 'SLOPMOP_OPEN_URL': {
+      const url = msg.url as string;
+      if (!url) return;
+      const targetHost = new URL(url).hostname;
+      browser.tabs.query({ url: `*://${targetHost}/*` }).then((matchingTabs) => {
+        if (matchingTabs.length > 0 && matchingTabs[0].id) {
+          browser.tabs.update(matchingTabs[0].id, { url, active: true });
+        } else {
+          browser.tabs.create({ url });
+        }
+      });
+      return;
+    }
     case 'SLOPMOP_SCAN_ENTIRE_PAGE': {
       const tabId = sender.tab?.id;
       if (!tabId) return;
