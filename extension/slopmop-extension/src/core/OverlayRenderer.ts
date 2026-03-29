@@ -75,10 +75,12 @@ export class OverlayRenderer {
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
+        const sourcePrefix = this.getPrimarySourceLabel(res);
         if (res.imageResult) {
-            overlay.textContent = `Text: ${textLabel} · Img: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+            const mediaLabel = this.getMediaLabel(res.imageResult);
+            overlay.textContent = `Text: ${textLabel} · ${mediaLabel}: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
         } else {
-            overlay.textContent = textLabel;
+            overlay.textContent = sourcePrefix ? `${sourcePrefix}: ${textLabel}` : textLabel;
         }
 
         let tooltip: HTMLElement | null = null;
@@ -304,6 +306,11 @@ export class OverlayRenderer {
         header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
         if (res.imageResult) {
             header.textContent = `Text: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        } else {
+            const sourcePrefix = this.getPrimarySourceLabel(res);
+            if (sourcePrefix) {
+                header.textContent = `${sourcePrefix}: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+            }
         }
         tip.appendChild(header);
 
@@ -365,6 +372,12 @@ export class OverlayRenderer {
         header.textContent = res.imageResult
             ? `Text: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`
             : `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        if (!res.imageResult) {
+            const sourcePrefix = this.getPrimarySourceLabel(res);
+            if (sourcePrefix) {
+                header.textContent = `${sourcePrefix}: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+            }
+        }
         tip.appendChild(header);
 
         // confidence progress bar
@@ -561,7 +574,8 @@ export class OverlayRenderer {
             fontSize: headerSize,
             marginBottom: "4px",
         });
-        imgHeader.textContent = `Image: ${Math.round(imgRes.confidence * 100)}% — ${verdictLabel[imgRes.verdict]}`;
+        const mediaLabel = this.getMediaLabel(imgRes);
+        imgHeader.textContent = `${mediaLabel}: ${Math.round(imgRes.confidence * 100)}% — ${verdictLabel[imgRes.verdict]}`;
         section.appendChild(imgHeader);
 
         const pct = Math.round(imgRes.confidence * 100);
@@ -617,5 +631,15 @@ export class OverlayRenderer {
         overlay.style.backgroundColor = "#6b7280";
         overlay.style.cursor = "default";
         overlay.textContent = "Scanning...";
+    }
+
+    private getMediaLabel(imgRes: ImageDetectionResult): "Image" | "Video" {
+        return imgRes.mediaType === "video" ? "Video" : "Image";
+    }
+
+    private getPrimarySourceLabel(res: DetectionResponse): "Image" | "Video" | null {
+        if (res.detectionSource === "image") return "Image";
+        if (res.detectionSource === "video") return "Video";
+        return null;
     }
 }

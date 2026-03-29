@@ -1,5 +1,5 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
-import type { NormalizedPostContent, ContentType } from "@src/types/domain";
+import type { NormalizedPostContent, ContentType, MediaType } from "@src/types/domain";
 import { classify } from "./ContentTypeClassifier";
 
 
@@ -31,6 +31,10 @@ export class PostExtractor {
         // normalize before classification so repeated whitespace doesn't skew downstream heuristics.
         const normalizedText = this.normalizeText(rawText);
 
+        const permalink = type === "post"
+            ? adapter.getPermalink(node)
+            : adapter.getCommentPermalink(node);
+
         // extract images before the empty-text guard so image-only posts aren't dropped.
         const imageNodes = type === "post" ? adapter.getImageNodes(node) : [];
         const images = imageNodes.map((img) => {
@@ -40,6 +44,7 @@ export class PostExtractor {
                 bytesBase64: "",            // background will fill bytes in
                 srcUrl,
                 mimeType: this.mimeTypeFromUrl(srcUrl),
+                mediaType: this.inferMediaType(node, img, permalink),
             };
         });
 
@@ -48,10 +53,6 @@ export class PostExtractor {
 
         // classify ContentType
         const contentType = classify(normalizedText, images.length);
-
-        const permalink = type === "post"
-            ? adapter.getPermalink(node)
-            : adapter.getCommentPermalink(node);
 
         // TODO: figure out how to get this and what this means
         const languageHint = "";
@@ -108,6 +109,24 @@ export class PostExtractor {
         };
         return (ext && map[ext]) || "image/jpeg";
     }
+
+    private inferMediaType(postNode: Element, imgNode: HTMLImageElement, permalink: string | null): MediaType {
+        const mediaLink = imgNode.closest("a[href]") as HTMLAnchorElement | null;
+        const linkHref = mediaLink?.getAttribute("href")?.toLowerCase() ?? "";
+        const permalinkLower = (permalink ?? "").toLowerCase();
+
+        if (permalinkLower.includes("/reel/") || linkHref.includes("/reel/")) {
+            return "video";
+        }
+
+        // If the post container has a video element near this image, treat this image as a video poster frame.
+        if (postNode.querySelector("video")) {
+            return "video";
+        }
+
+        return "image";
+    }
+
     // hash function for unique postId
     private fnv1a(input: string): string {
         let hash = 0x811c9dc5;

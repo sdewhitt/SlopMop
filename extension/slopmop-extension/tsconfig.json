@@ -25,6 +25,8 @@
   },
   "include": [
     "src",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
     "utils",
     "vite.config.base.ts",
     "vite.config.chrome.ts",

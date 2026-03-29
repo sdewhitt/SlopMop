@@ -126,7 +126,50 @@ describe('Instagram overlay rendering', () => {
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
     expect(overlay?.textContent).toContain('Text: likely_ai (88%)');
-    expect(overlay?.textContent).toContain('Img: likely_human (22%)');
+    expect(overlay?.textContent).toContain('Image: likely_human (22%)');
+  });
+
+  it('labels mixed results as video when mediaType is video', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+
+    const adapter = createAdapter({
+      findPostNodes: () => [postNode],
+      getStablePostId: (node) => (node === postNode ? 'CxMixedVideo' : null),
+      findVisibleCommentNodes: () => [],
+    });
+    const renderer = new InstagramOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+    const response: DetectionResponse = {
+      requestId: 'req-ig-video',
+      postId: 'CxMixedVideo',
+      verdict: 'likely_ai',
+      confidence: 0.81,
+      explanation: {
+        summary: 'Caption looks synthetic.',
+        highlights: [],
+        model: { name: 'test-model', version: '1.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 210, inferenceMs: 170 },
+      },
+      imageResult: {
+        verdict: 'likely_ai',
+        confidence: 0.76,
+        summary: 'Frame looks AI-generated.',
+        model: { name: 'nonescape-mini', version: '0.1' },
+        timingMs: 340,
+        mediaType: 'video',
+      },
+    };
+
+    renderer.renderPending('CxMixedVideo', postNode, 'Caption with reel');
+    renderer.renderResult('CxMixedVideo', response);
+
+    const overlay = postNode.lastElementChild as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay?.textContent).toContain('Video: likely_ai (76%)');
   });
 
   it('applies the correct background colour for the verdict', () => {

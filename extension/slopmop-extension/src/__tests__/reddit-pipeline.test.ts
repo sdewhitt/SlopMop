@@ -272,7 +272,7 @@ describe('Reddit extraction pipeline', () => {
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
     expect(overlay?.textContent).toContain('Text: likely_ai (92%)');
-    expect(overlay?.textContent).toContain('Img: likely_human (15%)');
+    expect(overlay?.textContent).toContain('Image: likely_human (15%)');
   });
 
   it('shows the detailed tooltip when hovering the badge in detailed mode', () => {
@@ -476,6 +476,7 @@ describe('Reddit extraction pipeline', () => {
       rootComment,
       'This is a clear top-level English comment.',
       expect.any(Function),
+      expect.any(HTMLElement),
     );
     expect(renderPending).toHaveBeenNthCalledWith(
       2,
@@ -483,6 +484,7 @@ describe('Reddit extraction pipeline', () => {
       secondRootComment,
       'This is the second top-level English comment.',
       expect.any(Function),
+      expect.any(HTMLElement),
     );
   });
 

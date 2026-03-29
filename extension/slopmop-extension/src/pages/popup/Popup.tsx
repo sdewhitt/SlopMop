@@ -30,6 +30,8 @@ type DetectResponse = {
   confidence?: number;
   explanation?: string;
   metadataComplete?: boolean;
+  detectionSource?: 'text' | 'image' | 'video';
+  imageResult?: { mediaType?: 'image' | 'video' };
   // Some backends may use alternative field names.
   confidenceScore?: number;
   confidence_score?: number;
@@ -394,6 +396,11 @@ export default function Popup() {
   const patternReasons = (detectResponse as { patternReasons?: string[] } | null)?.patternReasons;
   const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
+  const mediaSourceLabel = detectResponse?.detectionSource === 'video'
+    ? 'Video'
+    : detectResponse?.detectionSource === 'image'
+      ? 'Image'
+      : null;
 
   // ── History view ──────────────────────────────────────────────
   if (view === 'history') {
@@ -452,6 +459,11 @@ export default function Popup() {
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
       {detectResponse && !languageUnsupported && (
         <section className="mt-4 text-left">
+          {mediaSourceLabel && (
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-400 mb-1">
+              Source: {mediaSourceLabel}
+            </p>
+          )}
           <p className="text-sm font-medium text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
           </p>

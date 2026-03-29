@@ -2,6 +2,7 @@
 
 export type PostId = string; 
 export type SiteId = string; // website base URL like reddit.com
+export type MediaType = "image" | "video";
 export enum ContentType {
     TEXT = "TEXT",
     IMAGE = "IMAGE",
@@ -28,6 +29,7 @@ export interface NormalizedPostContent {
       bytesBase64: string;
       srcUrl: string;
       mimeType: string;
+      mediaType?: MediaType;
     }>;
     domContext: {
       authorHandle: string;
@@ -50,6 +52,7 @@ export interface DetectionRequest {
         bytesBase64: string;
         srcUrl: string;
         mimeType: string;
+      mediaType?: MediaType;
     }>; 
     clientHints: {
         extensionVersion: string;
@@ -71,6 +74,7 @@ export interface ImageDetectionResult {
     summary: string;
     model: { name: string; version: string };
     timingMs: number;
+  mediaType?: MediaType;
 }
 
 export interface DetectionResponse {
@@ -78,6 +82,7 @@ export interface DetectionResponse {
     postId: PostId;
     verdict: Verdict;
     confidence: number;
+  detectionSource?: "text" | MediaType;
     explanation: {
         summary: string;
         highlights?: Array<{

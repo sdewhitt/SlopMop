@@ -30,6 +30,7 @@ import type {
   DetectionResponse,
   HighlightSpan,
   ImageDetectionResult,
+  MediaType,
   NormalizedPostContent,
 } from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
@@ -616,7 +617,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         const start = performance.now();
         const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
         const elapsedMs = Math.round(performance.now() - start);
-        const mapped = mapToDetectionResponse(imgResult, enrichedPost.postId, elapsedMs);
+        const mapped = mapToDetectionResponse(
+          imgResult,
+          enrichedPost.postId,
+          elapsedMs,
+          firstImage.mediaType ?? 'image',
+        );
 
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
@@ -692,7 +698,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     // Use the image result as the primary verdict (don't also set imageResult, which would
     // cause the renderer to show the same image data twice).
     if (!textResult && imageResult) {
-      const imgResponse = mapToDetectionResponse(imageResult.result, enrichedPost.postId, imageResult.elapsedMs);
+      const imgResponse = mapToDetectionResponse(
+        imageResult.result,
+        enrichedPost.postId,
+        imageResult.elapsedMs,
+        firstImage?.mediaType ?? 'image',
+      );
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
         payload: imgResponse,
@@ -715,7 +726,11 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     const mapped = mapToDetectionResponse(textResult!.result, enrichedPost.postId, textResult!.elapsedMs);
 
     if (imageResult) {
-      mapped.imageResult = mapToImageDetectionResult(imageResult.result, imageResult.elapsedMs);
+      mapped.imageResult = mapToImageDetectionResult(
+        imageResult.result,
+        imageResult.elapsedMs,
+        firstImage?.mediaType ?? 'image',
+      );
     }
 
     await browser.tabs.sendMessage(tabId, {
@@ -868,6 +883,7 @@ function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
   timingMs: number,
+  detectionSource: DetectionResponse['detectionSource'] = 'text',
 ): DetectionResponse {
   //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
 
@@ -908,6 +924,7 @@ function mapToDetectionResponse(
     postId,
     verdict,
     confidence: apiResult.confidence,
+    detectionSource,
     explanation: {
       summary: apiResult.explanation,
       highlights,
@@ -922,6 +939,7 @@ function mapToDetectionResponse(
 function mapToImageDetectionResult(
   apiResult: DetectImageResponse,
   timingMs: number,
+  mediaType: MediaType = 'image',
 ): ImageDetectionResult {
   const confidencePercent = apiResult.confidence <= 1
     ? apiResult.confidence * 100
@@ -939,6 +957,7 @@ function mapToImageDetectionResult(
     summary: apiResult.explanation,
     model: { name: 'nonescape-mini', version: '0.1' },
     timingMs,
+    mediaType,
   };
 }
 
