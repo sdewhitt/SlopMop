@@ -308,9 +308,15 @@ describe('Reddit extraction pipeline', () => {
 
     overlay?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
 
-    expect(overlay?.textContent).toContain('Patterns observed:');
-    expect(overlay?.textContent).toContain('Likely AI-generated wording.');
-    expect(overlay?.textContent).toContain('Model: test-model v1.0');
+    // Detailed tooltips mount on document.body (fixed) so they are not clipped by the host card.
+    const tip = [...document.body.querySelectorAll('div')].find((d) =>
+      d.textContent?.includes('Patterns observed:'),
+    );
+    expect(tip?.textContent).toContain('Patterns observed:');
+    expect(tip?.textContent).toContain('Likely AI-generated wording.');
+    expect(tip?.textContent).toContain('Model: test-model v1.0');
+
+    overlay?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
   });
 
   it('renders a retry button when detection fails', () => {
