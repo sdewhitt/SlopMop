@@ -51,17 +51,17 @@ export default function SignInView() {
   };
 
   return (
-    <div className="w-full bg-gray-900 text-white p-4 flex flex-col items-center gap-4 overflow-y-auto overscroll-none">
+    <div className="w-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white p-4 flex flex-col items-center gap-4 overflow-y-auto overscroll-none">
       {/* Header */}
       <div className="flex items-center gap-3 w-full">
         <img src={logo} className="h-9 w-9" alt="SlopMop logo" />
-        <h1 className="text-lg font-bold tracking-tight">SlopMop</h1>
+        <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">SlopMop</h1>
         <span className="ml-auto" />
         <CloseButton />
       </div>
 
       {/* Title */}
-      <h2 className="text-sm font-semibold text-gray-200 mt-1">
+      <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mt-1">
         {mode === 'login' ? 'Sign in to continue' : 'Create your account'}
       </h2>
 
@@ -73,7 +73,7 @@ export default function SignInView() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
-          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
         />
         <input
           type="password"
@@ -82,10 +82,10 @@ export default function SignInView() {
           onChange={(e) => setPassword(e.target.value)}
           required
           minLength={6}
-          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
         />
 
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
 
         <button
           type="submit"
@@ -104,9 +104,9 @@ export default function SignInView() {
 
       {/* Divider */}
       <div className="flex items-center gap-2 w-full">
-        <div className="flex-1 h-px bg-gray-700" />
+        <div className="flex-1 h-px bg-gray-300 dark:bg-gray-700" />
         <span className="text-[10px] text-gray-500 uppercase">or</span>
-        <div className="flex-1 h-px bg-gray-700" />
+        <div className="flex-1 h-px bg-gray-300 dark:bg-gray-700" />
       </div>
 
       {/* Google sign-in */}
@@ -114,14 +114,14 @@ export default function SignInView() {
         type="button"
         onClick={handleGoogle}
         disabled={googleLoading}
-        className="w-full flex items-center justify-center gap-2 rounded-lg border border-gray-700 bg-gray-800 py-2 text-xs font-medium text-gray-200 transition hover:bg-gray-700 disabled:opacity-50 cursor-pointer"
+        className="w-full flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white py-2 text-xs font-medium text-gray-800 transition hover:bg-gray-100 disabled:opacity-50 cursor-pointer dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
       >
         <GoogleIcon />
         {googleLoading ? 'Signing in…' : 'Continue with Google'}
       </button>
 
       {/* Toggle between login / signup */}
-      <p className="text-[11px] text-gray-400">
+      <p className="text-[11px] text-gray-600 dark:text-gray-400">
         {mode === 'login' ? (
           <>
             Don&apos;t have an account?{' '}
@@ -131,7 +131,7 @@ export default function SignInView() {
                 setMode('signup');
                 setError('');
               }}
-              className="text-blue-400 hover:underline cursor-pointer"
+              className="text-blue-600 hover:underline dark:text-blue-400 cursor-pointer"
             >
               Sign up
             </button>
@@ -145,7 +145,7 @@ export default function SignInView() {
                 setMode('login');
                 setError('');
               }}
-              className="text-blue-400 hover:underline cursor-pointer"
+              className="text-blue-600 hover:underline dark:text-blue-400 cursor-pointer"
             >
               Sign in
             </button>

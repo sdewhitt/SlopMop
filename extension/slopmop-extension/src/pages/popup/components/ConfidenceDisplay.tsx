@@ -13,19 +13,19 @@ export default function ConfidenceDisplay({ confidenceScore }: ConfidenceDisplay
   return (
     <section className="mt-4 text-left">
       <div className="flex items-center justify-between mb-1.5">
-        <p className="text-sm font-medium text-gray-200">Confidence</p>
-        <p className="text-sm font-semibold text-gray-200">{pct}%</p>
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Confidence</p>
+        <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{pct}%</p>
       </div>
 
       {/* Progress bar */}
-      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
+      <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden mb-2">
         <div
           className={`h-full rounded-full transition-all duration-300 ${barColor}`}
           style={{ width: `${pct}%` }}
         />
       </div>
 
-      <p className="confidence-explanation text-xs text-gray-400 leading-snug">
+      <p className="confidence-explanation text-xs text-gray-600 dark:text-gray-400 leading-snug">
         {explanation}
       </p>
     </section>

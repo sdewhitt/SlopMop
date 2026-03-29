@@ -12,10 +12,10 @@ export default function PopupHeader({ enabled, onSettingsClick, onHistoryClick }
   return (
     <div className="flex items-center gap-3">
       <img src={logo} className="h-9 w-9" alt="SlopMop logo" />
-      <h1 className="text-lg font-bold tracking-tight">SlopMop</h1>
+      <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">SlopMop</h1>
       <span
         className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
-          enabled ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+          enabled ? 'bg-green-500/20 text-green-700 dark:text-green-400' : 'bg-red-500/20 text-red-700 dark:text-red-400'
         }`}
       >
         {enabled ? 'Active' : 'Paused'}
@@ -23,7 +23,7 @@ export default function PopupHeader({ enabled, onSettingsClick, onHistoryClick }
       {/* History button */}
       <button
         onClick={onHistoryClick}
-        className="text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
+        className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 transition-colors cursor-pointer"
         aria-label="Detection History"
       >
         <svg
@@ -41,7 +41,7 @@ export default function PopupHeader({ enabled, onSettingsClick, onHistoryClick }
       {/* Settings button */}
       <button
         onClick={onSettingsClick}
-        className="text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
+        className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 transition-colors cursor-pointer"
         aria-label="Settings"
       >
         <svg

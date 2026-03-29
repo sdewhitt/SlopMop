@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import os
+import sys
 import torch  # type: ignore[import-untyped]
 import torch.nn as nn
 from transformers import AutoModel, AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # type: ignore[import-untyped]
@@ -259,6 +262,68 @@ class TextDetectors:
       self.device = torch.device("cpu")
 
     self._initialize_model()
+    # encorperate satire detector to help lower false positives
+    self._satire_detector = None
+    self._initialize_satire_detector()
+
+  def _initialize_satire_detector(self) -> None:
+    flag = os.environ.get("SLOPMOP_SATIRE_ADJUST", "1").strip().lower()
+    if flag in ("0", "false", "no", ""):
+      return
+    weights = os.path.normpath(
+      os.path.join(os.path.dirname(__file__), "..", "satire_detector", "best_satire_detector.pt")
+    )
+    if not os.path.isfile(weights):
+      return
+    satire_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "satire_detector"))
+    if satire_dir not in sys.path:
+      sys.path.insert(0, satire_dir)
+    try:
+      from satire_detector import SatireDetector  # type: ignore[import-untyped]
+    except ImportError as e:
+      print(f"[TextDetectors] Satire adjustment skipped (import): {e}")
+      return
+    try:
+      sd = SatireDetector()
+      state = torch.load(weights, map_location=sd.device)
+      sd.model.load_state_dict(state, strict=True)
+      sd.model.eval()
+      self._satire_detector = sd
+      print(f"[TextDetectors] Satire model loaded for AI-score nudge: {weights}")
+    except Exception as e:
+      print(f"[TextDetectors] Satire adjustment disabled: {e}")
+
+  def _satire_prob_satire(self, text: str) -> float | None:
+    if self._satire_detector is None:
+      return None
+    try:
+      _, p = self._satire_detector.predict(text, return_prob=True)
+      return float(p)
+    except Exception as e:
+      print(f"[TextDetectors] Satire inference failed: {e}")
+      return None
+
+  # adjust the probability for satire
+  # if satire classifier is confident the post is satirical, reduce AI-like probability
+  def _adjust_prob_for_satire(
+    self,
+    text: str,
+    prob: float,
+    human_max: float,
+    ai_min: float,
+  ) -> tuple[float, str]:
+    ps = self._satire_prob_satire(text)
+    if ps is None:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+
+    min_sat = float(os.environ.get("SLOPMOP_SATIRE_MIN_PROB", "0.5"))
+    penalty = float(os.environ.get("SLOPMOP_SATIRE_AI_PENALTY", "0.3"))
+    if ps < min_sat:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    if prob < human_max:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    new_prob = max(0.0, prob - penalty)
+    return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
 
   # initialize the model
   def _initialize_model(self):
@@ -344,14 +409,7 @@ class TextDetectors:
       else:
         print("Added 0% to confidence because LLM metadata is present.")
 
-
-    # get the label based on the probability
-    if prob < human_max:
-      label = "human"
-    elif prob < ai_min:
-      label = "mixed"
-    else:
-      label = "ai"
+    prob, label = self._adjust_prob_for_satire(text, prob, human_max, ai_min)
 
     confidence = prob * 100 if return_pct else prob
     return confidence, label
@@ -376,6 +434,7 @@ class TextDetectors:
       return torch.sigmoid(logits.squeeze(-1)).item()
     return torch.softmax(logits, dim=1)[0, 1].item()
 
+  # score the text with spans (token masking)
   def _get_raw_probs_batch(
     self,
     input_ids: torch.Tensor,
@@ -482,6 +541,7 @@ class TextDetectors:
     top = contributions[:top_k_spans]
 
     prob = baseline_prob
+    # add 50% or 30% to confidence if LLM metadata (version; Engine: text-xxx; etc.) is present
     if has_llm_metadata(text):
       if prob <= 0.1:
         prob = prob + 0.7
@@ -496,12 +556,7 @@ class TextDetectors:
       elif prob <= 0.6:
         prob = prob + 0.2
 
-    if prob < human_max:
-      label = "human"
-    elif prob < ai_min:
-      label = "mixed"
-    else:
-      label = "ai"
+    prob, label = self._adjust_prob_for_satire(text, prob, human_max, ai_min)
 
     confidence = round(prob, 4)
     return confidence, label, top

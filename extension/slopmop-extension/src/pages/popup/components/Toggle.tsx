@@ -11,15 +11,15 @@ export default function Toggle({ checked, onChange, label, description }: Toggle
   return (
     <div className="flex items-center justify-between py-2.5">
       <div>
-        <p className="text-sm font-medium text-gray-200">{label}</p>
-        {description && <p className="text-[11px] text-gray-500 mt-0.5">{description}</p>}
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{label}</p>
+        {description && <p className="text-[11px] text-gray-600 dark:text-gray-500 mt-0.5">{description}</p>}
       </div>
       <button
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
-          checked ? 'bg-blue-600' : 'bg-gray-600'
+          checked ? 'bg-blue-600' : 'bg-gray-400 dark:bg-gray-600'
         }`}
       >
         <span

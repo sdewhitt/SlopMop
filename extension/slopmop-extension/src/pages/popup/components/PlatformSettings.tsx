@@ -11,7 +11,7 @@ export default function PlatformSettings({ platforms, onUpdatePlatform }: Platfo
   return (
     <section>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Platforms</p>
-      <div className="bg-gray-800 rounded-lg px-3 divide-y divide-gray-700">
+      <div className="bg-white dark:bg-gray-800 rounded-lg px-3 divide-y divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-transparent">
         {(Object.keys(platforms) as Array<keyof Settings['platforms']>).map((p) => (
           <Toggle
             key={p}

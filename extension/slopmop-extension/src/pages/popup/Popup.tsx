@@ -24,6 +24,7 @@ import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 import HistoryPage from '../options/HistoryPage';
+import ThemeToggle from './components/ThemeToggle';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 
 type DetectResponse = {
@@ -57,6 +58,7 @@ export default function Popup() {
       ...(raw?.platforms ?? {}),
     },
   }), []);
+  const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
 
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
@@ -64,7 +66,8 @@ export default function Popup() {
       aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
       postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
     });
-  }, []);
+  }, [mergeSettings]);
+
 
   useEffect(() => {
     browser.storage.local
@@ -236,9 +239,27 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, [mergeSettings]);
 
-  const isSupportedFeedSite =
-    typeof window !== 'undefined' &&
-    (window.location.hostname.includes('reddit.com') || window.location.hostname.includes('instagram.com'));
+  useEffect(() => {
+    const tabsApi = browser.tabs;
+    if (!tabsApi?.query) {
+      setIsSupportedFeedSite(false);
+      return;
+    }
+    const refreshFeedSite = () => {
+      tabsApi
+        .query({ active: true, lastFocusedWindow: true })
+        .then((tabs) => {
+          const url = tabs[0]?.url ?? '';
+          setIsSupportedFeedSite(
+            url.includes('reddit.com') || url.includes('instagram.com'),
+          );
+        })
+        .catch(() => setIsSupportedFeedSite(false));
+    };
+    refreshFeedSite();
+    tabsApi.onActivated?.addListener(refreshFeedSite);
+    return () => tabsApi.onActivated?.removeListener(refreshFeedSite);
+  }, []);
 
   const handleScanEntirePage = () => {
     browser.runtime.sendMessage({ type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {});
@@ -330,11 +351,11 @@ export default function Popup() {
   if (authLoading) {
     return (
       <div
-        className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
+        className={`w-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white p-4 flex items-center justify-center min-h-[100px] ${
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
-        <p className="text-xs text-gray-400">Loading…</p>
+        <p className="text-xs text-gray-600 dark:text-gray-400">Loading…</p>
       </div>
     );
   }
@@ -354,7 +375,7 @@ export default function Popup() {
   if (view === 'settings') {
     return (
       <div
-        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
@@ -379,10 +400,10 @@ export default function Popup() {
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
               Account
             </p>
-            <p className="text-[11px] text-gray-400 mb-2 truncate">{user.email}</p>
+            <p className="text-[11px] text-gray-600 dark:text-gray-400 mb-2 truncate">{user.email}</p>
             <button
               onClick={() => logOut()}
-              className="w-full py-2 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+              className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
             >
               Sign Out
             </button>
@@ -418,7 +439,7 @@ export default function Popup() {
   if (view === 'history') {
     return (
       <div
-        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
@@ -433,7 +454,7 @@ export default function Popup() {
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div
-      className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
+      className={`w-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
         simpleMode ? 'simple-mode' : ''
       } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
@@ -447,7 +468,7 @@ export default function Popup() {
         <button
           type="button"
           onClick={handleScanEntirePage}
-          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-700 text-gray-200 hover:bg-gray-600 hover:text-white transition-colors cursor-pointer"
+          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white transition-colors cursor-pointer"
         >
           Scan Entire Page
         </button>
@@ -456,7 +477,7 @@ export default function Popup() {
       <DisclaimerBanner />
 
       {languageUnsupported != null && (
-        <div className="rounded-lg px-3 py-2 text-sm bg-amber-500/20 text-amber-200 border border-amber-500/50">
+        <div className="rounded-lg px-3 py-2 text-sm bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/50">
           {languageUnsupported}
         </div>
       )}
@@ -464,7 +485,7 @@ export default function Popup() {
 
       <button
         onClick={() => logOut()}
-        className="w-full py-2 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+        className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
       >
         Sign Out
       </button>
@@ -477,9 +498,10 @@ export default function Popup() {
             </p>
           )}
           <p className="text-sm font-medium text-gray-200">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
           </p>
-          <p className="confidence-explanation mt-1.5 text-xs text-gray-400 leading-snug">
+          <p className="confidence-explanation mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-snug">
             {explanation}
           </p>
         </section>
