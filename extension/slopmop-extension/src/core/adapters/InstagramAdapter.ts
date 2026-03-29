@@ -18,8 +18,7 @@ export class InstagramAdapter implements SiteAdapter {
       if (article.closest('div[role="dialog"]')) continue;
       if (!this.getPermalink(article)) continue;
       if (article.querySelector('a[href*="/stories/"]')) continue;
-      seen.add(article);
-      out.push(article);
+      this.pushUniqueHost(out, seen, article);
     }
 
     // 2) Explore-page grid items: clickable thumbnail tiles that are NOT
@@ -40,9 +39,20 @@ export class InstagramAdapter implements SiteAdapter {
       if (link.getAttribute("href")?.includes("/stories/")) continue;
       // The grid cell wrapper is the link's nearest parent <div>.
       const container = link.closest("div");
-      if (!container || seen.has(container)) continue;
-      seen.add(container);
-      out.push(container);
+      if (!container) continue;
+      this.pushUniqueHost(out, seen, container);
+    }
+
+    // 2b) Explore/search reel tiles that render as bare <video> media without
+    // an immediate permalink anchor in the visible subtree.
+    const tileVideos = Array.from(root.querySelectorAll<HTMLVideoElement>("video[src]"));
+    for (const video of tileVideos) {
+      if (video.closest("article")) continue;
+      if (video.closest('div[role="dialog"]')) continue;
+
+      const container = this.resolveVideoTileHost(video);
+      if (!container) continue;
+      this.pushUniqueHost(out, seen, container);
     }
 
     // 3) Post modal dialogs opened from explore/search pages.
@@ -52,9 +62,7 @@ export class InstagramAdapter implements SiteAdapter {
     for (const dialog of dialogs) {
       if (!this.getPermalink(dialog)) continue;
       const modalHost = this.resolveDialogOverlayHost(dialog);
-      if (seen.has(modalHost)) continue;
-      seen.add(modalHost);
-      out.push(modalHost);
+      this.pushUniqueHost(out, seen, modalHost);
     }
 
     return out;
@@ -72,7 +80,11 @@ export class InstagramAdapter implements SiteAdapter {
     const author = this.getAuthorHandle(postNode);
     const timestamp = this.getTimestampText(postNode);
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
-    const base = `${permalink ?? ""}|${author}|${timestamp}|${text}`;
+    const mediaEl = postNode.querySelector<HTMLImageElement | HTMLVideoElement>("img, video");
+    const mediaSrc = mediaEl instanceof HTMLVideoElement
+      ? (mediaEl.currentSrc || mediaEl.src || "")
+      : (mediaEl?.currentSrc || mediaEl?.getAttribute("src") || "");
+    const base = `${permalink ?? ""}|${author}|${timestamp}|${text}|${mediaSrc}`;
     return base ? `ig-fallback-${this.fnv1a(base)}` : null;
   }
 
@@ -276,6 +288,65 @@ export class InstagramAdapter implements SiteAdapter {
     }
 
     return host;
+  }
+
+  private resolveVideoTileHost(video: HTMLVideoElement): Element | null {
+    let host: Element | null = video.parentElement;
+    let current: HTMLElement | null = video.parentElement;
+
+    while (current) {
+      if (current.matches('div[role="dialog"]') || current.matches("article")) {
+        break;
+      }
+
+      const styleAttr = (current.getAttribute("style") || "").toLowerCase();
+      if (styleAttr.includes("aspect-ratio") || styleAttr.includes("max-height")) {
+        host = current;
+      }
+
+      current = current.parentElement;
+    }
+
+    return host;
+  }
+
+  private pushUniqueHost(out: Element[], seen: Set<Element>, host: Element): void {
+    if (seen.has(host)) return;
+
+    const hostInDialog = !!host.closest('div[role="dialog"]');
+
+    for (let i = 0; i < out.length; i += 1) {
+      const existing = out[i];
+      const existingInDialog = !!existing.closest('div[role="dialog"]');
+
+      if (existing === host) return;
+      // If the candidate is nested under an already-selected host, skip it,
+      // unless this candidate is dialog-scoped and the existing host is not.
+      if (existing.contains(host)) {
+        if (hostInDialog && !existingInDialog) {
+          out.splice(i, 1);
+          seen.delete(existing);
+          i -= 1;
+          continue;
+        }
+        return;
+      }
+      // If the candidate wraps an existing host and is dialog-scoped while
+      // the existing host is not, prefer the dialog host for clicked-post views.
+      if (host.contains(existing)) {
+        if (hostInDialog && !existingInDialog) {
+          out.splice(i, 1);
+          seen.delete(existing);
+          i -= 1;
+          continue;
+        }
+        // Otherwise preserve deterministic placement from the first host.
+        return;
+      }
+    }
+
+    seen.add(host);
+    out.push(host);
   }
 
   private parseShortcodeFromUrl(url: string): string | null {

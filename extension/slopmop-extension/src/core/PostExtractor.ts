@@ -48,11 +48,22 @@ export class PostExtractor {
             };
         });
 
-        // drop the post only when there's no text AND no images.
-        if (!normalizedText && images.length === 0) return null;
+        // Instagram reels on explore/search can render as video-only tiles with
+        // no caption text and no direct <img> thumbnail. Keep these posts so the
+        // background fallback can fetch preview media from the reel permalink.
+        const hasVisualOnlyReelCandidate =
+            type === "post" &&
+            siteId === "instagram.com" &&
+            !normalizedText &&
+            node.querySelector("video") !== null;
+
+        // drop the post only when there's no text, no images, and no supported visual fallback.
+        if (!normalizedText && images.length === 0 && !hasVisualOnlyReelCandidate) return null;
 
         // classify ContentType
-        const contentType = classify(normalizedText, images.length);
+        const contentType: ContentType = hasVisualOnlyReelCandidate
+            ? "IMAGE"
+            : classify(normalizedText, images.length);
 
         // TODO: figure out how to get this and what this means
         const languageHint = "";
