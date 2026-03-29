@@ -1,6 +1,6 @@
 # SlopMop
 
-Realtime social media AI-detection browser extension
+Browser extension for detecting AI-use in social media feeds.
 
 ## Models
 
