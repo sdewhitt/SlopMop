@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ViewOnboardingAgainButton from "./view-onboarding-again-button";
 
 export default function Footer() {
   return (
@@ -24,6 +25,9 @@ export default function Footer() {
             Sign Up
           </Link>
         </div>
+      </div>
+      <div className="mx-auto max-w-5xl px-6 pb-6 text-center">
+        <ViewOnboardingAgainButton />
       </div>
     </footer>
   );

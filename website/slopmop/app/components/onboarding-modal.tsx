@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   readHasSeenOnboarding,
   writeHasSeenOnboarding,
+  ONBOARDING_OPEN_EVENT,
 } from "../lib/onboardingStorage";
 
 /**
@@ -19,6 +20,12 @@ export default function OnboardingModal() {
     if (!readHasSeenOnboarding()) {
       setOpen(true);
     }
+  }, []);
+
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(ONBOARDING_OPEN_EVENT, show);
+    return () => window.removeEventListener(ONBOARDING_OPEN_EVENT, show);
   }, []);
 
   const dismissSeen = useCallback(() => {

@@ -5,12 +5,10 @@ import PurposeSection from "./components/purpose-section";
 import InstallStepsSection from "./components/install-steps-section";
 import FAQSection from "./components/faq-section";
 import Footer from "./components/footer";
-import OnboardingModal from "./components/onboarding-modal";
 
 export default function Home() {
   return (
     <div className="flex min-h-screen flex-col bg-white text-foreground dark:bg-black">
-        <OnboardingModal />
         <Navbar />
 
         <Hero />

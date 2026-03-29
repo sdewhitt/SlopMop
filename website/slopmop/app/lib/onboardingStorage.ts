@@ -4,6 +4,9 @@
  */
 export const ONBOARDING_STORAGE_KEY = "hasSeenOnboarding";
 
+/** Dispatched on `window` to open the onboarding dialog from anywhere (e.g. footer). */
+export const ONBOARDING_OPEN_EVENT = "slopmop-open-onboarding";
+
 export function readHasSeenOnboarding(): boolean {
   if (typeof window === "undefined") return true;
   try {
