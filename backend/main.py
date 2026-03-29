@@ -7,8 +7,12 @@ import base64
 import io
 from PIL import Image
 import torch
+from dotenv import load_dotenv
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Load backend env vars from backend/.env for local development.
+load_dotenv(os.path.join(_THIS_DIR, ".env"))
 
 # Add nonescape's python package to the path so `from nonescape import ...` works
 sys.path.insert(0, os.path.join(_THIS_DIR, "nonescape", "python"))
