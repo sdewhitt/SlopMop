@@ -237,4 +237,50 @@ describe('Instagram overlay rendering', () => {
     expect(overlay?.textContent).toBe('Scanning...');
     errorSpy.mockRestore();
   });
+
+  it('keeps only one Detect Now overlay per grid tile when the same node is rendered twice', () => {
+    const postNode = document.createElement('div');
+    document.body.appendChild(postNode);
+
+    const adapter = createAdapter();
+    const renderer = new InstagramOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      automaticScanning: false,
+    });
+
+    renderer.renderPending('first-id', postNode, 'First pass', () => {});
+    renderer.renderPending('second-id', postNode, 'Second pass', () => {});
+
+    const overlays = postNode.querySelectorAll('[data-slopmop-overlay="1"]');
+    const buttons = postNode.querySelectorAll('button');
+
+    expect(overlays).toHaveLength(1);
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toBe('Detect Now');
+  });
+
+  it('does not bubble Detect Now click events to parent containers', () => {
+    const host = document.createElement('div');
+    const parentClick = vi.fn();
+    host.addEventListener('click', parentClick);
+    document.body.appendChild(host);
+
+    const adapter = createAdapter();
+    const renderer = new InstagramOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      automaticScanning: false,
+    });
+
+    const onDetectNow = vi.fn();
+    renderer.renderPending('click-safe', host, 'modal caption', onDetectNow);
+
+    const button = host.querySelector('button');
+    expect(button).not.toBeNull();
+    button?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(onDetectNow).toHaveBeenCalledTimes(1);
+    expect(parentClick).toHaveBeenCalledTimes(0);
+  });
 });

@@ -49,6 +49,15 @@ export default function Popup() {
   const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
 
+  const mergeSettings = useCallback((raw?: Partial<Settings>): Settings => ({
+    ...defaultSettings,
+    ...(raw ?? {}),
+    platforms: {
+      ...defaultSettings.platforms,
+      ...(raw?.platforms ?? {}),
+    },
+  }), []);
+
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
       postsScanned: typeof stored.postsScanned === 'number' ? stored.postsScanned : 0,
@@ -74,7 +83,7 @@ export default function Popup() {
       .then((result) => {
         syncStatsFromStorage(result);
         if (result.settings) {
-          const merged = { ...defaultSettings, ...(result.settings as Settings) };
+          const merged = mergeSettings(result.settings as Partial<Settings>);
           setSettings(merged);
           setEnabled(merged.enabled);
         }
@@ -91,7 +100,7 @@ export default function Popup() {
         const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
         setLanguageUnsupported(unsupported?.message ?? null);
       });
-  }, [syncStatsFromStorage]);
+  }, [mergeSettings, syncStatsFromStorage]);
   // ── Sync settings from Firestore when the user signs in ──────
   const loadSettings = useCallback(async () => {
     if (!user) return;
@@ -119,7 +128,10 @@ export default function Popup() {
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
         automaticScanning: remote.settings.automaticScanning ?? defaultSettings.automaticScanning,
-        platforms: { ...remote.settings.platforms },
+        platforms: {
+          ...defaultSettings.platforms,
+          ...remote.settings.platforms,
+        },
         enabled: remote.settings.enabled ?? defaultSettings.enabled,
         scanText: remote.settings.scanText ?? defaultSettings.scanText,
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
@@ -140,12 +152,12 @@ export default function Popup() {
       ]);
       syncStatsFromStorage(result);
       if (result.settings) {
-        const merged = { ...defaultSettings, ...(result.settings as Settings) };
+        const merged = mergeSettings(result.settings as Partial<Settings>);
         setSettings(merged);
         setEnabled(merged.enabled);
       }
     }
-  }, [syncStatsFromStorage, user]);
+  }, [mergeSettings, syncStatsFromStorage, user]);
 
   useEffect(() => {
     loadSettings();
@@ -211,7 +223,7 @@ export default function Popup() {
 
       const change = changes.settings;
       if (change?.newValue && typeof change.newValue === 'object') {
-        setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+        setSettings(mergeSettings(change.newValue as Partial<Settings>));
       }
 
       const simpleModeChange = changes.simpleMode;
@@ -222,7 +234,7 @@ export default function Popup() {
 
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
-  }, []);
+  }, [mergeSettings]);
 
   const isSupportedFeedSite =
     typeof window !== 'undefined' &&

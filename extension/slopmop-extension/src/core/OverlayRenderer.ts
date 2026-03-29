@@ -10,6 +10,7 @@ import {
  
 
 export class OverlayRenderer {
+    private static readonly OVERLAY_ATTR = "data-slopmop-overlay";
 
     // map each postId to the overlay element we create for it 
     private mapToOverlay = new Map<PostId, HTMLElement>()
@@ -117,7 +118,13 @@ export class OverlayRenderer {
         } else {
             this.mapToTextBody.delete(postId);
         }
+
+        // Instagram can rehydrate/reuse feed tiles, which may trigger multiple
+        // pending renders on the same host node. Keep at most one overlay per tile.
+        this.removeExistingHostOverlays(hostNode);
+
         const overlay = document.createElement("div");
+        overlay.setAttribute(OverlayRenderer.OVERLAY_ATTR, "1");
         hostNode.style.position = "relative";
         hostNode.appendChild(overlay);
         // style the overlay object
@@ -153,7 +160,9 @@ export class OverlayRenderer {
             backgroundColor: "#6b7280",
             cursor: "pointer",
         });
-        detectNowButton.onclick = () => {
+        detectNowButton.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
             this.showScanningState(overlay);
             onDetectNow();
         };
@@ -162,6 +171,29 @@ export class OverlayRenderer {
 
 
     }
+
+    private removeExistingHostOverlays(hostNode: HTMLElement): void {
+        const existingOverlays = Array.from(hostNode.children).filter((child) =>
+            (child as HTMLElement).getAttribute(OverlayRenderer.OVERLAY_ATTR) === "1",
+        ) as HTMLElement[];
+        if (existingOverlays.length === 0) return;
+
+        const stale = new Set(existingOverlays);
+        for (const [existingPostId, overlayEl] of this.mapToOverlay) {
+            if (!stale.has(overlayEl)) continue;
+            this.mapToOverlay.delete(existingPostId);
+            this.mapToResponse.delete(existingPostId);
+            this.mapToPostText.delete(existingPostId);
+            this.mapToErrorMessage.delete(existingPostId);
+            this.mapToTextBody.delete(existingPostId);
+            this.mapToOriginalBodyHtml.delete(existingPostId);
+        }
+
+        for (const overlay of existingOverlays) {
+            overlay.remove();
+        }
+    }
+
     renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
