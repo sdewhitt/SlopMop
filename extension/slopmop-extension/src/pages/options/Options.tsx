@@ -40,10 +40,19 @@ export default function Options() {
   const [saved, setSaved] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
 
+  const mergeSettings = (raw?: Partial<Settings>): Settings => ({
+    ...defaultSettings,
+    ...(raw ?? {}),
+    platforms: {
+      ...defaultSettings.platforms,
+      ...(raw?.platforms ?? {}),
+    },
+  });
+
   useEffect(() => {
     browser.storage.local.get(['settings', 'simpleMode']).then((result) => {
       if (result.settings) {
-        setSettings({ ...defaultSettings, ...(result.settings as Settings) });
+        setSettings(mergeSettings(result.settings as Partial<Settings>));
       }
       if (typeof result.simpleMode === 'boolean') {
         setSimpleMode(result.simpleMode);

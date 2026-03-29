@@ -126,7 +126,14 @@ function getCurrentHost(): string {
 
 function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
-  return { ...defaultUserSettings.settings, ...saved };
+  return {
+    ...defaultUserSettings.settings,
+    ...saved,
+    platforms: {
+      ...defaultUserSettings.settings.platforms,
+      ...(saved.platforms ?? {}),
+    },
+  };
 }
 
 function shouldRunOnCurrentSite(

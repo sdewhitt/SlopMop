@@ -30,6 +30,7 @@ import type {
   DetectionResponse,
   HighlightSpan,
   ImageDetectionResult,
+  MediaType,
   NormalizedPostContent,
 } from '@src/types/domain';
 import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
@@ -66,7 +67,14 @@ let statsWriteChain: Promise<void> = Promise.resolve();
 async function getDetectionSettings(): Promise<DetectionSettings> {
   const stored = await browser.storage.local.get('settings');
   const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
-  return { ...defaultUserSettings.settings, ...saved };
+  return {
+    ...defaultUserSettings.settings,
+    ...saved,
+    platforms: {
+      ...defaultUserSettings.settings.platforms,
+      ...(saved.platforms ?? {}),
+    },
+  };
 }
 
 function normalizeStoredStats(stored: Record<string, unknown>): StoredStats {
@@ -557,13 +565,20 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   };
 
   const settings = await getDetectionSettings();
-  const shouldFetchImages = settings.scanImages && post.images.length > 0;
-
   let enrichedImages = post.images;
+  if (settings.scanImages && enrichedImages.length === 0) {
+    const preview = await fetchInstagramPreviewImageCandidate(post.url);
+    if (preview) {
+      enrichedImages = [preview];
+    }
+  }
+
+  const shouldFetchImages = settings.scanImages && enrichedImages.length > 0;
+
   if (shouldFetchImages) {
-    enrichedImages = await fetchImagesThrottled(post.images, IMAGE_FETCH_CONCURRENCY);
+    enrichedImages = await fetchImagesThrottled(enrichedImages, IMAGE_FETCH_CONCURRENCY);
   } else {
-    enrichedImages = post.images.map((img) => ({ ...img, bytesBase64: '' }));
+    enrichedImages = enrichedImages.map((img) => ({ ...img, bytesBase64: '' }));
   }
 
   const enrichedPost = { ...post, images: enrichedImages };
@@ -616,7 +631,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         const start = performance.now();
         const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
         const elapsedMs = Math.round(performance.now() - start);
-        const mapped = mapToDetectionResponse(imgResult, enrichedPost.postId, elapsedMs);
+        const mapped = mapToDetectionResponse(
+          imgResult,
+          enrichedPost.postId,
+          elapsedMs,
+          firstImage.mediaType ?? 'image',
+        );
 
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
@@ -692,7 +712,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     // Use the image result as the primary verdict (don't also set imageResult, which would
     // cause the renderer to show the same image data twice).
     if (!textResult && imageResult) {
-      const imgResponse = mapToDetectionResponse(imageResult.result, enrichedPost.postId, imageResult.elapsedMs);
+      const imgResponse = mapToDetectionResponse(
+        imageResult.result,
+        enrichedPost.postId,
+        imageResult.elapsedMs,
+        firstImage?.mediaType ?? 'image',
+      );
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
         payload: imgResponse,
@@ -715,7 +740,11 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     const mapped = mapToDetectionResponse(textResult!.result, enrichedPost.postId, textResult!.elapsedMs);
 
     if (imageResult) {
-      mapped.imageResult = mapToImageDetectionResult(imageResult.result, imageResult.elapsedMs);
+      mapped.imageResult = mapToImageDetectionResult(
+        imageResult.result,
+        imageResult.elapsedMs,
+        firstImage?.mediaType ?? 'image',
+      );
     }
 
     await browser.tabs.sendMessage(tabId, {
@@ -732,6 +761,80 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     });
     await finalizeStats(false);
   }
+}
+
+async function fetchInstagramPreviewImageCandidate(
+  postUrl: string,
+): Promise<NormalizedPostContent['images'][number] | null> {
+  const trimmed = (postUrl ?? '').trim();
+  if (!trimmed) return null;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (!url.hostname.includes('instagram.com')) return null;
+  if (!/\/(?:p|reel)\//.test(url.pathname)) return null;
+
+  try {
+    const response = await fetch(url.toString(), { credentials: 'include' });
+    if (!response.ok) return null;
+    const html = await response.text();
+    const previewUrl = extractOgImageUrl(html);
+    if (!previewUrl) return null;
+
+    const mediaType: MediaType = url.pathname.includes('/reel/') ? 'video' : 'image';
+    return {
+      imageId: `ig-og-${hashString(previewUrl)}`,
+      bytesBase64: '',
+      srcUrl: previewUrl,
+      mimeType: mimeTypeFromImageUrl(previewUrl),
+      mediaType,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractOgImageUrl(html: string): string | null {
+  const patterns = [
+    /<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["'][^>]*>/i,
+    /<meta[^>]*name=["']twitter:image["'][^>]*content=["']([^"']+)["'][^>]*>/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    const raw = match?.[1]?.trim();
+    if (!raw) continue;
+    const decoded = raw.replace(/&amp;/g, '&');
+    if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+      return decoded;
+    }
+  }
+
+  return null;
+}
+
+function mimeTypeFromImageUrl(url: string): string {
+  const path = url.split('?')[0].split('#')[0].toLowerCase();
+  if (path.endsWith('.png')) return 'image/png';
+  if (path.endsWith('.webp')) return 'image/webp';
+  if (path.endsWith('.gif')) return 'image/gif';
+  if (path.endsWith('.avif')) return 'image/avif';
+  return 'image/jpeg';
+}
+
+function hashString(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
@@ -868,6 +971,7 @@ function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
   timingMs: number,
+  detectionSource: DetectionResponse['detectionSource'] = 'text',
 ): DetectionResponse {
   //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
 
@@ -908,6 +1012,7 @@ function mapToDetectionResponse(
     postId,
     verdict,
     confidence: apiResult.confidence,
+    detectionSource,
     explanation: {
       summary: apiResult.explanation,
       highlights,
@@ -922,6 +1027,7 @@ function mapToDetectionResponse(
 function mapToImageDetectionResult(
   apiResult: DetectImageResponse,
   timingMs: number,
+  mediaType: MediaType = 'image',
 ): ImageDetectionResult {
   const confidencePercent = apiResult.confidence <= 1
     ? apiResult.confidence * 100
@@ -939,6 +1045,7 @@ function mapToImageDetectionResult(
     summary: apiResult.explanation,
     model: { name: 'nonescape-mini', version: '0.1' },
     timingMs,
+    mediaType,
   };
 }
 

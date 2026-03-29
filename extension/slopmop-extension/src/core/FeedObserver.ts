@@ -38,6 +38,8 @@ export class FeedObserver {
     private timedOutPostIds = new Set<string>();
     // stores extracted payloads so failed analyses can be retried from the badge.
     private postsById = new Map<string, NormalizedPostContent>();
+    // tracks DOM hosts where an overlay has already been rendered.
+    private renderedHosts = new WeakSet<Element>();
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -97,6 +99,7 @@ export class FeedObserver {
         this.pendingAnalyzeTimers.clear();
         this.timedOutPostIds.clear();
         this.postsById.clear();
+        this.renderedHosts = new WeakSet<Element>();
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
@@ -149,6 +152,7 @@ export class FeedObserver {
      */
     rescanForNewPage(): void {
         this.seenPostIds.clear();
+        this.renderedHosts = new WeakSet<Element>();
         this.scanAndProcess();
     }
 
@@ -194,9 +198,22 @@ export class FeedObserver {
         // so it can be retried on the next scan if the DOM updates
         if (!extracted) return;
 
+        const textContainer =
+            type === "post"
+                ? this.adapter.getTextNode(node)
+                : this.adapter.getCommentTextNode(node);
+
         // step 2: dedupe. Set.has() is O(1) lookup.
-        // most posts on a re-scan are ones we've already processed
-        if (this.seenPostIds.has(extracted.postId)) return;
+        // most posts on a re-scan are ones we've already processed.
+        // In manual mode, still render Detect Now on newly encountered hosts
+        // (e.g. opening a modal for a post already seen in the grid).
+        if (this.seenPostIds.has(extracted.postId)) {
+            if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
+                this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+                this.renderedHosts.add(node);
+            }
+            return;
+        }
 
         // step 3: eligibility. check user settings
         if (!this.isEligible(extracted)) {
@@ -220,11 +237,6 @@ export class FeedObserver {
             });
         }
 
-        const textContainer =
-            type === "post"
-                ? this.adapter.getTextNode(node)
-                : this.adapter.getCommentTextNode(node);
-
         if (this.settings.automaticScanning) {
             // automatic mode: render scanning state immediately and dispatch analysis now.
             this.overlay.renderPending(
@@ -234,9 +246,20 @@ export class FeedObserver {
                 undefined,
                 textContainer,
             );
+            this.renderedHosts.add(node);
             this.dispatchAnalyze(extracted);
             return;
         }
+
+        this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+        this.renderedHosts.add(node);
+    }
+
+    private renderManualEntry(
+        extracted: NormalizedPostContent,
+        hostNode: HTMLElement,
+        textContainer: HTMLElement | null,
+    ): void {
 
         // manual mode: if language unsupported AND post is text-only, show badge only (no Detect Now button).
         // IMAGE and MIXED posts can still be analyzed via image detection.
@@ -244,7 +267,7 @@ export class FeedObserver {
             const langInfo = getLanguageSupportInfo(extracted.text.plain);
             this.overlay.renderPending(
                 extracted.postId,
-                node as HTMLElement,
+                hostNode,
                 extracted.text.plain,
                 undefined,
                 textContainer,
@@ -256,7 +279,7 @@ export class FeedObserver {
         // manual mode: render Detect Now button and wait for user click.
         this.overlay.renderPending(
             extracted.postId,
-            node as HTMLElement,
+            hostNode,
             extracted.text.plain,
             () => {
                 this.dispatchAnalyze(extracted);

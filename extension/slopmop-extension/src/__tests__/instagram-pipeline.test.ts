@@ -532,6 +532,69 @@ describe('Instagram extraction pipeline', () => {
     expect(images[0].src).toContain('explore_thumb.jpg');
   });
 
+  it('extracts video-only explore reel tiles as media posts', () => {
+    const adapter = new InstagramAdapter();
+    const extractor = new PostExtractor();
+
+    const cell = document.createElement('div');
+    const link = document.createElement('a');
+    link.href = '/reel/ExploreVideo01/';
+    const video = document.createElement('video');
+    video.src =
+      'https://scontent-sea1-1.cdninstagram.com/o1/v/t16/f2/m69/sample.mp4';
+    link.appendChild(video);
+    cell.appendChild(link);
+    document.body.appendChild(cell);
+
+    const extracted = extractor.extract(cell, adapter, 'post');
+    expect(extracted).not.toBeNull();
+    expect(extracted?.postId).toBe('ExploreVideo01');
+    expect(extracted?.url).toContain('/reel/ExploreVideo01/');
+    expect(extracted?.contentType).toBe(ContentType.IMAGE);
+  });
+
+  it('finds explore video tiles without permalink anchors', () => {
+    const adapter = new InstagramAdapter();
+
+    const outer = document.createElement('div');
+    outer.setAttribute('style', 'max-height: 372px; max-width: 209px; aspect-ratio: 720 / 1280;');
+    const mediaWrap = document.createElement('div');
+    const video = document.createElement('video');
+    video.src =
+      'https://scontent-sea1-1.cdninstagram.com/o1/v/t16/f2/m69/no-anchor-sample.mp4';
+    mediaWrap.appendChild(video);
+    outer.appendChild(mediaWrap);
+    document.body.appendChild(outer);
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toContain(outer);
+
+    const stableId = adapter.getStablePostId(outer);
+    expect(stableId).toBeTruthy();
+  });
+
+  it('does not return duplicate hosts when a video reel tile has both anchor and video paths', () => {
+    const adapter = new InstagramAdapter();
+
+    const outer = document.createElement('div');
+    outer.setAttribute('style', 'max-height: 372px; max-width: 209px; aspect-ratio: 720 / 1280;');
+
+    const inner = document.createElement('div');
+    const link = document.createElement('a');
+    link.href = '/reel/DedupVideo01/';
+    const video = document.createElement('video');
+    video.src =
+      'https://scontent-sea1-1.cdninstagram.com/o1/v/t16/f2/m69/dedup-sample.mp4';
+
+    link.appendChild(video);
+    inner.appendChild(link);
+    outer.appendChild(inner);
+    document.body.appendChild(outer);
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toHaveLength(1);
+  });
+
   it('ignores explore grid story links', () => {
     const adapter = new InstagramAdapter();
 
@@ -547,5 +610,190 @@ describe('Instagram extraction pipeline', () => {
 
     const found = adapter.findPostNodes(document);
     expect(found).toHaveLength(0);
+  });
+
+  it('finds instagram modal dialog posts opened from search grid', () => {
+    const adapter = new InstagramAdapter();
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const mediaHost = document.createElement('div');
+    const video = document.createElement('video');
+    mediaHost.appendChild(video);
+    dialog.appendChild(mediaHost);
+    const permalink = document.createElement('a');
+    permalink.href = '/reel/ModalPost01/';
+    dialog.appendChild(permalink);
+    document.body.appendChild(dialog);
+
+    Object.defineProperty(mediaHost, 'getBoundingClientRect', {
+      value: () => ({ width: 420, height: 720, top: 0, bottom: 720, left: 0, right: 420 }),
+    });
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toContain(mediaHost);
+    expect(found).not.toContain(dialog);
+  });
+
+  it('prefers dialog media host over overlapping non-dialog reel host', () => {
+    const adapter = new InstagramAdapter();
+
+    const outer = document.createElement('div');
+    outer.setAttribute('style', 'max-height: 372px; max-width: 209px; aspect-ratio: 720 / 1280;');
+    const feedLink = document.createElement('a');
+    feedLink.href = '/reel/OverlapVideo01/';
+    const feedVideo = document.createElement('video');
+    feedVideo.src =
+      'https://scontent-sea1-1.cdninstagram.com/o1/v/t16/f2/m69/overlap-feed.mp4';
+    feedLink.appendChild(feedVideo);
+    outer.appendChild(feedLink);
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const mediaHost = document.createElement('div');
+    const dialogVideo = document.createElement('video');
+    dialogVideo.src =
+      'https://scontent-sea1-1.cdninstagram.com/o1/v/t16/f2/m69/overlap-dialog.mp4';
+    mediaHost.appendChild(dialogVideo);
+    dialog.appendChild(mediaHost);
+    const permalink = document.createElement('a');
+    permalink.href = '/reel/OverlapVideo01/';
+    dialog.appendChild(permalink);
+
+    // Keep dialog nested here to model overlap where non-dialog host can enclose it.
+    outer.appendChild(dialog);
+    document.body.appendChild(outer);
+
+    Object.defineProperty(mediaHost, 'getBoundingClientRect', {
+      value: () => ({ width: 420, height: 720, top: 0, bottom: 720, left: 0, right: 420 }),
+    });
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toContain(mediaHost);
+    expect(found).not.toContain(outer);
+  });
+
+  it('does not return modal article nodes when dialog media host is present', () => {
+    const adapter = new InstagramAdapter();
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+
+    const article = document.createElement('article');
+    const mediaHost = document.createElement('div');
+    const video = document.createElement('video');
+    mediaHost.appendChild(video);
+    article.appendChild(mediaHost);
+
+    const permalink = document.createElement('a');
+    permalink.href = '/reel/ModalPostArticle01/';
+    article.appendChild(permalink);
+    dialog.appendChild(article);
+    document.body.appendChild(dialog);
+
+    Object.defineProperty(mediaHost, 'getBoundingClientRect', {
+      value: () => ({ width: 420, height: 720, top: 0, bottom: 720, left: 0, right: 420 }),
+    });
+
+    const found = adapter.findPostNodes(document);
+    expect(found).toContain(mediaHost);
+    expect(found).not.toContain(article);
+  });
+
+  it('does not scan modal dialog comments as feed comments', () => {
+    const adapter = new InstagramAdapter();
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const article = document.createElement('article');
+    const permalink = document.createElement('a');
+    permalink.href = '/p/ModalCommentPost01/';
+    article.appendChild(permalink);
+
+    const ul = document.createElement('ul');
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.setAttribute('dir', 'auto');
+    setInnerText(span, 'This modal comment should not be auto-scanned.');
+    li.appendChild(span);
+    Object.defineProperty(li, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 40, top: 12, bottom: 52, left: 0, right: 400 }),
+    });
+    ul.appendChild(li);
+    article.appendChild(ul);
+    dialog.appendChild(article);
+    document.body.appendChild(dialog);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(0);
+  });
+
+  it('extracts caption text from modal dialog scope when media node has only blob video', () => {
+    const adapter = new InstagramAdapter();
+    const extractor = new PostExtractor();
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+
+    // Left media pane node that FeedObserver may process.
+    const mediaPane = document.createElement('div');
+    const video = document.createElement('video');
+    video.src = 'blob:https://www.instagram.com/abcd-1234';
+    mediaPane.appendChild(video);
+
+    // Right pane has permalink + caption text.
+    const permalink = document.createElement('a');
+    permalink.href = '/reel/ModalPost02/';
+    const caption = document.createElement('span');
+    caption.setAttribute('dir', 'auto');
+    setInnerText(caption, 'This modal caption should still be detected.');
+
+    dialog.appendChild(mediaPane);
+    dialog.appendChild(permalink);
+    dialog.appendChild(caption);
+    document.body.appendChild(dialog);
+
+    const extracted = extractor.extract(mediaPane, adapter, 'post');
+    expect(extracted).not.toBeNull();
+    expect(extracted?.postId).toBe('ModalPost02');
+    expect(extracted?.contentType).toBe(ContentType.TEXT);
+    expect(extracted?.text.plain).toContain('modal caption');
+  });
+
+  it('prefers modal caption heading over longer comment text', () => {
+    const adapter = new InstagramAdapter();
+    const extractor = new PostExtractor();
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+
+    const mediaPane = document.createElement('div');
+    const video = document.createElement('video');
+    video.src = 'blob:https://www.instagram.com/efgh-5678';
+    mediaPane.appendChild(video);
+
+    const permalink = document.createElement('a');
+    permalink.href = '/reel/ModalPost03/';
+
+    const captionHeading = document.createElement('h1');
+    setInnerText(captionHeading, 'Short caption');
+
+    const commentSpan = document.createElement('span');
+    commentSpan.setAttribute('dir', 'auto');
+    setInnerText(
+      commentSpan,
+      'This is a much longer comment that should not be used as post text extraction in modal view.',
+    );
+
+    dialog.appendChild(mediaPane);
+    dialog.appendChild(permalink);
+    dialog.appendChild(captionHeading);
+    dialog.appendChild(commentSpan);
+    document.body.appendChild(dialog);
+
+    const extracted = extractor.extract(mediaPane, adapter, 'post');
+    expect(extracted).not.toBeNull();
+    expect(extracted?.postId).toBe('ModalPost03');
+    expect(extracted?.text.plain).toBe('Short caption');
   });
 });

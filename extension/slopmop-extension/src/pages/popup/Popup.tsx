@@ -30,6 +30,8 @@ type DetectResponse = {
   confidence?: number;
   explanation?: string;
   metadataComplete?: boolean;
+  detectionSource?: 'text' | 'image' | 'video';
+  imageResult?: { mediaType?: 'image' | 'video' };
   // Some backends may use alternative field names.
   confidenceScore?: number;
   confidence_score?: number;
@@ -46,6 +48,15 @@ export default function Popup() {
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
   const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
+
+  const mergeSettings = useCallback((raw?: Partial<Settings>): Settings => ({
+    ...defaultSettings,
+    ...(raw ?? {}),
+    platforms: {
+      ...defaultSettings.platforms,
+      ...(raw?.platforms ?? {}),
+    },
+  }), []);
 
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
@@ -72,7 +83,7 @@ export default function Popup() {
       .then((result) => {
         syncStatsFromStorage(result);
         if (result.settings) {
-          const merged = { ...defaultSettings, ...(result.settings as Settings) };
+          const merged = mergeSettings(result.settings as Partial<Settings>);
           setSettings(merged);
           setEnabled(merged.enabled);
         }
@@ -89,7 +100,7 @@ export default function Popup() {
         const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
         setLanguageUnsupported(unsupported?.message ?? null);
       });
-  }, [syncStatsFromStorage]);
+  }, [mergeSettings, syncStatsFromStorage]);
   // ── Sync settings from Firestore when the user signs in ──────
   const loadSettings = useCallback(async () => {
     if (!user) return;
@@ -117,7 +128,10 @@ export default function Popup() {
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
         automaticScanning: remote.settings.automaticScanning ?? defaultSettings.automaticScanning,
-        platforms: { ...remote.settings.platforms },
+        platforms: {
+          ...defaultSettings.platforms,
+          ...remote.settings.platforms,
+        },
         enabled: remote.settings.enabled ?? defaultSettings.enabled,
         scanText: remote.settings.scanText ?? defaultSettings.scanText,
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
@@ -138,12 +152,12 @@ export default function Popup() {
       ]);
       syncStatsFromStorage(result);
       if (result.settings) {
-        const merged = { ...defaultSettings, ...(result.settings as Settings) };
+        const merged = mergeSettings(result.settings as Partial<Settings>);
         setSettings(merged);
         setEnabled(merged.enabled);
       }
     }
-  }, [syncStatsFromStorage, user]);
+  }, [mergeSettings, syncStatsFromStorage, user]);
 
   useEffect(() => {
     loadSettings();
@@ -209,7 +223,7 @@ export default function Popup() {
 
       const change = changes.settings;
       if (change?.newValue && typeof change.newValue === 'object') {
-        setSettings({ ...defaultSettings, ...(change.newValue as Settings) });
+        setSettings(mergeSettings(change.newValue as Partial<Settings>));
       }
 
       const simpleModeChange = changes.simpleMode;
@@ -220,7 +234,7 @@ export default function Popup() {
 
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
-  }, []);
+  }, [mergeSettings]);
 
   const isSupportedFeedSite =
     typeof window !== 'undefined' &&
@@ -394,6 +408,11 @@ export default function Popup() {
   const patternReasons = (detectResponse as { patternReasons?: string[] } | null)?.patternReasons;
   const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
+  const mediaSourceLabel = detectResponse?.detectionSource === 'video'
+    ? 'Video'
+    : detectResponse?.detectionSource === 'image'
+      ? 'Image'
+      : null;
 
   // ── History view ──────────────────────────────────────────────
   if (view === 'history') {
@@ -452,6 +471,11 @@ export default function Popup() {
       {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
       {detectResponse && !languageUnsupported && (
         <section className="mt-4 text-left">
+          {mediaSourceLabel && (
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-400 mb-1">
+              Source: {mediaSourceLabel}
+            </p>
+          )}
           <p className="text-sm font-medium text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
           </p>

@@ -10,6 +10,7 @@ import {
  
 
 export class OverlayRenderer {
+    private static readonly OVERLAY_ATTR = "data-slopmop-overlay";
 
     // map each postId to the overlay element we create for it 
     private mapToOverlay = new Map<PostId, HTMLElement>()
@@ -75,10 +76,12 @@ export class OverlayRenderer {
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
+        const sourcePrefix = this.getPrimarySourceLabel(res);
         if (res.imageResult) {
-            overlay.textContent = `Text: ${textLabel} · Img: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+            const mediaLabel = this.getMediaLabel(res.imageResult);
+            overlay.textContent = `Text: ${textLabel} · ${mediaLabel}: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
         } else {
-            overlay.textContent = textLabel;
+            overlay.textContent = sourcePrefix ? `${sourcePrefix}: ${textLabel}` : textLabel;
         }
 
         let tooltip: HTMLElement | null = null;
@@ -115,7 +118,13 @@ export class OverlayRenderer {
         } else {
             this.mapToTextBody.delete(postId);
         }
+
+        // Instagram can rehydrate/reuse feed tiles, which may trigger multiple
+        // pending renders on the same host node. Keep at most one overlay per tile.
+        this.removeExistingHostOverlays(hostNode);
+
         const overlay = document.createElement("div");
+        overlay.setAttribute(OverlayRenderer.OVERLAY_ATTR, "1");
         hostNode.style.position = "relative";
         hostNode.appendChild(overlay);
         // style the overlay object
@@ -151,7 +160,9 @@ export class OverlayRenderer {
             backgroundColor: "#6b7280",
             cursor: "pointer",
         });
-        detectNowButton.onclick = () => {
+        detectNowButton.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
             this.showScanningState(overlay);
             onDetectNow();
         };
@@ -160,6 +171,29 @@ export class OverlayRenderer {
 
 
     }
+
+    private removeExistingHostOverlays(hostNode: HTMLElement): void {
+        const existingOverlays = Array.from(hostNode.children).filter((child) =>
+            (child as HTMLElement).getAttribute(OverlayRenderer.OVERLAY_ATTR) === "1",
+        ) as HTMLElement[];
+        if (existingOverlays.length === 0) return;
+
+        const stale = new Set(existingOverlays);
+        for (const [existingPostId, overlayEl] of this.mapToOverlay) {
+            if (!stale.has(overlayEl)) continue;
+            this.mapToOverlay.delete(existingPostId);
+            this.mapToResponse.delete(existingPostId);
+            this.mapToPostText.delete(existingPostId);
+            this.mapToErrorMessage.delete(existingPostId);
+            this.mapToTextBody.delete(existingPostId);
+            this.mapToOriginalBodyHtml.delete(existingPostId);
+        }
+
+        for (const overlay of existingOverlays) {
+            overlay.remove();
+        }
+    }
+
     renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
@@ -304,6 +338,11 @@ export class OverlayRenderer {
         header.textContent = `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
         if (res.imageResult) {
             header.textContent = `Text: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        } else {
+            const sourcePrefix = this.getPrimarySourceLabel(res);
+            if (sourcePrefix) {
+                header.textContent = `${sourcePrefix}: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+            }
         }
         tip.appendChild(header);
 
@@ -365,6 +404,12 @@ export class OverlayRenderer {
         header.textContent = res.imageResult
             ? `Text: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`
             : `${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+        if (!res.imageResult) {
+            const sourcePrefix = this.getPrimarySourceLabel(res);
+            if (sourcePrefix) {
+                header.textContent = `${sourcePrefix}: ${Math.round(res.confidence * 100)}% — ${verdictLabel[res.verdict]}`;
+            }
+        }
         tip.appendChild(header);
 
         // confidence progress bar
@@ -561,7 +606,8 @@ export class OverlayRenderer {
             fontSize: headerSize,
             marginBottom: "4px",
         });
-        imgHeader.textContent = `Image: ${Math.round(imgRes.confidence * 100)}% — ${verdictLabel[imgRes.verdict]}`;
+        const mediaLabel = this.getMediaLabel(imgRes);
+        imgHeader.textContent = `${mediaLabel}: ${Math.round(imgRes.confidence * 100)}% — ${verdictLabel[imgRes.verdict]}`;
         section.appendChild(imgHeader);
 
         const pct = Math.round(imgRes.confidence * 100);
@@ -617,5 +663,15 @@ export class OverlayRenderer {
         overlay.style.backgroundColor = "#6b7280";
         overlay.style.cursor = "default";
         overlay.textContent = "Scanning...";
+    }
+
+    private getMediaLabel(imgRes: ImageDetectionResult): "Image" | "Video" {
+        return imgRes.mediaType === "video" ? "Video" : "Image";
+    }
+
+    private getPrimarySourceLabel(res: DetectionResponse): "Image" | "Video" | null {
+        if (res.detectionSource === "image") return "Image";
+        if (res.detectionSource === "video") return "Video";
+        return null;
     }
 }

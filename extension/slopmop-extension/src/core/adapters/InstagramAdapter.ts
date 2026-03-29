@@ -14,10 +14,11 @@ export class InstagramAdapter implements SiteAdapter {
     //    opens when a user clicks an explore-grid thumbnail.
     const articles = Array.from(root.querySelectorAll("article"));
     for (const article of articles) {
+      // Modal dialogs are handled separately so overlays stay anchored to media.
+      if (article.closest('div[role="dialog"]')) continue;
       if (!this.getPermalink(article)) continue;
       if (article.querySelector('a[href*="/stories/"]')) continue;
-      seen.add(article);
-      out.push(article);
+      this.pushUniqueHost(out, seen, article);
     }
 
     // 2) Explore-page grid items: clickable thumbnail tiles that are NOT
@@ -32,13 +33,36 @@ export class InstagramAdapter implements SiteAdapter {
     for (const link of postLinks) {
       // Links inside articles are already captured above.
       if (link.closest("article")) continue;
+      // Modal dialogs are handled separately below.
+      if (link.closest('div[role="dialog"]')) continue;
       // Ignore story links that somehow match the selector.
       if (link.getAttribute("href")?.includes("/stories/")) continue;
       // The grid cell wrapper is the link's nearest parent <div>.
       const container = link.closest("div");
-      if (!container || seen.has(container)) continue;
-      seen.add(container);
-      out.push(container);
+      if (!container) continue;
+      this.pushUniqueHost(out, seen, container);
+    }
+
+    // 2b) Explore/search reel tiles that render as bare <video> media without
+    // an immediate permalink anchor in the visible subtree.
+    const tileVideos = Array.from(root.querySelectorAll<HTMLVideoElement>("video[src]"));
+    for (const video of tileVideos) {
+      if (video.closest("article")) continue;
+      if (video.closest('div[role="dialog"]')) continue;
+
+      const container = this.resolveVideoTileHost(video);
+      if (!container) continue;
+      this.pushUniqueHost(out, seen, container);
+    }
+
+    // 3) Post modal dialogs opened from explore/search pages.
+    //    These can contain media on the left and caption/comments on the right,
+    //    without a stable <article> around the same subtree.
+    const dialogs = Array.from(root.querySelectorAll('div[role="dialog"]'));
+    for (const dialog of dialogs) {
+      if (!this.getPermalink(dialog)) continue;
+      const modalHost = this.resolveDialogOverlayHost(dialog);
+      this.pushUniqueHost(out, seen, modalHost);
     }
 
     return out;
@@ -56,13 +80,18 @@ export class InstagramAdapter implements SiteAdapter {
     const author = this.getAuthorHandle(postNode);
     const timestamp = this.getTimestampText(postNode);
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
-    const base = `${permalink ?? ""}|${author}|${timestamp}|${text}`;
+    const mediaEl = postNode.querySelector<HTMLImageElement | HTMLVideoElement>("img, video");
+    const mediaSrc = mediaEl instanceof HTMLVideoElement
+      ? (mediaEl.currentSrc || mediaEl.src || "")
+      : (mediaEl?.currentSrc || mediaEl?.getAttribute("src") || "");
+    const base = `${permalink ?? ""}|${author}|${timestamp}|${text}|${mediaSrc}`;
     return base ? `ig-fallback-${this.fnv1a(base)}` : null;
   }
 
   getPermalink(postNode: Element): string | null {
     // Instagram post links contain /p/{shortcode}/ or /reel/{shortcode}/
-    const link = postNode.querySelector<HTMLAnchorElement>(
+    const searchRoot = this.getSearchRoot(postNode);
+    const link = searchRoot.querySelector<HTMLAnchorElement>(
       'a[href*="/p/"], a[href*="/reel/"]',
     );
     const href = link?.getAttribute("href")?.trim();
@@ -72,12 +101,29 @@ export class InstagramAdapter implements SiteAdapter {
 
   getTextNode(postNode: Element): HTMLElement | null {
     // Instagram captions appear in spans with dir="auto" below the image.
-    // Fall back to the first <h1> or generic <span> with text.
-    return (
-      postNode.querySelector<HTMLElement>('span[dir="auto"]') ??
-      postNode.querySelector<HTMLElement>("h1") ??
-      postNode.querySelector<HTMLElement>("span")
-    );
+    // In modal dialogs, caption can be in a sibling pane outside the media node,
+    // so query against dialog scope and choose the longest likely text node.
+    const dialog = postNode.closest('div[role="dialog"]');
+    if (dialog) {
+      // Modal post captions are typically rendered as an <h1>; comments are usually
+      // list-item spans, so prefer heading text when present.
+      const captionHeading = dialog.querySelector<HTMLElement>("h1");
+      if (captionHeading && (captionHeading.innerText || "").trim().length > 0) {
+        return captionHeading;
+      }
+    }
+
+    const searchRoot = this.getSearchRoot(postNode);
+    const candidates = Array.from(
+      searchRoot.querySelectorAll<HTMLElement>('span[dir="auto"], h1'),
+    ).filter((el) => (el.innerText || "").trim().length > 0);
+
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.innerText.trim().length - a.innerText.trim().length);
+      return candidates[0];
+    }
+
+    return postNode.querySelector<HTMLElement>("span");
   }
 
   getImageNodes(postNode: Element): HTMLImageElement[] {
@@ -146,7 +192,12 @@ export class InstagramAdapter implements SiteAdapter {
     // First find all feed-post articles, then search for comment nodes
     // only within them. This prevents the stories tray and other top-level
     // list items from being picked up as comments.
-    const articles = this.findPostNodes(root);
+    const articles = Array.from(root.querySelectorAll("article")).filter((article) => {
+      if (article.closest('div[role="dialog"]')) return false;
+      if (!this.getPermalink(article)) return false;
+      if (article.querySelector('a[href*="/stories/"]')) return false;
+      return true;
+    });
     const selectors = ["ul > li", "ul > div"];
 
     const seen = new Set<Element>();
@@ -206,6 +257,96 @@ export class InstagramAdapter implements SiteAdapter {
     } catch {
       return null;
     }
+  }
+
+  private getSearchRoot(postNode: Element): ParentNode {
+    return postNode.closest('div[role="dialog"]') ?? postNode;
+  }
+
+  /**
+   * For modal posts opened from search/explore, anchor overlays to the media pane
+   * (left column) rather than the full dialog container.
+   */
+  private resolveDialogOverlayHost(dialog: Element): Element {
+    const media = dialog.querySelector<HTMLElement>("video, img");
+    if (!media) return dialog;
+
+    // Prefer the smallest ancestor around the media that has real dimensions.
+    // Stop climbing once we hit an ancestor that already contains permalink links,
+    // which usually indicates the broader dialog/comment pane wrapper.
+    let host: Element = media.parentElement ?? media;
+    let current: HTMLElement | null = media.parentElement;
+    while (current && current !== dialog) {
+      if (current.querySelector('a[href*="/p/"], a[href*="/reel/"]')) {
+        break;
+      }
+      const rect = current.getBoundingClientRect();
+      if (rect.width >= 150 && rect.height >= 150) {
+        host = current;
+      }
+      current = current.parentElement;
+    }
+
+    return host;
+  }
+
+  private resolveVideoTileHost(video: HTMLVideoElement): Element | null {
+    let host: Element | null = video.parentElement;
+    let current: HTMLElement | null = video.parentElement;
+
+    while (current) {
+      if (current.matches('div[role="dialog"]') || current.matches("article")) {
+        break;
+      }
+
+      const styleAttr = (current.getAttribute("style") || "").toLowerCase();
+      if (styleAttr.includes("aspect-ratio") || styleAttr.includes("max-height")) {
+        host = current;
+      }
+
+      current = current.parentElement;
+    }
+
+    return host;
+  }
+
+  private pushUniqueHost(out: Element[], seen: Set<Element>, host: Element): void {
+    if (seen.has(host)) return;
+
+    const hostInDialog = !!host.closest('div[role="dialog"]');
+
+    for (let i = 0; i < out.length; i += 1) {
+      const existing = out[i];
+      const existingInDialog = !!existing.closest('div[role="dialog"]');
+
+      if (existing === host) return;
+      // If the candidate is nested under an already-selected host, skip it,
+      // unless this candidate is dialog-scoped and the existing host is not.
+      if (existing.contains(host)) {
+        if (hostInDialog && !existingInDialog) {
+          out.splice(i, 1);
+          seen.delete(existing);
+          i -= 1;
+          continue;
+        }
+        return;
+      }
+      // If the candidate wraps an existing host and is dialog-scoped while
+      // the existing host is not, prefer the dialog host for clicked-post views.
+      if (host.contains(existing)) {
+        if (hostInDialog && !existingInDialog) {
+          out.splice(i, 1);
+          seen.delete(existing);
+          i -= 1;
+          continue;
+        }
+        // Otherwise preserve deterministic placement from the first host.
+        return;
+      }
+    }
+
+    seen.add(host);
+    out.push(host);
   }
 
   private parseShortcodeFromUrl(url: string): string | null {
