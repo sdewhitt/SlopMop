@@ -7,6 +7,7 @@ import Footer from "../components/footer";
 import { useAuth } from "../context/AuthContext";
 import { UserSettingsProvider, useUserSettings } from "../context/UserSettingsContext";
 import type { PlatformToggles } from "../lib/userSettings";
+import { clearOnboardingStorage } from "../lib/onboardingStorage";
 
 /* ───────────────────────── tiny reusable toggle ─────────────────────────── */
 
@@ -192,6 +193,7 @@ function SettingsContent() {
 
   const handleResetSettings = async () => {
     await resetSettings();
+    clearOnboardingStorage();
     flashSaved();
   };
 
