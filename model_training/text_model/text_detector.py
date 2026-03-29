@@ -196,6 +196,49 @@ def tokenize_batch(batch, tokenizer, text_column="text"):
     max_length=512
   )
 
+
+def _spread_mask_sequence_positions(mask_indices: list[int], k: int) -> list[int]:
+  """
+  Choose up to k tensor positions from mask_indices (content tokens in order, no padding).
+
+  Using only the first k tokens biases all highlights to the opening sentence; spacing
+  picks across the list gives coverage of the full (truncated) input.
+  """
+  if k <= 0 or not mask_indices:
+    return []
+  n = len(mask_indices)
+  if n <= k:
+    return mask_indices
+  if k == 1:
+    return [mask_indices[n // 2]]
+
+  raw: list[int] = [int(round(i * (n - 1) / (k - 1))) for i in range(k)]
+  seen: set[int] = set()
+  out: list[int] = []
+  for j in raw:
+    seq_pos = mask_indices[j]
+    if seq_pos not in seen:
+      seen.add(seq_pos)
+      out.append(seq_pos)
+  if len(out) < k:
+    step = max(1, n // max(k * 4, 1))
+    for j in range(0, n, step):
+      if len(out) >= k:
+        break
+      seq_pos = mask_indices[j]
+      if seq_pos not in seen:
+        seen.add(seq_pos)
+        out.append(seq_pos)
+  if len(out) < k:
+    for seq_pos in mask_indices:
+      if len(out) >= k:
+        break
+      if seq_pos not in seen:
+        seen.add(seq_pos)
+        out.append(seq_pos)
+  return out[:k]
+
+
 class TextDetectors:
   """
   Implementation of the TextDetector class (design section 3)
@@ -358,7 +401,7 @@ class TextDetectors:
     human_max: float = 0.40,
     ai_min: float = 0.70,
     max_tokens_to_evaluate: int = 24,
-    top_k_spans: int = 8,
+    top_k_spans: int = 12,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
     """
     Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
@@ -418,7 +461,9 @@ class TextDetectors:
         continue
       mask_indices.append(i)
 
-    to_eval = mask_indices[:max_tokens_to_evaluate]
+    # Spread evaluations across the full text (not only the first N tokens), otherwise
+    # highlights cluster in the opening sentence for long posts.
+    to_eval = _spread_mask_sequence_positions(mask_indices, max_tokens_to_evaluate)
     if to_eval:
       k = len(to_eval)
       batch_ids = input_ids.expand(k, -1).clone()
@@ -511,6 +556,16 @@ if __name__ == "__main__":
     raw_csv = load_dataset("csv", data_files=csv_path)
     csv_ds = raw_csv["train"] if isinstance(raw_csv, dict) else raw_csv
     csv_ds = csv_ds.map(lambda x: {"label": int(x["label"]) if x.get("label") is not None else 0})
+
+    # Hugging Face concat requires identical feature types; Hub data may use large_string/float64.
+    _train_features = datasets.Features(
+        {
+            "text": datasets.Value("string"),
+            "label": datasets.Value("int64"),
+        }
+    )
+    gsingh = gsingh.cast(_train_features)
+    csv_ds = csv_ds.cast(_train_features)
 
     # use test_dataset.csv for social media post focused testing
     # csv_path = os.path.join(os.path.dirname(__file__), "test_dataset.csv")
