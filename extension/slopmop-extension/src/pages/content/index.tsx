@@ -12,6 +12,7 @@ import browser from 'webextension-polyfill';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
+import { ThemeProvider } from '../../hooks/useTheme';
 import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
@@ -74,11 +75,13 @@ function createPanel() {
   // Mount the React tree
   reactRoot = createRoot(container);
   reactRoot.render(
-    <PanelProvider closePanel={hidePanel}>
-      <AuthProvider>
-        <Popup />
-      </AuthProvider>
-    </PanelProvider>,
+    <ThemeProvider>
+      <PanelProvider closePanel={hidePanel}>
+        <AuthProvider>
+          <Popup />
+        </AuthProvider>
+      </PanelProvider>
+    </ThemeProvider>,
   );
   visible = true;
 }
