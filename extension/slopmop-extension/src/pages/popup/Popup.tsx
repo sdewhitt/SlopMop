@@ -497,7 +497,6 @@ export default function Popup() {
               Source: {mediaSourceLabel}
             </p>
           )}
-          <p className="text-sm font-medium text-gray-200">
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
           </p>
