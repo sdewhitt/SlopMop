@@ -21,7 +21,7 @@ import regex  # type: ignore[import-untyped]
 
 # for training progress
 from tqdm.auto import tqdm  # type: ignore[import-untyped]
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, NamedTuple, Set
 
 # remove all emojis
 def emoji_removal(text):
@@ -147,6 +147,69 @@ def add_satire_keyword(keyword: str) -> None:
   if kw and kw not in SATIRE_KEYWORDS:
     SATIRE_KEYWORDS.append(kw)
     _SATIRE_PATTERN = _build_keyword_pattern()
+
+
+# ── Regex extras: hashtags, Reddit-style /s (not covered by word-boundary keyword list) ──
+_HASHTAG_SATIRE = re.compile(
+  r"#[\w-]*(?:satire|parody|sarcasm|shitpost|shitposts|meme|joke)\b",
+  re.IGNORECASE,
+)
+# "shit post" / "shit-post" as hashtag-style
+_HASHTAG_SHIT_POST = re.compile(r"#\s*shit[\s_-]*post\b", re.IGNORECASE)
+# Reddit/forum sarcasm end-marker
+_REDDIT_S_MARKER = re.compile(r"(?:^|[\s>])(/[sS])(?:\s|$|[.,!?])")
+
+# result of scanning post body then optional comments for satire cues
+class SatireKeywordScanResult(NamedTuple):
+  keywords: List[str]
+  source: Optional[str]  # "post", "comment", or None if no match
+  comment_index: Optional[int]  # index in comment_texts for first comment match
+
+
+# extract satire markers from the text
+def extract_satire_markers_regex(text: str) -> List[str]:
+  if not text or not isinstance(text, str):
+    return []
+  found: Set[str] = set(m.lower() for m in extract_satire_keywords(text))
+  for m in _HASHTAG_SATIRE.finditer(text):
+    found.add(m.group(0).lower())
+  for m in _HASHTAG_SHIT_POST.finditer(text):
+    found.add(re.sub(r"\s+", "", m.group(0).lower()))
+  if _REDDIT_S_MARKER.search(text):
+    found.add("/s")
+  return sorted(found)
+
+
+# scan the post, then the comments if the post does not contain any satire markers
+def extract_satire_keywords_post_then_comments(
+  post_text: str,
+  comment_texts: Optional[List[str]] = None,
+) -> SatireKeywordScanResult:
+  post_hits = extract_satire_markers_regex(post_text)
+  if post_hits:
+    return SatireKeywordScanResult(keywords=post_hits, source="post", comment_index=None)
+
+  if not comment_texts:
+    return SatireKeywordScanResult(keywords=[], source=None, comment_index=None)
+
+  for i, cmt in enumerate(comment_texts):
+    if not cmt or not isinstance(cmt, str):
+      continue
+    hits = extract_satire_markers_regex(cmt)
+    if hits:
+      return SatireKeywordScanResult(keywords=hits, source="comment", comment_index=i)
+
+  return SatireKeywordScanResult(keywords=[], source=None, comment_index=None)
+
+
+# check if the post or comments contain any satire markers
+def has_satire_markers_post_or_comments(
+  post_text: str,
+  comment_texts: Optional[List[str]] = None,
+) -> bool:
+  r = extract_satire_keywords_post_then_comments(post_text, comment_texts)
+  return len(r.keywords) > 0
+
 
 class SatireDataset(TorchDataset):
   def __init__(
