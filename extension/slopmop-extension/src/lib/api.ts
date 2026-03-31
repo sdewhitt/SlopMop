@@ -3,6 +3,13 @@
  * Must be called from extension context as vite injects env at build time.
  */
 
+/** First attempt plus this many retries before surfacing an error to the user. */
+const DETECTION_MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 150;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 const getBaseUrl = (): string => {
     const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
 
@@ -25,15 +32,7 @@ export interface DetectResponse {
     highlights?: Array<{ start: number; end: number; score: number }>;
 }
 
-/*
-* Sends text to backend API and returns detection result.
-*/
-export async function detectText(text: string): Promise<DetectResponse> {
-const baseUrl: string = getBaseUrl();
-
-// remove extra spaces before sending to server
-const cleanedText: string = text.trim();
-
+async function detectTextOnce(baseUrl: string, cleanedText: string): Promise<DetectResponse> {
 const requestBody = {
     text: cleanedText
 };
@@ -75,6 +74,28 @@ const result: DetectResponse = await response.json();
 return result;
 }
 
+/*
+* Sends text to backend API and returns detection result.
+* On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.
+*/
+export async function detectText(text: string): Promise<DetectResponse> {
+    const baseUrl: string = getBaseUrl();
+    const cleanedText: string = text.trim();
+    let lastError: unknown;
+    const maxAttempts = 1 + DETECTION_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await detectTextOnce(baseUrl, cleanedText);
+        } catch (e) {
+            lastError = e;
+            if (attempt < maxAttempts) {
+                await sleep(RETRY_DELAY_MS);
+            }
+        }
+    }
+    throw lastError;
+}
+
 // expected response from POST /detect-image
 export interface DetectImageResponse {
     confidence: number;
@@ -82,15 +103,11 @@ export interface DetectImageResponse {
     explanation: string;
 }
 
-/*
-* Sends a base64-encoded image to backend API and returns image detection result.
-*/
-export async function detectImage(
+async function detectImageOnce(
+    baseUrl: string,
     imageBase64: string,
-    mimeType: string = "image/jpeg",
+    mimeType: string,
 ): Promise<DetectImageResponse> {
-    const baseUrl: string = getBaseUrl();
-
     const requestBody = {
         image_base64: imageBase64,
         mime_type: mimeType,
@@ -124,4 +141,28 @@ export async function detectImage(
     const result: DetectImageResponse = await response.json();
 
     return result;
+}
+
+/*
+* Sends a base64-encoded image to backend API and returns image detection result.
+* On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.
+*/
+export async function detectImage(
+    imageBase64: string,
+    mimeType: string = "image/jpeg",
+): Promise<DetectImageResponse> {
+    const baseUrl: string = getBaseUrl();
+    let lastError: unknown;
+    const maxAttempts = 1 + DETECTION_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await detectImageOnce(baseUrl, imageBase64, mimeType);
+        } catch (e) {
+            lastError = e;
+            if (attempt < maxAttempts) {
+                await sleep(RETRY_DELAY_MS);
+            }
+        }
+    }
+    throw lastError;
 }
