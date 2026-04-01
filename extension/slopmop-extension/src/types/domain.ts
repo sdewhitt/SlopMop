@@ -129,6 +129,14 @@ export type ContentToBackgroundMessage = // union type
 export interface DetectionLanguageUnsupportedPayload {
   postId: PostId;
   message: string;
+  /** Human-readable name for feed tooltip, e.g. "German". */
+  detectedLanguageName: string;
+  /** Native `title` on the Error badge (simple UI). */
+  hoverSimple: string;
+  /** Detailed tooltip header (detailed UI). */
+  hoverTooltipTitle: string;
+  /** Detailed tooltip body (detailed UI). */
+  hoverTooltipBody: string;
 }
 
 // similar idea, but from background script to content script

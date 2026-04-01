@@ -1,3 +1,5 @@
+import type { DetectionLanguageCode } from '../../utils/userSettings';
+
 export interface Stats {
   postsScanned: number;
   aiDetected: number;
@@ -24,6 +26,7 @@ export interface Settings {
   uiMode: 'simple' | 'detailed';
   accessibilityMode: boolean;
   highlightSegments: boolean;
+  detectionLanguages: DetectionLanguageCode[];
 }
 
 export const defaultSettings: Settings = {
@@ -39,4 +42,5 @@ export const defaultSettings: Settings = {
   uiMode: 'simple',
   accessibilityMode: false,
   highlightSegments: true,
+  detectionLanguages: ['eng', 'spa', 'fra'],
 };

@@ -2,6 +2,13 @@ import React from 'react';
 import Toggle from './Toggle';
 import ThemeToggle from './ThemeToggle';
 import type { Settings } from '../types';
+import type { DetectionLanguageCode } from '@src/utils/userSettings';
+
+const TEXT_LANG_OPTIONS: { code: DetectionLanguageCode; label: string }[] = [
+  { code: 'eng', label: 'English' },
+  { code: 'spa', label: 'Spanish' },
+  { code: 'fra', label: 'French' },
+];
 
 interface DetectionSettingsProps {
   settings: Settings;
@@ -31,6 +38,33 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Scan Text"
           description="Analyze text content in posts"
         />
+        <div className="py-2.5">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">Text detection languages</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Only run text detection for checked languages (auto-detected). Uncheck all to skip text detection.
+          </p>
+          <div className="flex flex-col gap-2 pl-0.5">
+            {TEXT_LANG_OPTIONS.map(({ code, label }) => (
+              <label
+                key={code}
+                className="flex items-center gap-2 cursor-pointer text-sm text-gray-800 dark:text-gray-200"
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.detectionLanguages.includes(code)}
+                  onChange={() => {
+                    const cur = settings.detectionLanguages;
+                    const on = cur.includes(code);
+                    const next = on ? cur.filter((c) => c !== code) : [...cur, code];
+                    onUpdateSetting('detectionLanguages', next);
+                  }}
+                  className="rounded border-gray-300 dark:border-gray-600"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
         <Toggle
           checked={settings.scanImages}
           onChange={(v) => onUpdateSetting('scanImages', v)}

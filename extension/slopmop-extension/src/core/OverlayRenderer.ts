@@ -2,6 +2,10 @@ import { DetectionResponse, ImageDetectionResult, PostId } from "@src/types/doma
 import type { DetectionSettings } from "@src/utils/userSettings";
 import { getPatternReasons } from "@src/utils/aiTextPatterns";
 import {
+    expandUserDetectionLanguages,
+    getTooltipLanguageLine,
+} from "@src/utils/languageSupport";
+import {
     buildHighlightedHtml,
     canApplyInnerHtmlHighlights,
     normalizePlainText,
@@ -194,12 +198,50 @@ export class OverlayRenderer {
         }
     }
 
+    /**
+     * Language blocked — compact “Error” badge; hover explains unsupported language and what was detected.
+     */
+    renderLanguageUnsupported(
+        postId: PostId,
+        hover: { simpleTitle: string; tooltipTitle: string; tooltipBody: string },
+    ): void {
+        const overlay = this.mapToOverlay.get(postId);
+        if (!overlay) return;
+        this.restorePostBodyHtml(postId);
+        this.mapToErrorMessage.delete(postId);
+        this.resetOverlayInteractions(overlay);
+        overlay.removeAttribute("title");
+        overlay.style.backgroundColor = "#f59e0b";
+        overlay.style.whiteSpace = "normal";
+
+        const isSimple = this.settings.uiMode === "simple";
+        overlay.textContent = "Error";
+        overlay.style.cursor = "help";
+
+        if (isSimple) {
+            overlay.setAttribute("title", hover.simpleTitle);
+            return;
+        }
+
+        let tooltip: HTMLElement | null = null;
+        overlay.onmouseenter = () => {
+            if (tooltip) return;
+            tooltip = this.createLanguageUnsupportedTooltip(hover.tooltipTitle, hover.tooltipBody);
+            overlay.appendChild(tooltip);
+        };
+        overlay.onmouseleave = () => {
+            tooltip?.remove();
+            tooltip = null;
+        };
+    }
+
     renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
         this.restorePostBodyHtml(postId);
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
+        overlay.removeAttribute("title");
         this.resetOverlayInteractions(overlay);
         overlay.style.backgroundColor = "#f59e0b"; // amber
         overlay.style.whiteSpace = "normal";
@@ -346,6 +388,14 @@ export class OverlayRenderer {
         }
         tip.appendChild(header);
 
+        const langLineSimple = getTooltipLanguageLine(
+            postText,
+            expandUserDetectionLanguages(this.settings.detectionLanguages),
+        );
+        if (langLineSimple) {
+            tip.appendChild(this.makeTooltipLanguageRow(langLineSimple, "13px", "#9ca3af"));
+        }
+
         const summary = document.createElement("div");
         Object.assign(summary.style, { fontSize: "14px", marginTop: "8px" });
         summary.textContent = res.explanation.summary;
@@ -411,6 +461,14 @@ export class OverlayRenderer {
             }
         }
         tip.appendChild(header);
+
+        const langLine = getTooltipLanguageLine(
+            postText,
+            expandUserDetectionLanguages(this.settings.detectionLanguages),
+        );
+        if (langLine) {
+            tip.appendChild(this.makeTooltipLanguageRow(langLine, "12px", "#9ca3af"));
+        }
 
         // confidence progress bar
         const pct = Math.round(res.confidence * 100);
@@ -541,6 +599,57 @@ export class OverlayRenderer {
         if (res.imageResult) {
             this.appendImageSection(tip, res.imageResult, "13px", "11px");
         }
+
+        return tip;
+    }
+
+    private makeTooltipLanguageRow(
+        line: string,
+        fontSize: string,
+        color: string,
+    ): HTMLElement {
+        const row = document.createElement("div");
+        Object.assign(row.style, {
+            fontSize,
+            color,
+            marginBottom: "6px",
+        });
+        row.textContent = line;
+        return row;
+    }
+
+    private createLanguageUnsupportedTooltip(title: string, body: string): HTMLElement {
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            ...this.getTooltipPosition(),
+            minWidth: "220px",
+            maxWidth: "320px",
+            padding: "12px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "12px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "none",
+            wordBreak: "break-word",
+        });
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "13px",
+            marginBottom: "6px",
+            color: "#fbbf24",
+        });
+        header.textContent = title;
+        tip.appendChild(header);
+
+        const bodyEl = document.createElement("div");
+        bodyEl.textContent = body;
+        tip.appendChild(bodyEl);
 
         return tip;
     }

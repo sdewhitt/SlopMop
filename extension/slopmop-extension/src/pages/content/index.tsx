@@ -22,7 +22,11 @@ import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { InstagramOverlayRenderer } from '@src/core/InstagramOverlayRenderer';
 import { LinkedInOverlayRenderer } from '@src/core/LinkedInOverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
-import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
+import {
+  defaultUserSettings,
+  normalizeDetectionLanguages,
+  type DetectionSettings,
+} from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
 import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
@@ -136,6 +140,7 @@ function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSet
       ...defaultUserSettings.settings.platforms,
       ...(saved.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
   };
 }
 
@@ -190,7 +195,11 @@ function startObserver(settings: DetectionSettings): void {
   });
   bus.onDetectionLanguageUnsupported((payload) => {
     if (!activeObserver?.markAnalyzeCompleted(payload.postId)) return;
-    overlay.renderError(payload.postId, payload.message);
+    overlay.renderLanguageUnsupported(payload.postId, {
+      simpleTitle: payload.hoverSimple,
+      tooltipTitle: payload.hoverTooltipTitle,
+      tooltipBody: payload.hoverTooltipBody,
+    });
   });
 
   activeObserver.start();

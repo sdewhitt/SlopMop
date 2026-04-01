@@ -18,6 +18,19 @@ export interface PlatformToggles {
   instagram: boolean;
 }
 
+/** Languages the user allows for **text** AI detection (subset of model-capable langs). */
+export type DetectionLanguageCode = 'eng' | 'spa' | 'fra';
+
+const ALL_DETECTION_LANGS: DetectionLanguageCode[] = ['eng', 'spa', 'fra'];
+
+/** Coerce stored value; use default triple when missing/invalid. Preserves `[]` when user disabled all. */
+export function normalizeDetectionLanguages(raw: unknown): DetectionLanguageCode[] {
+  if (raw === undefined) return [...ALL_DETECTION_LANGS];
+  if (!Array.isArray(raw)) return [...ALL_DETECTION_LANGS];
+  const allowed = new Set<DetectionLanguageCode>(ALL_DETECTION_LANGS);
+  return raw.filter((x): x is DetectionLanguageCode => allowed.has(x as DetectionLanguageCode));
+}
+
 /** Extension detection preferences persisted to Firestore. */
 export interface DetectionSettings {
   sensitivity: 'low' | 'medium' | 'high';
@@ -31,6 +44,11 @@ export interface DetectionSettings {
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
   highlightSegments: boolean;
+  /**
+   * Text detection runs only when franc's top guess is among these (plus Scots when English is on).
+   * Default all three. Empty disables all text detection.
+   */
+  detectionLanguages: DetectionLanguageCode[];
 }
 
 /** Aggregate stats the extension reports back. */
@@ -76,6 +94,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanComments: 'auto_top_n',
     uiMode: 'simple',
     highlightSegments: true,
+    detectionLanguages: ['eng', 'spa', 'fra'],
   },
   stats: {
     postsScanned: 0,

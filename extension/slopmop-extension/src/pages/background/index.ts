@@ -21,8 +21,9 @@ import { detectText, detectImage, type DetectResponse, type DetectImageResponse 
 import {
   isTextLanguageSupported,
   getLanguageSupportInfo,
-  buildUnsupportedBadge,
-  buildUnsupportedMessage,
+  expandUserDetectionLanguages,
+  formatDetectionLanguagesForUi,
+  getLanguageUnsupportedCopy,
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
@@ -33,7 +34,11 @@ import type {
   MediaType,
   NormalizedPostContent,
 } from '@src/types/domain';
-import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
+import {
+  defaultUserSettings,
+  normalizeDetectionLanguages,
+  type DetectionSettings,
+} from '@src/utils/userSettings';
 import {
   getIgnoredSites as getIgnoredSitesLocal,
   setIgnoredSites,
@@ -74,6 +79,7 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
       ...defaultUserSettings.settings.platforms,
       ...(saved.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
   };
 }
 
@@ -516,19 +522,21 @@ async function handleTogglePin(postId: string): Promise<MessageResponse> {
 }
 
 async function handleDetect(text: string): Promise<MessageResponse> {
-  if (!isTextLanguageSupported(text)) {
-    const langInfo = getLanguageSupportInfo(text);
-    const verboseMessage = buildUnsupportedMessage(langInfo);
+  const popupSettings = await getDetectionSettings();
+  const enabledIso = expandUserDetectionLanguages(popupSettings.detectionLanguages);
+  const enabledLabel = formatDetectionLanguagesForUi(popupSettings.detectionLanguages);
+  if (!isTextLanguageSupported(text, enabledIso)) {
+    const langInfo = getLanguageSupportInfo(text, enabledIso);
+    const copy = getLanguageUnsupportedCopy(langInfo, enabledLabel, popupSettings.detectionLanguages);
     await browser.storage.local.set({
       lastDetectResponse: null,
       detectResponse: null,
-      lastDetectLanguageUnsupported: { message: verboseMessage },
+      lastDetectLanguageUnsupported: { message: copy.popupMessage },
     });
-    return { success: false, error: verboseMessage };
+    return { success: false, error: copy.popupMessage };
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
-    const popupSettings = await getDetectionSettings();
     const result = await detectText(text, popupSettings.highlightSegments);
     await browser.storage.local.set({
       detectResponse: result,
@@ -578,6 +586,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   };
 
   const settings = await getDetectionSettings();
+  const enabledIso = expandUserDetectionLanguages(settings.detectionLanguages);
+  const enabledLabel = formatDetectionLanguagesForUi(settings.detectionLanguages);
   let enrichedImages = post.images;
   if (settings.scanImages && enrichedImages.length === 0) {
     const preview = await fetchInstagramPreviewImageCandidate(post.url);
@@ -598,11 +608,19 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
-  if (!hasImages && !isTextLanguageSupported(plainText)) {
-    const langInfo = getLanguageSupportInfo(plainText);
+  if (!hasImages && !isTextLanguageSupported(plainText, enabledIso)) {
+    const langInfo = getLanguageSupportInfo(plainText, enabledIso);
+    const copy = getLanguageUnsupportedCopy(langInfo, enabledLabel, settings.detectionLanguages);
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo) },
+      payload: {
+        postId: enrichedPost.postId,
+        message: copy.badge,
+        detectedLanguageName: langInfo.detectedName,
+        hoverSimple: copy.hoverSimple,
+        hoverTooltipTitle: copy.hoverTooltipTitle,
+        hoverTooltipBody: copy.hoverTooltipBody,
+      },
     });
     await finalizeStats(false);
     return;
@@ -681,14 +699,22 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  const textLangSupported = isTextLanguageSupported(plainText);
-  const langInfo = !textLangSupported ? getLanguageSupportInfo(plainText) : null;
+  const textLangSupported = isTextLanguageSupported(plainText, enabledIso);
+  const langInfo = !textLangSupported ? getLanguageSupportInfo(plainText, enabledIso) : null;
 
   // TEXT-only posts with unsupported language: block entirely.
   if (!textLangSupported && !hasImages) {
+    const copyBlocked = getLanguageUnsupportedCopy(langInfo!, enabledLabel, settings.detectionLanguages);
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo!) },
+      payload: {
+        postId: enrichedPost.postId,
+        message: copyBlocked.badge,
+        detectedLanguageName: langInfo!.detectedName,
+        hoverSimple: copyBlocked.hoverSimple,
+        hoverTooltipTitle: copyBlocked.hoverTooltipTitle,
+        hoverTooltipBody: copyBlocked.hoverTooltipBody,
+      },
     });
     await finalizeStats(false);
     return;
@@ -742,9 +768,17 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
     // If both were skipped, report unsupported language.
     if (!textResult && !imageResult) {
+      const copyBoth = getLanguageUnsupportedCopy(langInfo!, enabledLabel, settings.detectionLanguages);
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-        payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo!) },
+        payload: {
+          postId: enrichedPost.postId,
+          message: copyBoth.badge,
+          detectedLanguageName: langInfo!.detectedName,
+          hoverSimple: copyBoth.hoverSimple,
+          hoverTooltipTitle: copyBoth.hoverTooltipTitle,
+          hoverTooltipBody: copyBoth.hoverTooltipBody,
+        },
       });
       await finalizeStats(false);
       return;

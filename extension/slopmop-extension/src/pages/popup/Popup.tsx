@@ -11,7 +11,7 @@ import {
   resetStats as firestoreResetStats,
   resetSettings as firestoreResetSettings,
 } from '../../lib/firestoreProxy';
-import { defaultUserSettings } from '../../utils/userSettings';
+import { defaultUserSettings, normalizeDetectionLanguages } from '../../utils/userSettings';
 import PopupHeader from './components/PopupHeader';
 import DetectionToggle from './components/DetectionToggle';
 import StatsGrid from './components/StatsGrid';
@@ -59,6 +59,9 @@ export default function Popup() {
       ...defaultSettings.platforms,
       ...(raw?.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(
+      raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
+    ),
   }), []);
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
 
@@ -156,6 +159,7 @@ export default function Popup() {
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
+        detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
       };
       setSettings(merged);
       setEnabled(merged.enabled);
@@ -350,6 +354,7 @@ export default function Popup() {
       uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
+      detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);
     setEnabled(defaults.enabled);
