@@ -22,6 +22,7 @@ import DetectionSettings from './components/DetectionSettings';
 import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
+import OnboardingModal from './components/OnboardingModal';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 import HistoryPage from '../options/HistoryPage';
 import ThemeToggle from './components/ThemeToggle';
@@ -49,6 +50,7 @@ export default function Popup() {
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
   const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const mergeSettings = useCallback((raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -104,6 +106,18 @@ export default function Popup() {
         setLanguageUnsupported(unsupported?.message ?? null);
       });
   }, [mergeSettings, syncStatsFromStorage]);
+
+  // Per-account onboarding: show only once for each signed-in user (uid).
+  useEffect(() => {
+    if (!user) {
+      setShowOnboarding(false);
+      return;
+    }
+    browser.storage.local.get(['onboardingSeenByUser']).then((result) => {
+      const byUser = (result.onboardingSeenByUser ?? {}) as Record<string, boolean>;
+      setShowOnboarding(byUser[user.uid] !== true);
+    });
+  }, [user]);
   // ── Sync settings from Firestore when the user signs in ──────
   const loadSettings = useCallback(async () => {
     if (!user) return;
@@ -347,6 +361,25 @@ export default function Popup() {
     }
   };
 
+  const dismissOnboarding = () => {
+    setShowOnboarding(false);
+    if (!user) return;
+    browser.storage.local.get(['onboardingSeenByUser']).then((result) => {
+      const byUser = (result.onboardingSeenByUser ?? {}) as Record<string, boolean>;
+      byUser[user.uid] = true;
+      browser.storage.local.set({ onboardingSeenByUser: byUser });
+    });
+  };
+
+  const onboardingModal = showOnboarding ? (
+    <OnboardingModal
+      onClose={dismissOnboarding}
+      onDontShowAgain={dismissOnboarding}
+      simpleMode={simpleMode}
+      accessibilityMode={settings.accessibilityMode}
+    />
+  ) : null;
+
   // ── Loading state ─────────────────────────────────────────────
   if (authLoading) {
     return (
@@ -355,6 +388,7 @@ export default function Popup() {
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
+        {onboardingModal}
         <p className="text-xs text-gray-600 dark:text-gray-400">Loading…</p>
       </div>
     );
@@ -379,6 +413,7 @@ export default function Popup() {
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
+        {onboardingModal}
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
         <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
@@ -443,6 +478,7 @@ export default function Popup() {
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
+        {onboardingModal}
         <SettingsHeader title="History" onBack={() => setView('home')} />
         <div className="px-4 py-3 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
           <HistoryPage />
@@ -458,6 +494,7 @@ export default function Popup() {
         simpleMode ? 'simple-mode' : ''
       } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
+      {onboardingModal}
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
