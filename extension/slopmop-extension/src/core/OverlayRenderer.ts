@@ -25,10 +25,15 @@ export class OverlayRenderer {
     private mapToPostText = new Map<PostId, string>()
     // map each postId to latest error text so detailed mode can show it in tooltip.
     private mapToErrorMessage = new Map<PostId, string>()
+<<<<<<< main
     /** Post/comment body element used for in-post <mark> highlights (adapter text node). */
     private mapToTextBody = new Map<PostId, HTMLElement>()
     /** Saved innerHTML before highlights so we can restore on clear / re-render / toggle off. */
     private mapToOriginalBodyHtml = new Map<PostId, string>()
+=======
+    /** Tear-down for tooltips mounted on `document.body` (fixed position). */
+    private tooltipCleanupByOverlay = new WeakMap<HTMLElement, () => void>();
+>>>>>>> jack
     private settings: DetectionSettings;
 
 
@@ -48,10 +53,36 @@ export class OverlayRenderer {
         return { bottom: "8px", right: "8px" };
     }
 
-    protected getTooltipPosition(): Record<string, string> {
-        return { bottom: "calc(100% + 8px)", right: "0" };
+    /** Padding/font for the pending badge container (before result). Subclasses may tighten for dense UIs. */
+    protected getPendingBadgeContainerStyle(isSimple: boolean): Record<string, string> {
+        return {
+            padding: isSimple ? "6px 12px" : "4px 8px",
+            borderRadius: "4px",
+            fontSize: isSimple ? "14px" : "12px",
+        };
     }
 
+    /** Manual-mode "Detect Now" control. Subclasses may shrink on platforms where it overlaps content. */
+    protected getDetectNowButtonStyle(isSimple: boolean): Record<string, string> {
+        return {
+            border: "none",
+            borderRadius: "4px",
+            padding: "6px 10px",
+            fontSize: isSimple ? "14px" : "12px",
+            fontWeight: "600",
+            color: "#fff",
+            backgroundColor: "#6b7280",
+            cursor: "pointer",
+        };
+    }
+
+    protected getSimpleVerdictBadgeFontSize(): string {
+        return "14px";
+    }
+
+    protected getSimpleVerdictBadgePadding(): string {
+        return "6px 12px";
+    }
 
     // render DetectionResponse as a badge on the page
     // for now, start with basic appearance, then we can match the UI mockups
@@ -75,8 +106,8 @@ export class OverlayRenderer {
         overlay.style.cursor = "pointer";
 
         if (isSimple) {
-            overlay.style.fontSize = "14px";
-            overlay.style.padding = "6px 12px";
+            overlay.style.fontSize = this.getSimpleVerdictBadgeFontSize();
+            overlay.style.padding = this.getSimpleVerdictBadgePadding();
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
@@ -95,11 +126,11 @@ export class OverlayRenderer {
             tooltip = isSimple
                 ? this.createSimpleTooltip(res)
                 : this.createTooltip(res, postText);
-            overlay.appendChild(tooltip);
+            this.mountTooltipOnBody(overlay, tooltip);
         };
 
         overlay.onmouseleave = () => {
-            tooltip?.remove();
+            this.dismissTooltipForOverlay(overlay);
             tooltip = null;
         };
 
@@ -136,9 +167,7 @@ export class OverlayRenderer {
         Object.assign(overlay.style, {
             position: "absolute",
             ...this.getBadgePosition(),
-            padding: isSimple ? "6px 12px" : "4px 8px",
-            borderRadius: "4px",
-            fontSize: isSimple ? "14px" : "12px",
+            ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
             backgroundColor: "#6b7280",
             color: "#fff",
@@ -154,6 +183,7 @@ export class OverlayRenderer {
         const detectNowButton = document.createElement("button");
         detectNowButton.type = "button";
         detectNowButton.textContent = "Detect Now";
+<<<<<<< main
         Object.assign(detectNowButton.style, {
             border: "none",
             borderRadius: "4px",
@@ -167,6 +197,10 @@ export class OverlayRenderer {
         detectNowButton.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();
+=======
+        Object.assign(detectNowButton.style, this.getDetectNowButtonStyle(isSimple));
+        detectNowButton.onclick = () => {
+>>>>>>> jack
             this.showScanningState(overlay);
             onDetectNow();
         };
@@ -283,10 +317,10 @@ export class OverlayRenderer {
             if (tooltip) return;
             const errorMessage = this.mapToErrorMessage.get(postId) || "Unknown error";
             tooltip = this.createErrorTooltip(errorMessage);
-            overlay.appendChild(tooltip);
+            this.mountTooltipOnBody(overlay, tooltip);
         };
         overlay.onmouseleave = () => {
-            tooltip?.remove();
+            this.dismissTooltipForOverlay(overlay);
             tooltip = null;
         };
 
@@ -305,7 +339,11 @@ export class OverlayRenderer {
     clear(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+<<<<<<< main
         this.restorePostBodyHtml(postId);
+=======
+        this.dismissTooltipForOverlay(overlay);
+>>>>>>> jack
         overlay.remove();
         this.mapToOverlay.delete(postId);
         this.mapToResponse.delete(postId);
@@ -347,6 +385,54 @@ export class OverlayRenderer {
         return null;
     }
 
+    /** True when the badge element is still in the document (virtualized lists may drop the host). */
+    isBadgeDomAlive(postId: PostId): boolean {
+        const el = this.mapToOverlay.get(postId);
+        return Boolean(el?.isConnected);
+    }
+
+    getCachedDetectionResponse(postId: PostId): DetectionResponse | undefined {
+        return this.mapToResponse.get(postId);
+    }
+
+    /**
+     * Drop overlay map entry when the host was recycled; keep analysis maps so we can re-draw the verdict.
+     */
+    forgetDisconnectedBadge(postId: PostId): void {
+        const el = this.mapToOverlay.get(postId);
+        if (!el) return;
+        if (el.isConnected) return;
+        this.dismissTooltipForOverlay(el);
+        this.mapToOverlay.delete(postId);
+    }
+
+    /**
+     * After a virtualized tweet remounts, re-attach the result badge using cached detection data.
+     */
+    mountResultBadgeOnHost(
+        postId: PostId,
+        hostNode: HTMLElement,
+        plainText: string,
+        res: DetectionResponse,
+    ): void {
+        this.mapToPostText.set(postId, plainText);
+        const overlay = document.createElement("div");
+        hostNode.style.position = "relative";
+        hostNode.appendChild(overlay);
+        const isSimple = this.settings.uiMode === "simple";
+        Object.assign(overlay.style, {
+            position: "absolute",
+            ...this.getBadgePosition(),
+            ...this.getPendingBadgeContainerStyle(isSimple),
+            zIndex: "9999",
+            backgroundColor: "#6b7280",
+            color: "#fff",
+        });
+        this.mapToOverlay.set(postId, overlay);
+        this.mapToResponse.set(postId, res);
+        this.renderResult(postId, res);
+    }
+
     private createSimpleTooltip(res: DetectionResponse): HTMLElement {
         const verdictLabel: Record<DetectionResponse["verdict"], string> = {
             likely_ai: "Likely AI-generated",
@@ -356,8 +442,6 @@ export class OverlayRenderer {
 
         const tip = document.createElement("div");
         Object.assign(tip.style, {
-            position: "absolute",
-            ...this.getTooltipPosition(),
             minWidth: "200px",
             maxWidth: "300px",
             padding: "14px",
@@ -367,7 +451,6 @@ export class OverlayRenderer {
             fontSize: "14px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
             pointerEvents: "none",
         });
 
@@ -421,8 +504,6 @@ export class OverlayRenderer {
         // minWidth/maxWidth instead of fixed width so it scales with content volume.
         // maxHeight + overflowY: "auto" prevents it from growing taller than the viewport
         Object.assign(tip.style, {
-            position: "absolute",
-            ...this.getTooltipPosition(),
             minWidth: hasHighlights ? "320px" : "240px",
             maxWidth: hasHighlights ? "420px" : "300px",
             maxHeight: "400px",
@@ -434,7 +515,6 @@ export class OverlayRenderer {
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000", // one layer above the badge's 9999
             pointerEvents: "none",
         });
 
@@ -657,8 +737,6 @@ export class OverlayRenderer {
     private createErrorTooltip(message: string): HTMLElement {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
-            position: "absolute",
-            ...this.getTooltipPosition(),
             minWidth: "240px",
             maxWidth: "320px",
             padding: "12px",
@@ -668,7 +746,6 @@ export class OverlayRenderer {
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
             pointerEvents: "none",
             wordBreak: "break-word",
         });
@@ -757,7 +834,42 @@ export class OverlayRenderer {
         container.appendChild(section);
     }
 
+    private dismissTooltipForOverlay(overlay: HTMLElement): void {
+        const fn = this.tooltipCleanupByOverlay.get(overlay);
+        fn?.();
+    }
+
+    /**
+     * Append tooltip to `document.body` with `position: fixed` under the badge so parent
+     * `overflow` and later thread rows do not clip or cover the panel.
+     */
+    private mountTooltipOnBody(overlay: HTMLElement, tooltip: HTMLElement): void {
+        this.dismissTooltipForOverlay(overlay);
+        document.body.appendChild(tooltip);
+        const apply = (): void => {
+            const r = overlay.getBoundingClientRect();
+            tooltip.style.position = "fixed";
+            tooltip.style.top = `${r.bottom + 8}px`;
+            tooltip.style.right = `${window.innerWidth - r.right}px`;
+            tooltip.style.left = "auto";
+            tooltip.style.bottom = "auto";
+            tooltip.style.zIndex = "2147483647";
+        };
+        apply();
+        const onScrollOrResize = (): void => apply();
+        window.addEventListener("scroll", onScrollOrResize, true);
+        window.addEventListener("resize", onScrollOrResize);
+        const cleanup = (): void => {
+            window.removeEventListener("scroll", onScrollOrResize, true);
+            window.removeEventListener("resize", onScrollOrResize);
+            tooltip.remove();
+            this.tooltipCleanupByOverlay.delete(overlay);
+        };
+        this.tooltipCleanupByOverlay.set(overlay, cleanup);
+    }
+
     private resetOverlayInteractions(overlay: HTMLElement): void {
+        this.dismissTooltipForOverlay(overlay);
         overlay.replaceChildren();
         overlay.onmouseenter = null;
         overlay.onmouseleave = null;

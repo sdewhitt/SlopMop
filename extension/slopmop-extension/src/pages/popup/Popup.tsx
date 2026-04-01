@@ -257,6 +257,7 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, [mergeSettings]);
 
+<<<<<<< main
   useEffect(() => {
     const tabsApi = browser.tabs;
     if (!tabsApi?.query) {
@@ -278,6 +279,16 @@ export default function Popup() {
     tabsApi.onActivated?.addListener(refreshFeedSite);
     return () => tabsApi.onActivated?.removeListener(refreshFeedSite);
   }, []);
+=======
+  // Match sites where the content script runs FeedObserver (see content/index.tsx).
+  const isSupportedFeedSite =
+    typeof window !== 'undefined' &&
+    (window.location.hostname.includes('reddit.com') ||
+      window.location.hostname.includes('instagram.com') ||
+      window.location.hostname.includes('linkedin.com') ||
+      window.location.hostname.includes('twitter.com') ||
+      window.location.hostname.includes('x.com'));
+>>>>>>> jack
 
   const handleScanEntirePage = () => {
     browser.runtime.sendMessage({ type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {});

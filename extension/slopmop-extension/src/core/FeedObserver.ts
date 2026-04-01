@@ -17,8 +17,12 @@ const DEBUG_EXTRACTION = true;
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
 // if analysis takes longer than this, we show a timeout badge to the user.
+<<<<<<< main
 // Remote ML APIs (e.g. Render) often need >15s after deploy or cold start.
 const ANALYZE_TIMEOUT_MS = 60_000;
+=======
+const ANALYZE_TIMEOUT_MS = 20_000;
+>>>>>>> jack
 
 export class FeedObserver {
     // Orchestrator for the content script pipeline.
@@ -44,8 +48,14 @@ export class FeedObserver {
     private timedOutPostIds = new Set<string>();
     // stores extracted payloads so failed analyses can be retried from the badge.
     private postsById = new Map<string, NormalizedPostContent>();
+<<<<<<< main
     // tracks DOM hosts where an overlay has already been rendered.
     private renderedHosts = new WeakSet<Element>();
+=======
+    /** x.com virtualizes tweet cells; scroll often mounts nodes without a mutation burst we observe. */
+    private xScrollHandler: (() => void) | null = null;
+    private xScrollRescanTimer: ReturnType<typeof setTimeout> | null = null;
+>>>>>>> jack
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -79,6 +89,19 @@ export class FeedObserver {
             subtree: true,
         });
 
+        if (this.adapter.getSiteId() === "x.com") {
+            this.xScrollHandler = () => {
+                if (this.xScrollRescanTimer !== null) {
+                    clearTimeout(this.xScrollRescanTimer);
+                }
+                this.xScrollRescanTimer = setTimeout(() => {
+                    this.xScrollRescanTimer = null;
+                    this.scanAndProcess();
+                }, 120);
+            };
+            window.addEventListener("scroll", this.xScrollHandler, { passive: true, capture: true });
+        }
+
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] started, initial scan complete, observer active`);
         }
@@ -106,6 +129,15 @@ export class FeedObserver {
         this.timedOutPostIds.clear();
         this.postsById.clear();
         this.renderedHosts = new WeakSet<Element>();
+
+        if (this.xScrollHandler) {
+            window.removeEventListener("scroll", this.xScrollHandler, { capture: true });
+            this.xScrollHandler = null;
+        }
+        if (this.xScrollRescanTimer !== null) {
+            clearTimeout(this.xScrollRescanTimer);
+            this.xScrollRescanTimer = null;
+        }
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
@@ -162,6 +194,20 @@ export class FeedObserver {
         this.scanAndProcess();
     }
 
+    /**
+     * X and similar SPAs often mount the thread column after `pushState`; the first scan can see
+     * an empty or stale tree. Run additional full scans (without clearing seen ids) so late-mounted
+     * tweets and replies are picked up without waiting for scroll.
+     */
+    schedulePostNavigationScans(): void {
+        const delaysMs = [80, 250, 700, 1600, 3200];
+        for (const ms of delaysMs) {
+            setTimeout(() => {
+                this.scanAndProcess();
+            }, ms);
+        }
+    }
+
     private scanAndProcess(): void {
         // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
@@ -173,7 +219,7 @@ export class FeedObserver {
         // Scan for comments
         if (this.settings.scanComments !== "off") {
             // TODO: add limit to settings and read limit from settings
-            const maxComments = 20;
+            const maxComments = this.adapter.getSiteId() === "x.com" ? 40 : 20;
             const rawCommentNodes = this.adapter.findVisibleCommentNodes(
                 document,
                 this.settings.scanComments === "auto_top_n" ? Number.MAX_SAFE_INTEGER : maxComments,
@@ -204,6 +250,7 @@ export class FeedObserver {
         // so it can be retried on the next scan if the DOM updates
         if (!extracted) return;
 
+<<<<<<< main
         const textContainer =
             type === "post"
                 ? this.adapter.getTextNode(node)
@@ -219,9 +266,23 @@ export class FeedObserver {
                 this.renderedHosts.add(node);
             }
             return;
+=======
+        // Virtualized feeds (X) recycle DOM nodes: the badge is removed but seenPostIds still
+        // blocks re-processing. If the overlay element is gone, allow a fresh badge (or reattach
+        // a cached verdict below). Optional chaining supports test mocks without these methods.
+        if (this.seenPostIds.has(extracted.postId)) {
+            const alive = this.overlay.isBadgeDomAlive?.(extracted.postId);
+            if (alive !== false) {
+                return;
+            }
+            this.seenPostIds.delete(extracted.postId);
+            this.overlay.forgetDisconnectedBadge?.(extracted.postId);
+            if (!this.overlay.getCachedDetectionResponse?.(extracted.postId)) {
+                this.postsById.delete(extracted.postId);
+            }
+>>>>>>> jack
         }
 
-        // step 3: eligibility. check user settings
         if (!this.isEligible(extracted)) {
             if (DEBUG_EXTRACTION) {
                 console.log(`[FeedObserver] skipped ineligible post ${extracted.postId}`);
@@ -229,8 +290,22 @@ export class FeedObserver {
             return;
         }
 
-        // only mark as seen AFTER extraction succeeded + passed eligibility.
-        // if we marked it earlier and extraction failed, we'd never retry
+        const cachedResult = this.overlay.getCachedDetectionResponse?.(extracted.postId);
+        if (cachedResult) {
+            this.seenPostIds.add(extracted.postId);
+            this.postsById.set(extracted.postId, extracted);
+            this.overlay.mountResultBadgeOnHost?.(
+                extracted.postId,
+                node as HTMLElement,
+                extracted.text.plain,
+                cachedResult,
+            );
+            if (DEBUG_EXTRACTION) {
+                console.log(`[FeedObserver] reattached cached verdict`, { postId: extracted.postId });
+            }
+            return;
+        }
+
         this.seenPostIds.add(extracted.postId);
         this.postsById.set(extracted.postId, extracted);
 
