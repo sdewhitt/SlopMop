@@ -29,7 +29,9 @@
     "https://*.cdninstagram.com/*",
     "https://*.fbcdn.net/*",
     "https://media.licdn.com/*",
-    "https://*.licdn.com/*"
+    "https://*.licdn.com/*",
+    "https://pbs.twimg.com/*",
+    "https://*.twimg.com/*"
   ],  
   "content_scripts": [
     {

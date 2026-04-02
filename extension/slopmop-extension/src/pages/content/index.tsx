@@ -16,11 +16,13 @@ import { ThemeProvider } from '../../hooks/useTheme';
 import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
+import { XAdapter } from '@src/core/adapters/XAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { InstagramOverlayRenderer } from '@src/core/InstagramOverlayRenderer';
 import { LinkedInOverlayRenderer } from '@src/core/LinkedInOverlayRenderer';
+import { XOverlayRenderer } from '@src/core/XOverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import {
   defaultUserSettings,
@@ -175,6 +177,9 @@ function startObserver(settings: DetectionSettings): void {
   } else if (hostname.includes('linkedin.com')) {
     adapter = new LinkedInAdapter();
     overlay = new LinkedInOverlayRenderer(adapter, settings);
+  } else if (hostname.includes('twitter.com') || hostname.includes('x.com')) {
+    adapter = new XAdapter();
+    overlay = new XOverlayRenderer(adapter, settings);
   } else {
     return;
   }
@@ -271,24 +276,41 @@ initFeedObserver().catch((e) => {
 // When the user navigates within an SPA (e.g. clicks a post on LinkedIn), the URL changes
 // but the page does not reload. seenPostIds still has the post from the feed, so we skip it.
 // Rescan with a cleared cache so the post gets a badge.
+// Patch History.prototype so frameworks that hold a reference to the native pushState/replaceState
+// still trigger a rescan (important for x.com client-side routing).
 function setupNavigationListener(): void {
-  let lastPath = location.pathname + location.search;
+  let lastUrl = location.href;
   const checkUrl = (): void => {
-    const current = location.pathname + location.search;
-    if (current !== lastPath) {
-      lastPath = current;
+    const current = location.href;
+    if (current !== lastUrl) {
+      lastUrl = current;
       activeObserver?.rescanForNewPage?.();
+      const h = location.hostname.toLowerCase().replace(/^www\./, '');
+      if (h.includes('x.com') || h.includes('twitter.com')) {
+        activeObserver?.schedulePostNavigationScans?.();
+      }
     }
   };
   window.addEventListener('popstate', checkUrl);
-  const origPush = history.pushState;
-  const origReplace = history.replaceState;
-  history.pushState = function (...args) {
-    origPush.apply(this, args);
+  window.addEventListener('hashchange', checkUrl);
+  const origPush = History.prototype.pushState;
+  const origReplace = History.prototype.replaceState;
+  History.prototype.pushState = function (
+    this: History,
+    data: unknown,
+    unused: string,
+    url?: string | URL | null,
+  ): void {
+    origPush.call(this, data, unused, url ?? undefined);
     checkUrl();
   };
-  history.replaceState = function (...args) {
-    origReplace.apply(this, args);
+  History.prototype.replaceState = function (
+    this: History,
+    data: unknown,
+    unused: string,
+    url?: string | URL | null,
+  ): void {
+    origReplace.call(this, data, unused, url ?? undefined);
     checkUrl();
   };
 }

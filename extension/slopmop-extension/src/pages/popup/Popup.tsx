@@ -307,7 +307,11 @@ export default function Popup() {
         .then((tabs) => {
           const url = tabs[0]?.url ?? '';
           setIsSupportedFeedSite(
-            url.includes('reddit.com') || url.includes('instagram.com'),
+            url.includes('reddit.com') ||
+              url.includes('instagram.com') ||
+              url.includes('linkedin.com') ||
+              url.includes('twitter.com') ||
+              url.includes('x.com'),
           );
         })
         .catch(() => setIsSupportedFeedSite(false));
