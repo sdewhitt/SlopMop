@@ -174,7 +174,6 @@ describe('History Page UI', () => {
       success: true,
       data: [makeEntry({ postId: 'tab-test', url: 'https://reddit.com/r/test/comments/abc123' })],
     });
-
     render(<HistoryPage />);
 
     await waitFor(() => {
