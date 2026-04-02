@@ -40,6 +40,9 @@ export class FeedObserver {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
     // one timeout timer per post while waiting for background detection result.
     private pendingAnalyzeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // tracks postIds that currently have an in-flight analyze request.
+    // used to ignore stale/duplicate errors that can arrive after a successful result.
+    private inFlightAnalyzePostIds = new Set<string>();
     // tracks posts that already timed out so late results do not overwrite timeout badge.
     private timedOutPostIds = new Set<string>();
     // stores extracted payloads so failed analyses can be retried from the badge.
@@ -103,6 +106,7 @@ export class FeedObserver {
             clearTimeout(timer);
         }
         this.pendingAnalyzeTimers.clear();
+        this.inFlightAnalyzePostIds.clear();
         this.timedOutPostIds.clear();
         this.postsById.clear();
         this.renderedHosts = new WeakSet<Element>();
@@ -322,6 +326,7 @@ export class FeedObserver {
     private dispatchAnalyze(post: NormalizedPostContent): void {
         // start timeout window before sending message.
         // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
+        this.inFlightAnalyzePostIds.add(post.postId);
         this.startAnalyzeTimeout(post.postId);
         this.bus.sendAnalyze(post);
     }
@@ -353,8 +358,13 @@ export class FeedObserver {
     }
 
     // returns true when the caller should render result/error for this post.
-    // returns false if this post already timed out and we want timeout to stay visible.
-    markAnalyzeCompleted(postId: string): boolean {
+    // returns false for stale errors (no active request) or for timed out posts.
+    markAnalyzeCompleted(postId: string, outcome: "result" | "error" = "result"): boolean {
+        const wasInFlight = this.inFlightAnalyzePostIds.has(postId);
+        if (outcome === "error" && !wasInFlight) {
+            return false;
+        }
+        this.inFlightAnalyzePostIds.delete(postId);
         this.clearAnalyzeTimeout(postId);
         if (this.timedOutPostIds.has(postId)) {
             return false;

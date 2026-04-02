@@ -392,6 +392,7 @@ export default function Popup() {
       uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
+      factCheck: defaultUserSettings.settings.factCheck,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);

@@ -184,11 +184,11 @@ function startObserver(settings: DetectionSettings): void {
   activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
 
   bus.onDetectionResponse((res) => {
-    if (!activeObserver?.markAnalyzeCompleted(res.postId)) return;
+    if (!activeObserver?.markAnalyzeCompleted(res.postId, 'result')) return;
     overlay.renderResult(res.postId, res);
   });
   bus.onDetectionError(({ postId, message }) => {
-    if (!activeObserver?.markAnalyzeCompleted(postId)) return;
+    if (!activeObserver?.markAnalyzeCompleted(postId, 'error')) return;
     overlay.renderError(postId, message, () => {
       activeObserver?.retryAnalyze(postId);
     });

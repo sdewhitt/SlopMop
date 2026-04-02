@@ -660,6 +660,28 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     enrichedImages = enrichedImages.map((img) => ({ ...img, bytesBase64: '' }));
   }
 
+  // Instagram media URLs can intermittently fail to hotlink from extension context.
+  // If that happens, try deriving preview media from the post permalink HTML.
+  if (
+    settings.scanImages &&
+    post.site === 'instagram.com' &&
+    !enrichedImages.some((img) => img.bytesBase64)
+  ) {
+    const preview = await fetchInstagramPreviewImageCandidate(post.url);
+    if (preview) {
+      const previewBytes = await fetchImageAsBase64(preview.srcUrl);
+      if (previewBytes) {
+        const alreadyPresent = enrichedImages.some((img) => img.srcUrl === preview.srcUrl);
+        const hydratedPreview = { ...preview, bytesBase64: previewBytes };
+        enrichedImages = alreadyPresent
+          ? enrichedImages.map((img) =>
+              img.srcUrl === preview.srcUrl ? { ...img, bytesBase64: previewBytes } : img,
+            )
+          : [hydratedPreview, ...enrichedImages];
+      }
+    }
+  }
+
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
