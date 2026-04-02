@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
+import { normalizeDetectionLanguages } from '../../utils/userSettings';
 import DisabledWebsitesManager from './DisabledWebsitesManager';
 import HistoryPage from './HistoryPage';
 
@@ -47,6 +48,9 @@ export default function Options() {
       ...defaultSettings.platforms,
       ...(raw?.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(
+      raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
+    ),
   });
 
   useEffect(() => {
@@ -154,6 +158,34 @@ export default function Options() {
               label="Scan Text"
               description="Analyze text content in posts"
             />
+            <div className="py-3 border-t border-gray-800">
+              <p className="text-sm font-medium text-gray-200 mb-1">Text detection languages</p>
+              <p className="text-xs text-gray-500 mb-3">
+                Run text AI detection only when the post matches a selected language (detected automatically). Uncheck all to skip text detection.
+              </p>
+              <div className="flex flex-col gap-2">
+                {([
+                  ['eng', 'English'],
+                  ['spa', 'Spanish'],
+                  ['fra', 'French'],
+                ] as const).map(([code, label]) => (
+                  <label key={code} className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={settings.detectionLanguages.includes(code)}
+                      onChange={() => {
+                        const cur = settings.detectionLanguages;
+                        const on = cur.includes(code);
+                        const next = on ? cur.filter((c) => c !== code) : [...cur, code];
+                        update('detectionLanguages', next);
+                      }}
+                      className="rounded border-gray-600 bg-gray-800"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
             <Toggle
               checked={settings.scanImages}
               onChange={(v) => update('scanImages', v)}
@@ -230,12 +262,18 @@ export default function Options() {
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-gray-800">
+              <div className="pt-4 border-t border-gray-800 space-y-4">
                 <Toggle
                   checked={settings.highlightSegments}
                   onChange={(v) => update('highlightSegments', v)}
                   label="Highlight segments that triggered detection"
                   description="Show which parts of the text contributed most to the AI score"
+                />
+                <Toggle
+                  checked={settings.factCheck}
+                  onChange={(v) => update('factCheck', v)}
+                  label="Show Fact check"
+                  description="Fact check button beside Detect Now; runs ClaimReview search via backend"
                 />
               </div>
             </div>

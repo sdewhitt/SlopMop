@@ -1,6 +1,17 @@
 import '@testing-library/jest-dom'
 import React from 'react'
 
+import { ONBOARDING_STORAGE_KEY } from './app/lib/onboardingStorage'
+
+// Homepage onboarding modal: hide by default so existing tests stay stable
+beforeEach(() => {
+  try {
+    window.localStorage.setItem(ONBOARDING_STORAGE_KEY, 'true')
+  } catch {
+    /* ignore */
+  }
+})
+
 // Provide a global fetch mock for modules like @firebase/auth that require it
 if (typeof global.fetch === 'undefined') {
   global.fetch = jest.fn(() =>

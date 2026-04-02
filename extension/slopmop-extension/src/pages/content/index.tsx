@@ -12,6 +12,7 @@ import browser from 'webextension-polyfill';
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
+import { ThemeProvider } from '../../hooks/useTheme';
 import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
@@ -21,7 +22,11 @@ import { OverlayRenderer } from '@src/core/OverlayRenderer';
 import { InstagramOverlayRenderer } from '@src/core/InstagramOverlayRenderer';
 import { LinkedInOverlayRenderer } from '@src/core/LinkedInOverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
-import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
+import {
+  defaultUserSettings,
+  normalizeDetectionLanguages,
+  type DetectionSettings,
+} from '@src/utils/userSettings';
 import { renderDebugBadge } from './debug';
 import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
@@ -74,11 +79,13 @@ function createPanel() {
   // Mount the React tree
   reactRoot = createRoot(container);
   reactRoot.render(
-    <PanelProvider closePanel={hidePanel}>
-      <AuthProvider>
-        <Popup />
-      </AuthProvider>
-    </PanelProvider>,
+    <ThemeProvider>
+      <PanelProvider closePanel={hidePanel}>
+        <AuthProvider>
+          <Popup />
+        </AuthProvider>
+      </PanelProvider>
+    </ThemeProvider>,
   );
   visible = true;
 }
@@ -133,6 +140,7 @@ function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSet
       ...defaultUserSettings.settings.platforms,
       ...(saved.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
   };
 }
 
@@ -187,7 +195,18 @@ function startObserver(settings: DetectionSettings): void {
   });
   bus.onDetectionLanguageUnsupported((payload) => {
     if (!activeObserver?.markAnalyzeCompleted(payload.postId)) return;
-    overlay.renderError(payload.postId, payload.message);
+    overlay.renderLanguageUnsupported(payload.postId, {
+      simpleTitle: payload.hoverSimple,
+      tooltipTitle: payload.hoverTooltipTitle,
+      tooltipBody: payload.hoverTooltipBody,
+    });
+  });
+
+  bus.onFactCheckResult(({ postId, items }) => {
+    overlay.renderFactCheckResult(postId, items);
+  });
+  bus.onFactCheckError(({ postId, message }) => {
+    overlay.renderFactCheckError(postId, message);
   });
 
   activeObserver.start();

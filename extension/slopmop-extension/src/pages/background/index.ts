@@ -17,12 +17,20 @@ import {
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
-import { detectText, detectImage, type DetectResponse, type DetectImageResponse } from '@src/lib/api';
+import {
+  detectImage,
+  detectText,
+  factCheckText,
+  FactCheckApiError,
+  type DetectImageResponse,
+  type DetectResponse,
+} from '@src/lib/api';
 import {
   isTextLanguageSupported,
   getLanguageSupportInfo,
-  buildUnsupportedBadge,
-  buildUnsupportedMessage,
+  expandUserDetectionLanguages,
+  formatDetectionLanguagesForUi,
+  getLanguageUnsupportedCopy,
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
@@ -33,7 +41,11 @@ import type {
   MediaType,
   NormalizedPostContent,
 } from '@src/types/domain';
-import { defaultUserSettings, type DetectionSettings } from '@src/utils/userSettings';
+import {
+  defaultUserSettings,
+  normalizeDetectionLanguages,
+  type DetectionSettings,
+} from '@src/utils/userSettings';
 import {
   getIgnoredSites as getIgnoredSitesLocal,
   setIgnoredSites,
@@ -74,6 +86,7 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
       ...defaultUserSettings.settings.platforms,
       ...(saved.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
   };
 }
 
@@ -242,6 +255,7 @@ interface BackgroundMessage {
   site?: string;
   patch?: Partial<DetectionSettings>;
   text?: string;
+  url?: string;
   payload?: NormalizedPostContent;
   postId?: string;
 }
@@ -284,6 +298,13 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_FACT_CHECK': {
+      const tabId = sender.tab?.id;
+      if (!tabId) {
+        return Promise.resolve({ success: false, error: 'No active tab.' });
+      }
+      return handleFactCheck(msg.text ?? '', msg.postId ?? '', tabId);
+    }
     case 'SLOPMOP_GET_IGNORED_SITES':
       return handleGetIgnoredSites(msg.uid);
     case 'SLOPMOP_ADD_IGNORED_SITE':
@@ -297,6 +318,19 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleClearHistory();
     case 'SLOPMOP_TOGGLE_PIN':
       return handleTogglePin(msg.postId!);
+    case 'SLOPMOP_OPEN_URL': {
+      const url = msg.url as string;
+      if (!url) return;
+      const targetHost = new URL(url).hostname;
+      browser.tabs.query({ url: `*://${targetHost}/*` }).then((matchingTabs) => {
+        if (matchingTabs.length > 0 && matchingTabs[0].id) {
+          browser.tabs.update(matchingTabs[0].id, { url, active: true });
+        } else {
+          browser.tabs.create({ url });
+        }
+      });
+      return;
+    }
     case 'SLOPMOP_SCAN_ENTIRE_PAGE': {
       const tabId = sender.tab?.id;
       if (!tabId) return;
@@ -503,19 +537,21 @@ async function handleTogglePin(postId: string): Promise<MessageResponse> {
 }
 
 async function handleDetect(text: string): Promise<MessageResponse> {
-  if (!isTextLanguageSupported(text)) {
-    const langInfo = getLanguageSupportInfo(text);
-    const verboseMessage = buildUnsupportedMessage(langInfo);
+  const popupSettings = await getDetectionSettings();
+  const enabledIso = expandUserDetectionLanguages(popupSettings.detectionLanguages);
+  const enabledLabel = formatDetectionLanguagesForUi(popupSettings.detectionLanguages);
+  if (!isTextLanguageSupported(text, enabledIso)) {
+    const langInfo = getLanguageSupportInfo(text, enabledIso);
+    const copy = getLanguageUnsupportedCopy(langInfo, enabledLabel, popupSettings.detectionLanguages);
     await browser.storage.local.set({
       lastDetectResponse: null,
       detectResponse: null,
-      lastDetectLanguageUnsupported: { message: verboseMessage },
+      lastDetectLanguageUnsupported: { message: copy.popupMessage },
     });
-    return { success: false, error: verboseMessage };
+    return { success: false, error: copy.popupMessage };
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
-    const popupSettings = await getDetectionSettings();
     const result = await detectText(text, popupSettings.highlightSegments);
     await browser.storage.local.set({
       detectResponse: result,
@@ -524,6 +560,47 @@ async function handleDetect(text: string): Promise<MessageResponse> {
     return { success: true, data: result };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Fact-check does not use the same language gate as AI detection so any post text can be checked.
+ * Results are pushed to the tab + storage for the popup panel.
+ */
+async function handleFactCheck(
+  text: string,
+  postId: string,
+  tabId: number,
+): Promise<MessageResponse> {
+  try {
+    const { items } = await factCheckText(text);
+    await browser.storage.local.set({
+      lastFactCheckResult: { postId, items, updatedAtMs: Date.now() },
+      lastFactCheckError: null,
+    });
+    await browser.tabs
+      .sendMessage(tabId, {
+        type: 'FACT_CHECK_RESULT',
+        payload: { postId, items },
+      })
+      .catch(() => {});
+    return { success: true, data: { items } };
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Fact check failed.';
+    const code =
+      err instanceof FactCheckApiError && err.status === 429 ? 'rate_limit' : 'error';
+    await browser.storage.local.set({
+      lastFactCheckResult: null,
+      lastFactCheckError: { postId, message, code, updatedAtMs: Date.now() },
+    });
+    await browser.tabs
+      .sendMessage(tabId, {
+        type: 'FACT_CHECK_ERROR',
+        payload: { postId, message, code },
+      })
+      .catch(() => {});
+    return { success: false, error: message };
   }
 }
 
@@ -565,6 +642,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   };
 
   const settings = await getDetectionSettings();
+  const enabledIso = expandUserDetectionLanguages(settings.detectionLanguages);
+  const enabledLabel = formatDetectionLanguagesForUi(settings.detectionLanguages);
   let enrichedImages = post.images;
   if (settings.scanImages && enrichedImages.length === 0) {
     const preview = await fetchInstagramPreviewImageCandidate(post.url);
@@ -585,11 +664,19 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
-  if (!hasImages && !isTextLanguageSupported(plainText)) {
-    const langInfo = getLanguageSupportInfo(plainText);
+  if (!hasImages && !isTextLanguageSupported(plainText, enabledIso)) {
+    const langInfo = getLanguageSupportInfo(plainText, enabledIso);
+    const copy = getLanguageUnsupportedCopy(langInfo, enabledLabel, settings.detectionLanguages);
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo) },
+      payload: {
+        postId: enrichedPost.postId,
+        message: copy.badge,
+        detectedLanguageName: langInfo.detectedName,
+        hoverSimple: copy.hoverSimple,
+        hoverTooltipTitle: copy.hoverTooltipTitle,
+        hoverTooltipBody: copy.hoverTooltipBody,
+      },
     });
     await finalizeStats(false);
     return;
@@ -668,14 +755,22 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  const textLangSupported = isTextLanguageSupported(plainText);
-  const langInfo = !textLangSupported ? getLanguageSupportInfo(plainText) : null;
+  const textLangSupported = isTextLanguageSupported(plainText, enabledIso);
+  const langInfo = !textLangSupported ? getLanguageSupportInfo(plainText, enabledIso) : null;
 
   // TEXT-only posts with unsupported language: block entirely.
   if (!textLangSupported && !hasImages) {
+    const copyBlocked = getLanguageUnsupportedCopy(langInfo!, enabledLabel, settings.detectionLanguages);
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo!) },
+      payload: {
+        postId: enrichedPost.postId,
+        message: copyBlocked.badge,
+        detectedLanguageName: langInfo!.detectedName,
+        hoverSimple: copyBlocked.hoverSimple,
+        hoverTooltipTitle: copyBlocked.hoverTooltipTitle,
+        hoverTooltipBody: copyBlocked.hoverTooltipBody,
+      },
     });
     await finalizeStats(false);
     return;
@@ -729,9 +824,17 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
     // If both were skipped, report unsupported language.
     if (!textResult && !imageResult) {
+      const copyBoth = getLanguageUnsupportedCopy(langInfo!, enabledLabel, settings.detectionLanguages);
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-        payload: { postId: enrichedPost.postId, message: buildUnsupportedBadge(langInfo!) },
+        payload: {
+          postId: enrichedPost.postId,
+          message: copyBoth.badge,
+          detectedLanguageName: langInfo!.detectedName,
+          hoverSimple: copyBoth.hoverSimple,
+          hoverTooltipTitle: copyBoth.hoverTooltipTitle,
+          hoverTooltipBody: copyBoth.hoverTooltipBody,
+        },
       });
       await finalizeStats(false);
       return;

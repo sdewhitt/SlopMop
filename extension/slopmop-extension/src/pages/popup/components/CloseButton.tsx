@@ -12,7 +12,7 @@ export default function CloseButton() {
   return (
     <button
       onClick={closePanel}
-      className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+      className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors cursor-pointer"
       aria-label="Close panel"
     >
       <svg

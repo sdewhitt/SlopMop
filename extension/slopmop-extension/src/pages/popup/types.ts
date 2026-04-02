@@ -1,3 +1,5 @@
+import type { DetectionLanguageCode } from '../../utils/userSettings';
+
 export interface Stats {
   postsScanned: number;
   aiDetected: number;
@@ -24,6 +26,9 @@ export interface Settings {
   uiMode: 'simple' | 'detailed';
   accessibilityMode: boolean;
   highlightSegments: boolean;
+  /** Show Fact check on posts (ClaimReview search via backend). */
+  factCheck: boolean;
+  detectionLanguages: DetectionLanguageCode[];
 }
 
 export const defaultSettings: Settings = {
@@ -39,4 +44,6 @@ export const defaultSettings: Settings = {
   uiMode: 'simple',
   accessibilityMode: false,
   highlightSegments: true,
+  factCheck: true,
+  detectionLanguages: ['eng', 'spa', 'fra'],
 };

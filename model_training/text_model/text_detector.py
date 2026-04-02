@@ -1,4 +1,9 @@
+from __future__ import annotations
+
+from typing import Any, Callable, List, Optional
+
 import os
+import sys
 import torch  # type: ignore[import-untyped]
 import torch.nn as nn
 from transformers import AutoModel, AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # type: ignore[import-untyped]
@@ -196,6 +201,49 @@ def tokenize_batch(batch, tokenizer, text_column="text"):
     max_length=512
   )
 
+
+def _spread_mask_sequence_positions(mask_indices: list[int], k: int) -> list[int]:
+  """
+  Choose up to k tensor positions from mask_indices (content tokens in order, no padding).
+
+  Using only the first k tokens biases all highlights to the opening sentence; spacing
+  picks across the list gives coverage of the full (truncated) input.
+  """
+  if k <= 0 or not mask_indices:
+    return []
+  n = len(mask_indices)
+  if n <= k:
+    return mask_indices
+  if k == 1:
+    return [mask_indices[n // 2]]
+
+  raw: list[int] = [int(round(i * (n - 1) / (k - 1))) for i in range(k)]
+  seen: set[int] = set()
+  out: list[int] = []
+  for j in raw:
+    seq_pos = mask_indices[j]
+    if seq_pos not in seen:
+      seen.add(seq_pos)
+      out.append(seq_pos)
+  if len(out) < k:
+    step = max(1, n // max(k * 4, 1))
+    for j in range(0, n, step):
+      if len(out) >= k:
+        break
+      seq_pos = mask_indices[j]
+      if seq_pos not in seen:
+        seen.add(seq_pos)
+        out.append(seq_pos)
+  if len(out) < k:
+    for seq_pos in mask_indices:
+      if len(out) >= k:
+        break
+      if seq_pos not in seen:
+        seen.add(seq_pos)
+        out.append(seq_pos)
+  return out[:k]
+
+
 class TextDetectors:
   """
   Implementation of the TextDetector class (design section 3)
@@ -216,6 +264,134 @@ class TextDetectors:
       self.device = torch.device("cpu")
 
     self._initialize_model()
+    # encorperate satire detector to help lower false positives
+    self._satire_detector = None
+    self._initialize_satire_detector()
+    # lazy: satire_detector.extract_satire_keywords_post_then_comments (regex + comment consensus)
+    self._satire_heuristic_scan_fn: Any = None
+
+  def _initialize_satire_detector(self) -> None:
+    flag = os.environ.get("SLOPMOP_SATIRE_ADJUST", "1").strip().lower()
+    if flag in ("0", "false", "no", ""):
+      return
+    weights = os.path.normpath(
+      os.path.join(os.path.dirname(__file__), "..", "satire_detector", "best_satire_detector.pt")
+    )
+    if not os.path.isfile(weights):
+      return
+    satire_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "satire_detector"))
+    if satire_dir not in sys.path:
+      sys.path.insert(0, satire_dir)
+    try:
+      from satire_detector import SatireDetector  # type: ignore[import-untyped]
+    except ImportError as e:
+      print(f"[TextDetectors] Satire adjustment skipped (import): {e}")
+      return
+    try:
+      sd = SatireDetector()
+      state = torch.load(weights, map_location=sd.device)
+      sd.model.load_state_dict(state, strict=True)
+      sd.model.eval()
+      self._satire_detector = sd
+      print(f"[TextDetectors] Satire model loaded for AI-score nudge: {weights}")
+    except Exception as e:
+      print(f"[TextDetectors] Satire adjustment disabled: {e}")
+
+  def _satire_prob_satire(self, text: str) -> float | None:
+    if self._satire_detector is None:
+      return None
+    try:
+      _, p = self._satire_detector.predict(text, return_prob=True)
+      return float(p)
+    except Exception as e:
+      print(f"[TextDetectors] Satire inference failed: {e}")
+      return None
+
+  # adjust the probability for satire
+  # if satire classifier is confident the post is satirical, reduce AI-like probability
+  def _adjust_prob_for_satire(
+    self,
+    text: str,
+    prob: float,
+    human_max: float,
+    ai_min: float,
+  ) -> tuple[float, str]:
+    ps = self._satire_prob_satire(text)
+    if ps is None:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+
+    min_sat = float(os.environ.get("SLOPMOP_SATIRE_MIN_PROB", "0.5"))
+    penalty = float(os.environ.get("SLOPMOP_SATIRE_AI_PENALTY", "0.3"))
+    if ps < min_sat:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    if prob < human_max:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    new_prob = max(0.0, prob - penalty)
+    return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
+
+
+ # import the satire heuristic scan function
+  def _get_satire_heuristic_scan(self) -> Optional[Callable[..., Any]]:
+    if self._satire_heuristic_scan_fn is False:
+      return None
+    if callable(self._satire_heuristic_scan_fn):
+      return self._satire_heuristic_scan_fn
+    try:
+      satire_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "satire_detector"))
+      if satire_dir not in sys.path:
+        sys.path.insert(0, satire_dir)
+      from satire_detector import extract_satire_keywords_post_then_comments  # type: ignore[import-untyped]
+
+      self._satire_heuristic_scan_fn = extract_satire_keywords_post_then_comments
+    except Exception as e:
+      print(f"[TextDetectors] Satire heuristics unavailable: {e}")
+      self._satire_heuristic_scan_fn = False
+      return None
+    return self._satire_heuristic_scan_fn
+
+  # adjust the probability for satire heuristics
+  def _adjust_prob_for_satire_heuristics(
+    self,
+    text: str,
+    prob: float,
+    human_max: float,
+    ai_min: float,
+    comment_texts: Optional[List[str]] = None,
+  ) -> tuple[float, str]:
+    flag = os.environ.get("SLOPMOP_SATIRE_HEURISTIC", "1").strip().lower()
+    if flag in ("0", "false", "no", ""):
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    if prob < human_max:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    scan = self._get_satire_heuristic_scan()
+    if scan is None:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    try:
+      r = scan(text, comment_texts)
+    except Exception as e:
+      print(f"[TextDetectors] Satire heuristic scan failed: {e}")
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    if not r.keywords:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    reason = getattr(r, "consensus_reason", None)
+    strong = reason in ("yes_confirmation", "crowd_10")
+    if strong:
+      penalty = float(os.environ.get("SLOPMOP_SATIRE_HEURISTIC_PENALTY_STRONG", "0.35"))
+    else:
+      penalty = float(os.environ.get("SLOPMOP_SATIRE_HEURISTIC_PENALTY", "0.25"))
+    new_prob = max(0.0, prob - penalty)
+    return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
+
+  def _apply_all_satire_adjustments(
+    self,
+    text: str,
+    prob: float,
+    human_max: float,
+    ai_min: float,
+    comment_texts: Optional[List[str]] = None,
+  ) -> tuple[float, str]:
+    prob, _ = self._adjust_prob_for_satire(text, prob, human_max, ai_min)
+    return self._adjust_prob_for_satire_heuristics(text, prob, human_max, ai_min, comment_texts)
 
   # initialize the model
   def _initialize_model(self):
@@ -253,6 +429,7 @@ class TextDetectors:
     human_max: float = 0.40,
     ai_min: float = 0.70,
     return_pct: bool = False,
+    comment_texts: Optional[List[str]] = None,
   ):
     # clean the text if needed
     if clean:
@@ -301,14 +478,7 @@ class TextDetectors:
       else:
         print("Added 0% to confidence because LLM metadata is present.")
 
-
-    # get the label based on the probability
-    if prob < human_max:
-      label = "human"
-    elif prob < ai_min:
-      label = "mixed"
-    else:
-      label = "ai"
+    prob, label = self._apply_all_satire_adjustments(text, prob, human_max, ai_min, comment_texts)
 
     confidence = prob * 100 if return_pct else prob
     return confidence, label
@@ -333,6 +503,7 @@ class TextDetectors:
       return torch.sigmoid(logits.squeeze(-1)).item()
     return torch.softmax(logits, dim=1)[0, 1].item()
 
+  # score the text with spans (token masking)
   def _get_raw_probs_batch(
     self,
     input_ids: torch.Tensor,
@@ -358,7 +529,8 @@ class TextDetectors:
     human_max: float = 0.40,
     ai_min: float = 0.70,
     max_tokens_to_evaluate: int = 24,
-    top_k_spans: int = 8,
+    top_k_spans: int = 12,
+    comment_texts: Optional[List[str]] = None,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
     """
     Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
@@ -369,13 +541,17 @@ class TextDetectors:
     if clean:
       text = preprocess_text(text)
     if not text.strip():
-      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
       return round(conf, 4), label, []
 
     # Too little text for meaningful token-level attribution; same confidence, no spans.
     min_chars_for_spans = 5
     if len(text.strip()) < min_chars_for_spans:
-      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
       return round(conf, 4), label, []
 
     enc = self.tokenizer(
@@ -390,7 +566,9 @@ class TextDetectors:
     attention_mask = enc["attention_mask"]
     offset_mapping = enc.get("offset_mapping")
     if offset_mapping is None:
-      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
       return round(conf, 4), label, []
 
     input_ids = input_ids.to(self.device)
@@ -418,7 +596,9 @@ class TextDetectors:
         continue
       mask_indices.append(i)
 
-    to_eval = mask_indices[:max_tokens_to_evaluate]
+    # Spread evaluations across the full text (not only the first N tokens), otherwise
+    # highlights cluster in the opening sentence for long posts.
+    to_eval = _spread_mask_sequence_positions(mask_indices, max_tokens_to_evaluate)
     if to_eval:
       k = len(to_eval)
       batch_ids = input_ids.expand(k, -1).clone()
@@ -437,6 +617,7 @@ class TextDetectors:
     top = contributions[:top_k_spans]
 
     prob = baseline_prob
+    # add 50% or 30% to confidence if LLM metadata (version; Engine: text-xxx; etc.) is present
     if has_llm_metadata(text):
       if prob <= 0.1:
         prob = prob + 0.7
@@ -451,12 +632,7 @@ class TextDetectors:
       elif prob <= 0.6:
         prob = prob + 0.2
 
-    if prob < human_max:
-      label = "human"
-    elif prob < ai_min:
-      label = "mixed"
-    else:
-      label = "ai"
+    prob, label = self._apply_all_satire_adjustments(text, prob, human_max, ai_min, comment_texts)
 
     confidence = round(prob, 4)
     return confidence, label, top
@@ -511,6 +687,16 @@ if __name__ == "__main__":
     raw_csv = load_dataset("csv", data_files=csv_path)
     csv_ds = raw_csv["train"] if isinstance(raw_csv, dict) else raw_csv
     csv_ds = csv_ds.map(lambda x: {"label": int(x["label"]) if x.get("label") is not None else 0})
+
+    # Hugging Face concat requires identical feature types; Hub data may use large_string/float64.
+    _train_features = datasets.Features(
+        {
+            "text": datasets.Value("string"),
+            "label": datasets.Value("int64"),
+        }
+    )
+    gsingh = gsingh.cast(_train_features)
+    csv_ds = csv_ds.cast(_train_features)
 
     # use test_dataset.csv for social media post focused testing
     # csv_path = os.path.join(os.path.dirname(__file__), "test_dataset.csv")

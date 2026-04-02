@@ -2,6 +2,7 @@ import {
     ContentToBackgroundMessage,
     DetectionResponse,
     DetectionLanguageUnsupportedPayload,
+    FactCheckItem,
     NormalizedPostContent,
     PostId,
 } from "@src/types/domain";
@@ -48,6 +49,38 @@ export class ExtensionMessageBus {
     onDetectionLanguageUnsupported(handler: (payload: DetectionLanguageUnsupportedPayload) => void): void {
         const listener = (message: any) => {
             if (message.type === "DETECTION_LANGUAGE_UNSUPPORTED") {
+                handler(message.payload);
+            }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+    }
+
+    async sendFactCheck(postId: PostId, text: string): Promise<void> {
+        try {
+            await chrome.runtime.sendMessage({
+                type: "SLOPMOP_FACT_CHECK",
+                postId,
+                text,
+            });
+        } catch {
+            console.log("[SlopMop] Could not send fact-check request to background.");
+        }
+    }
+
+    onFactCheckResult(handler: (payload: { postId: PostId; items: FactCheckItem[] }) => void): void {
+        const listener = (message: any) => {
+            if (message.type === "FACT_CHECK_RESULT") {
+                handler(message.payload);
+            }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+    }
+
+    onFactCheckError(
+        handler: (payload: { postId: PostId; message: string; code?: string }) => void,
+    ): void {
+        const listener = (message: any) => {
+            if (message.type === "FACT_CHECK_ERROR") {
                 handler(message.payload);
             }
         };

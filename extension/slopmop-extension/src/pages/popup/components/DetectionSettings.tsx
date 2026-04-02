@@ -1,6 +1,14 @@
 import React from 'react';
 import Toggle from './Toggle';
+import ThemeToggle from './ThemeToggle';
 import type { Settings } from '../types';
+import type { DetectionLanguageCode } from '@src/utils/userSettings';
+
+const TEXT_LANG_OPTIONS: { code: DetectionLanguageCode; label: string }[] = [
+  { code: 'eng', label: 'English' },
+  { code: 'spa', label: 'Spanish' },
+  { code: 'fra', label: 'French' },
+];
 
 interface DetectionSettingsProps {
   settings: Settings;
@@ -17,7 +25,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
   return (
     <section>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detection</p>
-      <div className="bg-gray-800 rounded-lg px-3 space-y-0 divide-y divide-gray-700">
+      <div className="bg-white dark:bg-gray-800 rounded-lg px-3 space-y-0 divide-y divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-transparent">
         <Toggle
           checked={settings.showNotifications}
           onChange={(v) => onUpdateSetting('showNotifications', v)}
@@ -30,6 +38,33 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Scan Text"
           description="Analyze text content in posts"
         />
+        <div className="py-2.5">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">Text detection languages</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Only run text detection for checked languages (auto-detected). Uncheck all to skip text detection.
+          </p>
+          <div className="flex flex-col gap-2 pl-0.5">
+            {TEXT_LANG_OPTIONS.map(({ code, label }) => (
+              <label
+                key={code}
+                className="flex items-center gap-2 cursor-pointer text-sm text-gray-800 dark:text-gray-200"
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.detectionLanguages.includes(code)}
+                  onChange={() => {
+                    const cur = settings.detectionLanguages;
+                    const on = cur.includes(code);
+                    const next = on ? cur.filter((c) => c !== code) : [...cur, code];
+                    onUpdateSetting('detectionLanguages', next);
+                  }}
+                  className="rounded border-gray-300 dark:border-gray-600"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
         <Toggle
           checked={settings.scanImages}
           onChange={(v) => onUpdateSetting('scanImages', v)}
@@ -42,8 +77,14 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Automatic Scanning"
           description="When off, posts show a Detect Now button"
         />
+        <Toggle
+          checked={settings.factCheck}
+          onChange={(v) => onUpdateSetting('factCheck', v)}
+          label="Show Fact check"
+          description="When on, Fact check appears beside Detect Now on posts (uses your API)"
+        />
         <div className="py-2.5">
-          <p className="text-sm font-medium text-gray-200 mb-1.5">Comment Scanning</p>
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Comment Scanning</p>
           <div className="flex gap-1.5">
             {(['off', 'user_triggered', 'auto_top_n'] as const).map((mode) => (
               <button
@@ -52,7 +93,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   settings.scanComments === mode
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
                 }`}
               >
                 {SCAN_COMMENTS_LABELS[mode]}
@@ -61,7 +102,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           </div>
         </div>
         <div className="py-2.5">
-          <p className="text-sm font-medium text-gray-200 mb-1.5">Sensitivity</p>
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Sensitivity</p>
           <div className="flex gap-1.5">
             {(['low', 'medium', 'high'] as const).map((level) => (
               <button
@@ -70,7 +111,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                   settings.sensitivity === level
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
                 }`}
               >
                 {level}
@@ -79,7 +120,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           </div>
         </div>
         <div className="py-2.5">
-          <p className="text-sm font-medium text-gray-200 mb-1.5">Highlight Style</p>
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Highlight Style</p>
           <div className="flex gap-1.5">
             {(['badge', 'border', 'dim'] as const).map((style) => (
               <button
@@ -88,7 +129,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                   settings.highlightStyle === style
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
                 }`}
               >
                 {style}
@@ -103,7 +144,7 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           description="Show which parts of the text contributed most to the AI score"
         />
         <div className="py-2.5">
-          <p className="text-sm font-medium text-gray-200 mb-1.5">Detail Mode</p>
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Detail Mode</p>
           <div className="flex gap-1.5">
             {(['simple', 'detailed'] as const).map((mode) => (
               <button
@@ -112,13 +153,16 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                   settings.uiMode === mode
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
                 }`}
               >
                 {mode}
               </button>
             ))}
           </div>
+        </div>
+        <div className="py-2.5 border-t border-gray-200 dark:border-gray-700">
+          <ThemeToggle embedded />
         </div>
       </div>
     </section>

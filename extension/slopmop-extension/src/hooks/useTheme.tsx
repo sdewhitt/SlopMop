@@ -2,81 +2,122 @@
  * Dark/Light mode support (story 30)
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import browser from 'webextension-polyfill';
 
-/** Theme preference: light or dark only. */
+export type ThemePreference = 'system' | 'light' | 'dark';
 export type ThemeMode = 'light' | 'dark';
 
-/** Resolved theme used for actual styling (same as ThemeMode for light/dark toggle). */
-export type ResolvedTheme = 'light' | 'dark';
+const STORAGE_KEY_PREFERENCE = 'themePreference';
+/** Legacy key — migrated on read */
+const STORAGE_KEY_LEGACY = 'theme';
 
-const STORAGE_KEY = 'theme';
-
-/** Get user's system display preference (light/dark). */
 function getSystemTheme(): ThemeMode {
   if (typeof window === 'undefined') return 'dark';
+  if (typeof window.matchMedia !== 'function') return 'dark';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-/** Convert theme mode to resolved theme (identity for light/dark). */
-export function resolveTheme(mode: ThemeMode): ResolvedTheme {
-  return mode;
-}
-
-/** Apply resolved theme to document (add/remove .dark class for Tailwind). */
-export function applyThemeToDocument(resolved: ResolvedTheme): void {
+export function applyThemeToDocument(mode: ThemeMode): void {
   if (typeof document === 'undefined') return;
   const html = document.documentElement;
-  if (resolved === 'dark') {
+  if (mode === 'dark') {
     html.classList.add('dark');
   } else {
     html.classList.remove('dark');
   }
 }
 
+function resolvePreference(pref: ThemePreference, system: ThemeMode): ThemeMode {
+  if (pref === 'system') return system;
+  return pref;
+}
+
 interface ThemeContextValue {
-  theme: ThemeMode;
-  resolvedTheme: ResolvedTheme;
-  setTheme: (mode: ThemeMode) => void;
+  /** User choice: system follows OS; light/dark are fixed */
+  themePreference: ThemePreference;
+  /** Actual light/dark applied to the document */
+  resolvedTheme: ThemeMode;
+  /** Flip between light and dark (after first use, preference is no longer "system") */
+  toggleTheme: () => void;
+  /** Restore following device / browser theme */
+  setSystemTheme: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-export function ThemeProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const [theme, setThemeState] = useState<ThemeMode>(getSystemTheme);
-  const resolvedTheme = resolveTheme(theme);
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [systemTheme, setSystemThemeState] = useState<ThemeMode>(getSystemTheme);
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>('system');
 
-  const setTheme = useCallback((mode: ThemeMode) => {
-    setThemeState(mode);
-    applyThemeToDocument(mode);
-    browser.storage.local.set({ [STORAGE_KEY]: mode });
-  }, []);
+  const resolvedTheme = useMemo(
+    () => resolvePreference(themePreference, systemTheme),
+    [themePreference, systemTheme],
+  );
 
-  // Load theme from storage on mount; default to system preference when no stored value
   useEffect(() => {
-    browser.storage.local.get(STORAGE_KEY).then((result) => {
-      const stored = result[STORAGE_KEY] as string | undefined;
-      if (stored === 'light' || stored === 'dark') {
-        setThemeState(stored);
-        applyThemeToDocument(stored);
-      } else {
-        const systemTheme = getSystemTheme();
-        setThemeState(systemTheme);
-        applyThemeToDocument(systemTheme);
-      }
-    });
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = () => setSystemThemeState(mq.matches ? 'dark' : 'light');
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
   }, []);
 
   useEffect(() => {
     applyThemeToDocument(resolvedTheme);
   }, [resolvedTheme]);
 
-  const value: ThemeContextValue = { theme, resolvedTheme, setTheme };
+  useEffect(() => {
+    browser.storage.local
+      .get([STORAGE_KEY_PREFERENCE, STORAGE_KEY_LEGACY])
+      .then((result) => {
+        const prefRaw = result[STORAGE_KEY_PREFERENCE] as string | undefined;
+        const legacy = result[STORAGE_KEY_LEGACY] as string | undefined;
+
+        let next: ThemePreference = 'system';
+        if (prefRaw === 'system' || prefRaw === 'light' || prefRaw === 'dark') {
+          next = prefRaw;
+        } else if (legacy === 'light' || legacy === 'dark') {
+          next = legacy;
+        }
+
+        setThemePreferenceState(next);
+        applyThemeToDocument(resolvePreference(next, getSystemTheme()));
+      });
+  }, []);
+
+  const persistPreference = useCallback((pref: ThemePreference) => {
+    setThemePreferenceState(pref);
+    const resolved = resolvePreference(pref, systemTheme);
+    applyThemeToDocument(resolved);
+    if (pref === 'system') {
+      void browser.storage.local.set({
+        [STORAGE_KEY_PREFERENCE]: 'system',
+        [STORAGE_KEY_LEGACY]: resolved,
+      });
+    } else {
+      void browser.storage.local.set({
+        [STORAGE_KEY_PREFERENCE]: pref,
+        [STORAGE_KEY_LEGACY]: pref,
+      });
+    }
+  }, [systemTheme]);
+
+  const toggleTheme = useCallback(() => {
+    const nextMode: ThemeMode = resolvedTheme === 'dark' ? 'light' : 'dark';
+    persistPreference(nextMode);
+  }, [resolvedTheme, persistPreference]);
+
+  const setSystemTheme = useCallback(() => {
+    persistPreference('system');
+  }, [persistPreference]);
+
+  const value: ThemeContextValue = {
+    themePreference,
+    resolvedTheme,
+    toggleTheme,
+    setSystemTheme,
+  };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

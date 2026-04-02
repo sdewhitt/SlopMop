@@ -1,6 +1,10 @@
-import { DetectionResponse, ImageDetectionResult, PostId } from "@src/types/domain";
+import { DetectionResponse, FactCheckItem, ImageDetectionResult, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import { getPatternReasons } from "@src/utils/aiTextPatterns";
+import {
+    expandUserDetectionLanguages,
+    getTooltipLanguageLine,
+} from "@src/utils/languageSupport";
 import {
     buildHighlightedHtml,
     canApplyInnerHtmlHighlights,
@@ -29,6 +33,19 @@ export class OverlayRenderer {
     private mapToTextBody = new Map<PostId, HTMLElement>()
     /** Saved innerHTML before highlights so we can restore on clear / re-render / toggle off. */
     private mapToOriginalBodyHtml = new Map<PostId, string>()
+    private mapToFactCheckUi = new Map<
+        PostId,
+        {
+            factPanel: HTMLElement;
+            runFactCheck: () => void;
+            lastItems: FactCheckItem[] | null;
+            lastError: string | null;
+            /** Removes document capture listener used to dismiss pinned fact-check tooltips. */
+            factCheckTooltipCleanup: (() => void) | null;
+        }
+    >();
+    /** When set, detection badge / scanning / errors render here; fact panel stays a sibling. */
+    private mapToDetectPanel = new Map<PostId, HTMLElement>();
     private settings: DetectionSettings;
 
 
@@ -60,13 +77,13 @@ export class OverlayRenderer {
     // render DetectionResponse as a badge on the page
     // for now, start with basic appearance, then we can match the UI mockups
     renderResult(postId: PostId, res: DetectionResponse): void {
-        const overlay = this.mapToOverlay.get(postId);
-        if (!overlay) return;
+        const surface = this.getDetectSurface(postId);
+        if (!surface) return;
 
         this.restorePostBodyHtml(postId);
         this.mapToResponse.set(postId, res);
-        this.resetOverlayInteractions(overlay);
-        overlay.style.whiteSpace = "normal";
+        this.resetOverlayInteractions(surface);
+        surface.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
 
@@ -75,21 +92,21 @@ export class OverlayRenderer {
             likely_human: "#22c55e",
             unknown: "#6b7280",
         };
-        overlay.style.backgroundColor = colorMap[res.verdict];
-        overlay.style.cursor = "pointer";
+        surface.style.backgroundColor = colorMap[res.verdict];
+        surface.style.cursor = "pointer";
 
         if (isSimple) {
-            overlay.style.fontSize = "14px";
-            overlay.style.padding = "6px 12px";
+            surface.style.fontSize = "14px";
+            surface.style.padding = "6px 12px";
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
         const sourcePrefix = this.getPrimarySourceLabel(res);
         if (res.imageResult) {
             const mediaLabel = this.getMediaLabel(res.imageResult);
-            overlay.textContent = `Text: ${textLabel} · ${mediaLabel}: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+            surface.textContent = `Text: ${textLabel} · ${mediaLabel}: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
         } else {
-            overlay.textContent = sourcePrefix ? `${sourcePrefix}: ${textLabel}` : textLabel;
+            surface.textContent = sourcePrefix ? `${sourcePrefix}: ${textLabel}` : textLabel;
         }
 
         let tooltip: HTMLElement | null = null;
@@ -116,7 +133,7 @@ export class OverlayRenderer {
             if (tooltip) return;
             overlay.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
             tooltip = isSimple
-                ? this.createSimpleTooltip(res)
+                ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
             tooltip.style.pointerEvents = "auto";
             tooltip.onmouseenter = () => {
@@ -144,6 +161,7 @@ export class OverlayRenderer {
         plainText: string,
         onDetectNow?: () => void,
         textContainer?: HTMLElement | null,
+        onFactCheck?: () => void,
     ): void {
         this.mapToPostText.set(postId, plainText);
         if (textContainer) {
@@ -160,7 +178,6 @@ export class OverlayRenderer {
         overlay.setAttribute(OverlayRenderer.OVERLAY_ATTR, "1");
         hostNode.style.position = "relative";
         hostNode.appendChild(overlay);
-        // style the overlay object
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
@@ -173,36 +190,142 @@ export class OverlayRenderer {
             color: "#fff",
         });
         if (!onDetectNow) {
+            // automatic mode: single grey “Scanning…” pill.
+            Object.assign(overlay.style, {
+                padding: isSimple ? "6px 12px" : "4px 8px",
+                borderRadius: "4px",
+                backgroundColor: "#6b7280",
+                color: "#fff",
+            });
             overlay.textContent = "Scanning...";
             this.mapToOverlay.set(postId, overlay);
+            this.mapToDetectPanel.set(postId, overlay);
             return;
         }
 
-        // manual mode: show a Detect Now button instead of scanning immediately.
-        // this keeps noisy pages readable when users prefer click-to-scan behavior.
-        const detectNowButton = document.createElement("button");
-        detectNowButton.type = "button";
-        detectNowButton.textContent = "Detect Now";
-        Object.assign(detectNowButton.style, {
+        const greyBoxStyle = (el: HTMLElement): void => {
+            Object.assign(el.style, {
+                position: "relative",
+                padding: isSimple ? "6px 12px" : "4px 8px",
+                borderRadius: "4px",
+                backgroundColor: "#6b7280",
+                color: "#fff",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+                alignItems: "stretch",
+                maxWidth: "min(92vw, 400px)",
+            });
+        };
+
+        const buttonStyle: Partial<CSSStyleDeclaration> = {
             border: "none",
             borderRadius: "4px",
             padding: "6px 10px",
             fontSize: isSimple ? "14px" : "12px",
             fontWeight: "600",
             color: "#fff",
-            backgroundColor: "#6b7280",
             cursor: "pointer",
+        };
+
+        // manual + Fact check: outer row with two grey boxes — fact panel persists after Detect runs.
+        if (onFactCheck) {
+            Object.assign(overlay.style, {
+                padding: "0",
+                backgroundColor: "transparent",
+                color: "inherit",
+                borderRadius: "0",
+                boxShadow: "none",
+                display: "flex",
+                flexDirection: "row",
+                flexWrap: "wrap",
+                gap: "6px",
+                justifyContent: "flex-end",
+                alignItems: "flex-start",
+            });
+
+            const factPanel = document.createElement("div");
+            factPanel.setAttribute("data-slopmop-fact-panel", "1");
+            greyBoxStyle(factPanel);
+
+            const factButton = document.createElement("button");
+            factButton.type = "button";
+            factButton.textContent = "Fact check";
+            Object.assign(factButton.style, {
+                ...buttonStyle,
+                backgroundColor: "#6b7280",
+                width: "100%",
+            });
+
+            const run = () => {
+                onFactCheck();
+            };
+            this.mapToFactCheckUi.set(postId, {
+                factPanel,
+                runFactCheck: run,
+                lastItems: null,
+                lastError: null,
+                factCheckTooltipCleanup: null,
+            });
+            factButton.onclick = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.showFactCheckingState(postId);
+                run();
+            };
+            factPanel.appendChild(factButton);
+
+            const detectPanel = document.createElement("div");
+            detectPanel.setAttribute("data-slopmop-detect-panel", "1");
+            greyBoxStyle(detectPanel);
+
+            const detectNowButton = document.createElement("button");
+            detectNowButton.type = "button";
+            detectNowButton.textContent = "Detect Now";
+            Object.assign(detectNowButton.style, {
+                ...buttonStyle,
+                backgroundColor: "#6b7280",
+                width: "100%",
+            });
+            detectNowButton.onclick = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.showScanningStateForPost(postId);
+                onDetectNow();
+            };
+            detectPanel.appendChild(detectNowButton);
+
+            overlay.appendChild(factPanel);
+            overlay.appendChild(detectPanel);
+            this.mapToOverlay.set(postId, overlay);
+            this.mapToDetectPanel.set(postId, detectPanel);
+            return;
+        }
+
+        // manual, no fact check: original single grey box + Detect Now.
+        Object.assign(overlay.style, {
+            padding: isSimple ? "6px 12px" : "4px 8px",
+            borderRadius: "4px",
+            fontSize: isSimple ? "14px" : "12px",
+            backgroundColor: "#6b7280",
+            color: "#fff",
+        });
+        const detectNowButton = document.createElement("button");
+        detectNowButton.type = "button";
+        detectNowButton.textContent = "Detect Now";
+        Object.assign(detectNowButton.style, {
+            ...buttonStyle,
+            backgroundColor: "#6b7280",
         });
         detectNowButton.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();
-            this.showScanningState(overlay);
+            this.showScanningStateForPost(postId);
             onDetectNow();
         };
         overlay.appendChild(detectNowButton);
         this.mapToOverlay.set(postId, overlay);
-
-
+        this.mapToDetectPanel.set(postId, overlay);
     }
 
     private removeExistingHostOverlays(hostNode: HTMLElement): void {
@@ -220,6 +343,8 @@ export class OverlayRenderer {
             this.mapToErrorMessage.delete(existingPostId);
             this.mapToTextBody.delete(existingPostId);
             this.mapToOriginalBodyHtml.delete(existingPostId);
+            this.mapToFactCheckUi.delete(existingPostId);
+            this.mapToDetectPanel.delete(existingPostId);
         }
 
         for (const overlay of existingOverlays) {
@@ -227,18 +352,56 @@ export class OverlayRenderer {
         }
     }
 
+    /**
+     * Language blocked — compact “Error” badge; hover explains unsupported language and what was detected.
+     */
+    renderLanguageUnsupported(
+        postId: PostId,
+        hover: { simpleTitle: string; tooltipTitle: string; tooltipBody: string },
+    ): void {
+        const surface = this.getDetectSurface(postId);
+        if (!surface) return;
+        this.restorePostBodyHtml(postId);
+        this.mapToErrorMessage.delete(postId);
+        this.resetOverlayInteractions(surface);
+        surface.removeAttribute("title");
+        surface.style.backgroundColor = "#f59e0b";
+        surface.style.whiteSpace = "normal";
+
+        const isSimple = this.settings.uiMode === "simple";
+        surface.textContent = "Error";
+        surface.style.cursor = "help";
+
+        if (isSimple) {
+            surface.setAttribute("title", hover.simpleTitle);
+            return;
+        }
+
+        let tooltip: HTMLElement | null = null;
+        surface.onmouseenter = () => {
+            if (tooltip) return;
+            tooltip = this.createLanguageUnsupportedTooltip(hover.tooltipTitle, hover.tooltipBody);
+            surface.appendChild(tooltip);
+        };
+        surface.onmouseleave = () => {
+            tooltip?.remove();
+            tooltip = null;
+        };
+    }
+
     renderError(postId: PostId, message: string, onRetry?: () => void): void {
-        const overlay = this.mapToOverlay.get(postId);
-        if (!overlay) return;
+        const surface = this.getDetectSurface(postId);
+        if (!surface) return;
         this.restorePostBodyHtml(postId);
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
-        this.resetOverlayInteractions(overlay);
-        overlay.style.backgroundColor = "#f59e0b"; // amber
-        overlay.style.whiteSpace = "normal";
+        surface.removeAttribute("title");
+        this.resetOverlayInteractions(surface);
+        surface.style.backgroundColor = "#f59e0b"; // amber
+        surface.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
-        overlay.textContent = "Error";
+        surface.textContent = "Error";
 
         if (onRetry) {
             const retryButton = document.createElement("button");
@@ -256,19 +419,19 @@ export class OverlayRenderer {
             });
             retryButton.onclick = (event) => {
                 event.stopPropagation();
-                this.showScanningState(overlay);
+                this.showScanningStateForPost(postId);
                 onRetry();
             };
-            overlay.appendChild(retryButton);
+            surface.appendChild(retryButton);
         }
 
         if (isSimple) {
-            overlay.style.cursor = "default";
+            surface.style.cursor = "default";
             return;
         }
 
         // detailed mode keeps the badge compact and pushes the full message into tooltip.
-        overlay.style.cursor = onRetry ? "default" : "pointer";
+        surface.style.cursor = onRetry ? "default" : "pointer";
         let tooltip: HTMLElement | null = null;
         let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
         const clearHideTimer = () => {
@@ -309,13 +472,13 @@ export class OverlayRenderer {
     }
     // timeout has a dedicated badge text so users can tell this was network-related.
     renderTimeout(postId: PostId): void {
-        const overlay = this.mapToOverlay.get(postId);
-        if (!overlay) return;
+        const surface = this.getDetectSurface(postId);
+        if (!surface) return;
         this.restorePostBodyHtml(postId);
-        this.resetOverlayInteractions(overlay);
-        overlay.style.whiteSpace = "normal";
-        overlay.style.backgroundColor = "#f59e0b";
-        overlay.textContent = "network timeout";
+        this.resetOverlayInteractions(surface);
+        surface.style.whiteSpace = "normal";
+        surface.style.backgroundColor = "#f59e0b";
+        surface.textContent = "network timeout";
     }
     // removes a DOM element and its entry from all three maps
     clear(postId: PostId): void {
@@ -328,6 +491,17 @@ export class OverlayRenderer {
         this.mapToPostText.delete(postId);
         this.mapToErrorMessage.delete(postId);
         this.mapToTextBody.delete(postId);
+        this.clearFactCheckTooltipListeners(postId);
+        this.mapToFactCheckUi.delete(postId);
+        this.mapToDetectPanel.delete(postId);
+    }
+
+    private clearFactCheckTooltipListeners(postId: PostId): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (ui?.factCheckTooltipCleanup) {
+            ui.factCheckTooltipCleanup();
+            ui.factCheckTooltipCleanup = null;
+        }
     }
 
     private restorePostBodyHtml(postId: PostId): void {
@@ -337,6 +511,205 @@ export class OverlayRenderer {
             el.innerHTML = snapshot;
         }
         this.mapToOriginalBodyHtml.delete(postId);
+    }
+
+    /** Fact panel becomes a verdict-style badge; details live in hover tooltips like AI detection. */
+    renderFactCheckResult(postId: PostId, items: FactCheckItem[]): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (!ui) return;
+        const { factPanel } = ui;
+        ui.lastItems = items;
+        ui.lastError = null;
+        factPanel.removeAttribute("title");
+        this.clearFactCheckTooltipListeners(postId);
+        this.resetOverlayInteractions(factPanel);
+        factPanel.style.whiteSpace = "normal";
+
+        const isSimple = this.settings.uiMode === "simple";
+        if (isSimple) {
+            factPanel.style.fontSize = "14px";
+            factPanel.style.padding = "6px 12px";
+        } else {
+            factPanel.style.fontSize = "12px";
+            factPanel.style.padding = "4px 8px";
+        }
+
+        const hasHits = items.length > 0;
+        factPanel.style.backgroundColor = hasHits ? "#22c55e" : "#6b7280";
+        factPanel.style.cursor = "pointer";
+        factPanel.textContent = hasHits
+            ? `${items.length} fact check${items.length !== 1 ? "s" : ""}`
+            : "Not recognized";
+
+        let tooltip: HTMLElement | null = null;
+        let pinned = false;
+
+        const removeDocDismiss = (): void => {
+            if (ui.factCheckTooltipCleanup) {
+                ui.factCheckTooltipCleanup();
+                ui.factCheckTooltipCleanup = null;
+            }
+        };
+
+        const hideTooltip = (): void => {
+            tooltip?.remove();
+            tooltip = null;
+            pinned = false;
+            removeDocDismiss();
+        };
+
+        const showTooltip = (): void => {
+            if (tooltip) return;
+            tooltip = isSimple
+                ? this.createSimpleFactCheckTooltip(items)
+                : this.createFactCheckTooltipDetailed(items);
+            factPanel.appendChild(tooltip);
+        };
+
+        const setPinned = (next: boolean): void => {
+            pinned = next;
+            removeDocDismiss();
+            if (!next) return;
+            const onDocClick = (e: MouseEvent): void => {
+                if (!tooltip || !pinned) return;
+                const t = e.target instanceof Node ? e.target : null;
+                if (t && factPanel.contains(t)) return;
+                hideTooltip();
+            };
+            document.addEventListener("click", onDocClick, true);
+            ui.factCheckTooltipCleanup = (): void => {
+                document.removeEventListener("click", onDocClick, true);
+            };
+        };
+
+        factPanel.onmouseenter = (): void => {
+            if (!tooltip) showTooltip();
+        };
+        factPanel.onmouseleave = (): void => {
+            if (!pinned) hideTooltip();
+        };
+        factPanel.onclick = (e: MouseEvent): void => {
+            e.stopPropagation();
+            const t = e.target instanceof Node ? e.target : null;
+            if (t && tooltip?.contains(t)) return;
+            if (pinned && tooltip) {
+                hideTooltip();
+                return;
+            }
+            showTooltip();
+            setPinned(true);
+        };
+
+        showTooltip();
+        setPinned(true);
+    }
+
+    renderFactCheckError(postId: PostId, message: string): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (!ui) return;
+        const { factPanel, runFactCheck } = ui;
+        ui.lastError = message;
+        ui.lastItems = null;
+        factPanel.removeAttribute("title");
+        this.clearFactCheckTooltipListeners(postId);
+        this.resetOverlayInteractions(factPanel);
+        factPanel.style.whiteSpace = "normal";
+        factPanel.style.backgroundColor = "#f59e0b";
+        const isSimple = this.settings.uiMode === "simple";
+        if (isSimple) {
+            factPanel.style.fontSize = "14px";
+            factPanel.style.padding = "6px 12px";
+        } else {
+            factPanel.style.fontSize = "12px";
+            factPanel.style.padding = "4px 8px";
+        }
+        factPanel.textContent = "Error";
+
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.textContent = " · Retry";
+        Object.assign(retryButton.style, {
+            border: "none",
+            background: "transparent",
+            color: "#fff",
+            padding: "0",
+            margin: "0",
+            fontSize: isSimple ? "14px" : "12px",
+            fontWeight: "600",
+            cursor: "pointer",
+        });
+        retryButton.onclick = (event) => {
+            event.stopPropagation();
+            this.showFactCheckingState(postId);
+            runFactCheck();
+        };
+        factPanel.appendChild(retryButton);
+
+        if (isSimple) {
+            factPanel.style.cursor = "default";
+            return;
+        }
+
+        factPanel.style.cursor = "pointer";
+        let tooltip: HTMLElement | null = null;
+        let pinned = false;
+
+        const removeDocDismiss = (): void => {
+            if (ui.factCheckTooltipCleanup) {
+                ui.factCheckTooltipCleanup();
+                ui.factCheckTooltipCleanup = null;
+            }
+        };
+
+        const hideTooltip = (): void => {
+            tooltip?.remove();
+            tooltip = null;
+            pinned = false;
+            removeDocDismiss();
+        };
+
+        const showTooltip = (): void => {
+            if (tooltip) return;
+            tooltip = this.createFactCheckErrorTooltip(message);
+            factPanel.appendChild(tooltip);
+        };
+
+        const setPinned = (next: boolean): void => {
+            pinned = next;
+            removeDocDismiss();
+            if (!next) return;
+            const onDocClick = (e: MouseEvent): void => {
+                if (!tooltip || !pinned) return;
+                const t = e.target instanceof Node ? e.target : null;
+                if (t && factPanel.contains(t)) return;
+                hideTooltip();
+            };
+            document.addEventListener("click", onDocClick, true);
+            ui.factCheckTooltipCleanup = (): void => {
+                document.removeEventListener("click", onDocClick, true);
+            };
+        };
+
+        factPanel.onmouseenter = (): void => {
+            if (!tooltip) showTooltip();
+        };
+        factPanel.onmouseleave = (): void => {
+            if (!pinned) hideTooltip();
+        };
+        factPanel.onclick = (e: MouseEvent): void => {
+            e.stopPropagation();
+            const t = e.target instanceof Node ? e.target : null;
+            if (t && tooltip?.contains(t)) return;
+            if (pinned && tooltip) {
+                hideTooltip();
+                return;
+            }
+            showTooltip();
+            setPinned(true);
+        };
+
+        showTooltip();
+        setPinned(true);
     }
 
     private applyInPostHighlights(postId: PostId, res: DetectionResponse): void {
@@ -357,13 +730,219 @@ export class OverlayRenderer {
     }
 
     private findPostIdForOverlay(overlay: HTMLElement): PostId | null {
-        for (const [pid, el] of this.mapToOverlay) {
-            if (el === overlay) return pid;
+        for (const [pid, outer] of this.mapToOverlay) {
+            if (overlay === outer || outer.contains(overlay)) return pid;
         }
         return null;
     }
 
-    private createSimpleTooltip(res: DetectionResponse): HTMLElement {
+    /** Element that shows AI detection state (badge / scanning). Fact panel is separate when present. */
+    private getDetectSurface(postId: PostId): HTMLElement | null {
+        return this.mapToDetectPanel.get(postId) ?? this.mapToOverlay.get(postId) ?? null;
+    }
+
+    private showScanningStateForPost(postId: PostId): void {
+        this.restorePostBodyHtml(postId);
+        const surface = this.mapToDetectPanel.get(postId) ?? this.mapToOverlay.get(postId);
+        if (!surface) return;
+        this.resetOverlayInteractions(surface);
+        surface.style.whiteSpace = "normal";
+        surface.style.backgroundColor = "#6b7280";
+        surface.style.cursor = "default";
+        surface.textContent = "Scanning...";
+    }
+
+    private showFactCheckingState(postId: PostId): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (!ui) return;
+        const { factPanel } = ui;
+        factPanel.removeAttribute("title");
+        this.clearFactCheckTooltipListeners(postId);
+        this.resetOverlayInteractions(factPanel);
+        factPanel.style.whiteSpace = "normal";
+        factPanel.style.backgroundColor = "#6b7280";
+        factPanel.style.cursor = "default";
+        factPanel.textContent = "Checking…";
+    }
+
+    private createSimpleFactCheckTooltip(items: FactCheckItem[]): HTMLElement {
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            ...this.getTooltipPosition(),
+            minWidth: "200px",
+            maxWidth: "320px",
+            padding: "14px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "14px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "auto",
+            wordBreak: "break-word",
+        });
+        tip.onclick = (e) => e.stopPropagation();
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "16px",
+            marginBottom: "8px",
+        });
+        header.textContent = items.length === 0 ? "Not recognized" : `Fact checks (${items.length})`;
+        tip.appendChild(header);
+
+        if (items.length === 0) {
+            const p = document.createElement("div");
+            p.textContent =
+                "Google’s fact-check index had no ClaimReview entries for these excerpts. " +
+                "Index coverage depends on what publishers have reviewed.";
+            tip.appendChild(p);
+            return tip;
+        }
+
+        const body = document.createElement("div");
+        body.textContent = items
+            .map((it, i) => {
+                const c = it.claim.length > 140 ? `${it.claim.slice(0, 140)}…` : it.claim;
+                return `${i + 1}. ${c}${it.verdict ? ` — ${it.verdict}` : ""}`;
+            })
+            .join("\n\n");
+        tip.appendChild(body);
+
+        return tip;
+    }
+
+    private createFactCheckTooltipDetailed(items: FactCheckItem[]): HTMLElement {
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            ...this.getTooltipPosition(),
+            minWidth: "260px",
+            maxWidth: "380px",
+            maxHeight: "400px",
+            overflowY: "auto",
+            padding: "12px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "12px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "auto",
+            wordBreak: "break-word",
+        });
+        tip.onclick = (e) => e.stopPropagation();
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "14px",
+            marginBottom: "6px",
+        });
+        header.textContent = items.length === 0 ? "No database match" : `ClaimReview (${items.length})`;
+        tip.appendChild(header);
+
+        if (items.length === 0) {
+            const p = document.createElement("div");
+            p.textContent =
+                "No ClaimReview matches for these excerpts. Fact checks only exist for claims publishers have reviewed.";
+            tip.appendChild(p);
+            return tip;
+        }
+
+        items.forEach((it, idx) => {
+            const block = document.createElement("div");
+            if (idx > 0) {
+                Object.assign(block.style, {
+                    borderTop: "1px solid #374151",
+                    paddingTop: "8px",
+                    marginTop: "8px",
+                });
+            }
+            this.appendFactCheckItemToTooltip(block, it);
+            tip.appendChild(block);
+        });
+
+        return tip;
+    }
+
+    private appendFactCheckItemToTooltip(container: HTMLElement, it: FactCheckItem): void {
+        const claimEl = document.createElement("div");
+        Object.assign(claimEl.style, {
+            fontWeight: "600",
+            marginBottom: "4px",
+            color: "#e5e7eb",
+        });
+        claimEl.textContent = it.claim;
+        container.appendChild(claimEl);
+
+        const meta = document.createElement("div");
+        Object.assign(meta.style, {
+            color: "#9ca3af",
+            marginBottom: "6px",
+            fontSize: "11px",
+        });
+        meta.textContent = [it.verdict, it.source].filter(Boolean).join(" · ");
+        container.appendChild(meta);
+
+        if (it.url) {
+            const a = document.createElement("a");
+            a.href = it.url;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.textContent = "Open source article";
+            Object.assign(a.style, {
+                color: "#93c5fd",
+                fontWeight: "600",
+                textDecoration: "underline",
+            });
+            a.onclick = (ev) => ev.stopPropagation();
+            container.appendChild(a);
+        }
+    }
+
+    private createFactCheckErrorTooltip(message: string): HTMLElement {
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            ...this.getTooltipPosition(),
+            minWidth: "240px",
+            maxWidth: "320px",
+            padding: "12px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "12px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "auto",
+            wordBreak: "break-word",
+        });
+        tip.onclick = (e) => e.stopPropagation();
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "13px",
+            marginBottom: "6px",
+            color: "#fbbf24",
+        });
+        header.textContent = "Fact check error";
+        tip.appendChild(header);
+
+        const body = document.createElement("div");
+        body.textContent = message;
+        tip.appendChild(body);
+
+        return tip;
+    }
+
+    private createSimpleTooltip(res: DetectionResponse, postText: string): HTMLElement {
         const verdictLabel: Record<DetectionResponse["verdict"], string> = {
             likely_ai: "Likely AI-generated",
             likely_human: "Likely human-written",
@@ -403,6 +982,14 @@ export class OverlayRenderer {
             }
         }
         tip.appendChild(header);
+
+        const langLineSimple = getTooltipLanguageLine(
+            postText,
+            expandUserDetectionLanguages(this.settings.detectionLanguages),
+        );
+        if (langLineSimple) {
+            tip.appendChild(this.makeTooltipLanguageRow(langLineSimple, "13px", "#9ca3af"));
+        }
 
         const summary = document.createElement("div");
         Object.assign(summary.style, { fontSize: "14px", marginTop: "8px" });
@@ -469,6 +1056,14 @@ export class OverlayRenderer {
             }
         }
         tip.appendChild(header);
+
+        const langLine = getTooltipLanguageLine(
+            postText,
+            expandUserDetectionLanguages(this.settings.detectionLanguages),
+        );
+        if (langLine) {
+            tip.appendChild(this.makeTooltipLanguageRow(langLine, "12px", "#9ca3af"));
+        }
 
         // confidence progress bar
         const pct = Math.round(res.confidence * 100);
@@ -603,6 +1198,57 @@ export class OverlayRenderer {
         return tip;
     }
 
+    private makeTooltipLanguageRow(
+        line: string,
+        fontSize: string,
+        color: string,
+    ): HTMLElement {
+        const row = document.createElement("div");
+        Object.assign(row.style, {
+            fontSize,
+            color,
+            marginBottom: "6px",
+        });
+        row.textContent = line;
+        return row;
+    }
+
+    private createLanguageUnsupportedTooltip(title: string, body: string): HTMLElement {
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            position: "absolute",
+            ...this.getTooltipPosition(),
+            minWidth: "220px",
+            maxWidth: "320px",
+            padding: "12px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: "12px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: "10000",
+            pointerEvents: "none",
+            wordBreak: "break-word",
+        });
+
+        const header = document.createElement("div");
+        Object.assign(header.style, {
+            fontWeight: "700",
+            fontSize: "13px",
+            marginBottom: "6px",
+            color: "#fbbf24",
+        });
+        header.textContent = title;
+        tip.appendChild(header);
+
+        const bodyEl = document.createElement("div");
+        bodyEl.textContent = body;
+        tip.appendChild(bodyEl);
+
+        return tip;
+    }
+
     private createErrorTooltip(message: string): HTMLElement {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
@@ -712,16 +1358,6 @@ export class OverlayRenderer {
         overlay.onmouseleave = null;
         overlay.onclick = null;
         overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
-    }
-
-    private showScanningState(overlay: HTMLElement): void {
-        const postId = this.findPostIdForOverlay(overlay);
-        if (postId) this.restorePostBodyHtml(postId);
-        this.resetOverlayInteractions(overlay);
-        overlay.style.whiteSpace = "normal";
-        overlay.style.backgroundColor = "#6b7280";
-        overlay.style.cursor = "default";
-        overlay.textContent = "Scanning...";
     }
 
     private getMediaLabel(imgRes: ImageDetectionResult): "Image" | "Video" {

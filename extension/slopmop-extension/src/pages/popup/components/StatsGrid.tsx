@@ -8,17 +8,17 @@ interface StatsGridProps {
 export default function StatsGrid({ stats }: StatsGridProps) {
   return (
     <div className="grid grid-cols-3 gap-3">
-      <div className="bg-gray-800 rounded-lg p-3 text-center">
-        <p className="text-2xl font-bold text-blue-400">{stats.postsScanned}</p>
-        <p className="text-[11px] text-gray-400 mt-1">Posts Scanned</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-3 text-center border border-gray-200 dark:border-transparent">
+        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.postsScanned}</p>
+        <p className="text-[11px] text-gray-600 dark:text-gray-400 mt-1">Posts Scanned</p>
       </div>
-      <div className="bg-gray-800 rounded-lg p-3 text-center">
-        <p className="text-2xl font-bold text-purple-400">{stats.postsProcessing}</p>
-        <p className="text-[11px] text-gray-400 mt-1">Processing</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-3 text-center border border-gray-200 dark:border-transparent">
+        <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{stats.postsProcessing}</p>
+        <p className="text-[11px] text-gray-600 dark:text-gray-400 mt-1">Processing</p>
       </div>
-      <div className="bg-gray-800 rounded-lg p-3 text-center">
-        <p className="text-2xl font-bold text-amber-400">{stats.aiDetected}</p>
-        <p className="text-[11px] text-gray-400 mt-1">AI Detected</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-3 text-center border border-gray-200 dark:border-transparent">
+        <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{stats.aiDetected}</p>
+        <p className="text-[11px] text-gray-600 dark:text-gray-400 mt-1">AI Detected</p>
       </div>
     </div>
   );

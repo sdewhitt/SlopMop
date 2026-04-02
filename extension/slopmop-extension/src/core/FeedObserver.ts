@@ -1,7 +1,13 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
-import { isTextLanguageSupported, getLanguageSupportInfo, buildUnsupportedBadge } from "@src/utils/languageSupport";
+import {
+    expandUserDetectionLanguages,
+    formatDetectionLanguagesForUi,
+    getLanguageSupportInfo,
+    getLanguageUnsupportedCopy,
+    isTextLanguageSupported,
+} from "@src/utils/languageSupport";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -270,8 +276,9 @@ export class FeedObserver {
 
         // manual mode: if language unsupported AND post is text-only, show badge only (no Detect Now button).
         // IMAGE and MIXED posts can still be analyzed via image detection.
-        if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain)) {
-            const langInfo = getLanguageSupportInfo(extracted.text.plain);
+        const enabledIso = expandUserDetectionLanguages(this.settings.detectionLanguages);
+        if (extracted.contentType === 'TEXT' && !isTextLanguageSupported(extracted.text.plain, enabledIso)) {
+            const langInfo = getLanguageSupportInfo(extracted.text.plain, enabledIso);
             this.overlay.renderPending(
                 extracted.postId,
                 hostNode,
@@ -279,11 +286,26 @@ export class FeedObserver {
                 undefined,
                 textContainer,
             );
-            this.overlay.renderError(extracted.postId, buildUnsupportedBadge(langInfo));
+            const copy = getLanguageUnsupportedCopy(
+                langInfo,
+                formatDetectionLanguagesForUi(this.settings.detectionLanguages),
+                this.settings.detectionLanguages,
+            );
+            this.overlay.renderLanguageUnsupported(extracted.postId, {
+                simpleTitle: copy.hoverSimple,
+                tooltipTitle: copy.hoverTooltipTitle,
+                tooltipBody: copy.hoverTooltipBody,
+            });
             return;
         }
 
-        // manual mode: render Detect Now button and wait for user click.
+        // manual mode: Fact check (optional) + Detect Now; gated by settings.factCheck.
+        const onFactCheck =
+            this.settings.factCheck && extracted.text.plain.trim().length > 0
+                ? () => {
+                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain);
+                  }
+                : undefined;
         this.overlay.renderPending(
             extracted.postId,
             hostNode,
@@ -292,6 +314,7 @@ export class FeedObserver {
                 this.dispatchAnalyze(extracted);
             },
             textContainer,
+            onFactCheck,
         );
     }
 

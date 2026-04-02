@@ -1,6 +1,6 @@
 # SlopMop
 
-Realtime social media AI-detection browser extension
+Browser extension for detecting AI-use in social media feeds.
 
 ## Models
 
@@ -34,7 +34,7 @@ AI-generated image detection models by Lukas Schneider. Used under Apache-2.0 li
 
 ### Browser Extension
 
-The extension is located in `extension/slopmop-extension/`.
+The extension is located in `extension/slopmop-extension/`. This project used [this template](https://github.com/JohnBra/vite-web-extension) for the extension.
 
 ```bash
 cd extension/slopmop-extension

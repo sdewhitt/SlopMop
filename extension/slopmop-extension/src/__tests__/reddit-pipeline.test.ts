@@ -477,6 +477,7 @@ describe('Reddit extraction pipeline', () => {
       'This is a clear top-level English comment.',
       expect.any(Function),
       expect.any(HTMLElement),
+      expect.any(Function),
     );
     expect(renderPending).toHaveBeenNthCalledWith(
       2,
@@ -485,6 +486,7 @@ describe('Reddit extraction pipeline', () => {
       'This is the second top-level English comment.',
       expect.any(Function),
       expect.any(HTMLElement),
+      expect.any(Function),
     );
   });
 

@@ -11,7 +11,7 @@ import {
   resetStats as firestoreResetStats,
   resetSettings as firestoreResetSettings,
 } from '../../lib/firestoreProxy';
-import { defaultUserSettings } from '../../utils/userSettings';
+import { defaultUserSettings, normalizeDetectionLanguages } from '../../utils/userSettings';
 import PopupHeader from './components/PopupHeader';
 import DetectionToggle from './components/DetectionToggle';
 import StatsGrid from './components/StatsGrid';
@@ -22,9 +22,12 @@ import DetectionSettings from './components/DetectionSettings';
 import PlatformSettings from './components/PlatformSettings';
 import DataSettings from './components/DataSettings';
 import SignInView from './components/SignInView';
+import OnboardingModal from './components/OnboardingModal';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 import HistoryPage from '../options/HistoryPage';
+import ThemeToggle from './components/ThemeToggle';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
+import type { FactCheckItem } from '@src/types/domain';
 
 type DetectResponse = {
   confidence?: number;
@@ -48,6 +51,9 @@ export default function Popup() {
   const [detectResponse, setDetectResponse] = useState<DetectResponse | null>(null);
   const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [factCheckItems, setFactCheckItems] = useState<FactCheckItem[] | null>(null);
+  const [factCheckError, setFactCheckError] = useState<string | null>(null);
 
   const mergeSettings = useCallback((raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -56,7 +62,11 @@ export default function Popup() {
       ...defaultSettings.platforms,
       ...(raw?.platforms ?? {}),
     },
+    detectionLanguages: normalizeDetectionLanguages(
+      raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
+    ),
   }), []);
+  const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
 
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
@@ -64,7 +74,8 @@ export default function Popup() {
       aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
       postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
     });
-  }, []);
+  }, [mergeSettings]);
+
 
   useEffect(() => {
     browser.storage.local
@@ -79,6 +90,8 @@ export default function Popup() {
         'lastDetection',
         'detectionResult',
         'lastDetectLanguageUnsupported',
+        'lastFactCheckResult',
+        'lastFactCheckError',
       ])
       .then((result) => {
         syncStatsFromStorage(result);
@@ -99,8 +112,33 @@ export default function Popup() {
         if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
         const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
         setLanguageUnsupported(unsupported?.message ?? null);
+
+        const fcRes = result.lastFactCheckResult as { items?: FactCheckItem[] } | undefined;
+        const fcErr = result.lastFactCheckError as { message?: string } | undefined;
+        if (fcErr && typeof fcErr.message === 'string' && fcErr.message) {
+          setFactCheckError(fcErr.message);
+          setFactCheckItems(null);
+        } else if (fcRes?.items && Array.isArray(fcRes.items)) {
+          setFactCheckItems(fcRes.items);
+          setFactCheckError(null);
+        } else {
+          setFactCheckItems(null);
+          setFactCheckError(null);
+        }
       });
   }, [mergeSettings, syncStatsFromStorage]);
+
+  // Per-account onboarding: show only once for each signed-in user (uid).
+  useEffect(() => {
+    if (!user) {
+      setShowOnboarding(false);
+      return;
+    }
+    browser.storage.local.get(['onboardingSeenByUser']).then((result) => {
+      const byUser = (result.onboardingSeenByUser ?? {}) as Record<string, boolean>;
+      setShowOnboarding(byUser[user.uid] !== true);
+    });
+  }, [user]);
   // ── Sync settings from Firestore when the user signs in ──────
   const loadSettings = useCallback(async () => {
     if (!user) return;
@@ -139,6 +177,8 @@ export default function Popup() {
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
+        factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
+        detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
       };
       setSettings(merged);
       setEnabled(merged.enabled);
@@ -182,8 +222,27 @@ export default function Popup() {
       if (unsupportedChange?.newValue != null) {
         const v = unsupportedChange.newValue as { message?: string };
         setLanguageUnsupported(v?.message ?? UNSUPPORTED_LANGUAGE_MESSAGE);
-      } else if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
+      } else       if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
         setLanguageUnsupported(null);
+      }
+
+      const fc = changes['lastFactCheckResult'];
+      if (fc?.newValue != null && typeof fc.newValue === 'object') {
+        const v = fc.newValue as { items?: FactCheckItem[] };
+        if (v.items && Array.isArray(v.items)) {
+          setFactCheckItems(v.items);
+          setFactCheckError(null);
+        }
+      } else if (fc?.newValue === null) {
+        setFactCheckItems(null);
+      }
+
+      const fe = changes['lastFactCheckError'];
+      if (fe?.newValue != null && typeof fe.newValue === 'object') {
+        const v = fe.newValue as { message?: string };
+        if (typeof v.message === 'string') setFactCheckError(v.message);
+      } else if (fe?.newValue === null) {
+        setFactCheckError(null);
       }
     };
 
@@ -236,9 +295,27 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, [mergeSettings]);
 
-  const isSupportedFeedSite =
-    typeof window !== 'undefined' &&
-    (window.location.hostname.includes('reddit.com') || window.location.hostname.includes('instagram.com'));
+  useEffect(() => {
+    const tabsApi = browser.tabs;
+    if (!tabsApi?.query) {
+      setIsSupportedFeedSite(false);
+      return;
+    }
+    const refreshFeedSite = () => {
+      tabsApi
+        .query({ active: true, lastFocusedWindow: true })
+        .then((tabs) => {
+          const url = tabs[0]?.url ?? '';
+          setIsSupportedFeedSite(
+            url.includes('reddit.com') || url.includes('instagram.com'),
+          );
+        })
+        .catch(() => setIsSupportedFeedSite(false));
+    };
+    refreshFeedSite();
+    tabsApi.onActivated?.addListener(refreshFeedSite);
+    return () => tabsApi.onActivated?.removeListener(refreshFeedSite);
+  }, []);
 
   const handleScanEntirePage = () => {
     browser.runtime.sendMessage({ type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {});
@@ -315,6 +392,7 @@ export default function Popup() {
       uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
+      detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);
     setEnabled(defaults.enabled);
@@ -326,15 +404,35 @@ export default function Popup() {
     }
   };
 
+  const dismissOnboarding = () => {
+    setShowOnboarding(false);
+    if (!user) return;
+    browser.storage.local.get(['onboardingSeenByUser']).then((result) => {
+      const byUser = (result.onboardingSeenByUser ?? {}) as Record<string, boolean>;
+      byUser[user.uid] = true;
+      browser.storage.local.set({ onboardingSeenByUser: byUser });
+    });
+  };
+
+  const onboardingModal = showOnboarding ? (
+    <OnboardingModal
+      onClose={dismissOnboarding}
+      onDontShowAgain={dismissOnboarding}
+      simpleMode={simpleMode}
+      accessibilityMode={settings.accessibilityMode}
+    />
+  ) : null;
+
   // ── Loading state ─────────────────────────────────────────────
   if (authLoading) {
     return (
       <div
-        className={`w-full bg-gray-900 text-white p-4 flex items-center justify-center min-h-[100px] ${
+        className={`w-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white p-4 flex items-center justify-center min-h-[100px] ${
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
-        <p className="text-xs text-gray-400">Loading…</p>
+        {onboardingModal}
+        <p className="text-xs text-gray-600 dark:text-gray-400">Loading…</p>
       </div>
     );
   }
@@ -354,10 +452,11 @@ export default function Popup() {
   if (view === 'settings') {
     return (
       <div
-        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
+        {onboardingModal}
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
         <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
@@ -379,10 +478,10 @@ export default function Popup() {
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
               Account
             </p>
-            <p className="text-[11px] text-gray-400 mb-2 truncate">{user.email}</p>
+            <p className="text-[11px] text-gray-600 dark:text-gray-400 mb-2 truncate">{user.email}</p>
             <button
               onClick={() => logOut()}
-              className="w-full py-2 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+              className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
             >
               Sign Out
             </button>
@@ -418,10 +517,11 @@ export default function Popup() {
   if (view === 'history') {
     return (
       <div
-        className={`w-full h-full bg-gray-900 text-white flex flex-col overflow-hidden ${
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
           simpleMode ? 'simple-mode' : ''
         } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
       >
+        {onboardingModal}
         <SettingsHeader title="History" onBack={() => setView('home')} />
         <div className="px-4 py-3 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
           <HistoryPage />
@@ -433,10 +533,11 @@ export default function Popup() {
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div
-      className={`w-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
+      className={`w-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
         simpleMode ? 'simple-mode' : ''
       } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
+      {onboardingModal}
       <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
@@ -447,7 +548,7 @@ export default function Popup() {
         <button
           type="button"
           onClick={handleScanEntirePage}
-          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-700 text-gray-200 hover:bg-gray-600 hover:text-white transition-colors cursor-pointer"
+          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white transition-colors cursor-pointer"
         >
           Scan Entire Page
         </button>
@@ -456,7 +557,7 @@ export default function Popup() {
       <DisclaimerBanner />
 
       {languageUnsupported != null && (
-        <div className="rounded-lg px-3 py-2 text-sm bg-amber-500/20 text-amber-200 border border-amber-500/50">
+        <div className="rounded-lg px-3 py-2 text-sm bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/50">
           {languageUnsupported}
         </div>
       )}
@@ -464,7 +565,7 @@ export default function Popup() {
 
       <button
         onClick={() => logOut()}
-        className="w-full py-2 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors cursor-pointer"
+        className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
       >
         Sign Out
       </button>
@@ -476,12 +577,50 @@ export default function Popup() {
               Source: {mediaSourceLabel}
             </p>
           )}
-          <p className="text-sm font-medium text-gray-200">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
           </p>
-          <p className="confidence-explanation mt-1.5 text-xs text-gray-400 leading-snug">
+          <p className="confidence-explanation mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-snug">
             {explanation}
           </p>
+        </section>
+      )}
+
+      {(factCheckItems != null || factCheckError) && (
+        <section className="mt-4 text-left border-t border-gray-200 dark:border-gray-700 pt-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500 mb-2">
+            Fact check (ClaimReview search)
+          </p>
+          {factCheckError && (
+            <p className="text-sm text-red-600 dark:text-red-400 mb-2">{factCheckError}</p>
+          )}
+          {factCheckItems != null && factCheckItems.length === 0 && !factCheckError && (
+            <p className="text-xs text-gray-600 dark:text-gray-400">
+              No indexed fact checks matched these excerpts.
+            </p>
+          )}
+          {factCheckItems != null &&
+            factCheckItems.map((it, i) => (
+              <div
+                key={`${it.url}-${i}`}
+                className="mb-3 rounded-lg border border-gray-200 dark:border-gray-600 p-2 bg-white dark:bg-gray-800/50"
+              >
+                <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{it.claim}</p>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  {[it.verdict, it.source].filter(Boolean).join(' · ')}
+                </p>
+                {it.url ? (
+                  <a
+                    href={it.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 dark:text-blue-400 underline mt-1 inline-block"
+                  >
+                    Open source article
+                  </a>
+                ) : null}
+              </div>
+            ))}
         </section>
       )}
     </div>
