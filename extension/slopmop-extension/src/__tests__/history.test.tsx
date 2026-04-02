@@ -174,8 +174,6 @@ describe('History Page UI', () => {
       success: true,
       data: [makeEntry({ postId: 'tab-test', url: 'https://reddit.com/r/test/comments/abc123' })],
     });
-    (browser.tabs.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
-
     render(<HistoryPage />);
 
     await waitFor(() => {
@@ -188,7 +186,8 @@ describe('History Page UI', () => {
       screen.getByRole('button', { name: /open original post in new tab/i }),
     );
 
-    expect(browser.tabs.create).toHaveBeenCalledWith({
+    expect(browser.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'SLOPMOP_OPEN_URL',
       url: 'https://reddit.com/r/test/comments/abc123',
     });
   });
