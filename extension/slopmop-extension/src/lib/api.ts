@@ -5,6 +5,14 @@
 
 import type { FactCheckItem, HighlightSpan } from '@src/types/domain';
 
+/** Extra attempts after the first try (1 + this = total attempts). */
+const DETECTION_MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const getBaseUrl = (): string => {
     const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
 

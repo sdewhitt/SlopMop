@@ -128,8 +128,8 @@ export class OverlayRenderer {
         surface.style.cursor = "pointer";
 
         if (isSimple) {
-            overlay.style.fontSize = this.getSimpleVerdictBadgeFontSize();
-            overlay.style.padding = this.getSimpleVerdictBadgePadding();
+            surface.style.fontSize = this.getSimpleVerdictBadgeFontSize();
+            surface.style.padding = this.getSimpleVerdictBadgePadding();
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
@@ -169,11 +169,11 @@ export class OverlayRenderer {
             tooltip = isSimple
                 ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
-            this.mountTooltipOnBody(overlay, tooltip);
+            this.mountTooltipOnBody(surface, tooltip);
         };
 
-        overlay.onmouseleave = () => {
-            this.dismissTooltipForOverlay(overlay);
+        surface.onmouseleave = () => {
+            this.dismissTooltipForOverlay(surface);
             tooltip = null;
         };
 
@@ -331,7 +331,7 @@ export class OverlayRenderer {
         const detectNowButton = document.createElement("button");
         detectNowButton.type = "button";
         detectNowButton.textContent = "Detect Now";
-        Object.assign(detectNowButton.style, this.getDetectNowButtonStyle(isSimple));
+        Object.assign(detectNowButton.style, this.getActionButtonStyle(hostNode, isSimple));
         detectNowButton.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -473,10 +473,10 @@ export class OverlayRenderer {
             this.setOverlayLayer(postId, true);
             const errorMessage = this.mapToErrorMessage.get(postId) || "Unknown error";
             tooltip = this.createErrorTooltip(errorMessage);
-            this.mountTooltipOnBody(overlay, tooltip);
+            this.mountTooltipOnBody(surface, tooltip);
         };
-        overlay.onmouseleave = () => {
-            this.dismissTooltipForOverlay(overlay);
+        surface.onmouseleave = () => {
+            this.dismissTooltipForOverlay(surface);
             tooltip = null;
         };
 
@@ -972,6 +972,8 @@ export class OverlayRenderer {
         tip.appendChild(body);
 
         return tip;
+    }
+
     /** True when the badge element is still in the document (virtualized lists may drop the host). */
     isBadgeDomAlive(postId: PostId): boolean {
         const el = this.mapToOverlay.get(postId);
