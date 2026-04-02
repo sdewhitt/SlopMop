@@ -17,12 +17,8 @@ const DEBUG_EXTRACTION = true;
 // get batched into a single scan instead of triggering one each
 const DEBOUNCE_MS = 200;
 // if analysis takes longer than this, we show a timeout badge to the user.
-<<<<<<< main
 // Remote ML APIs (e.g. Render) often need >15s after deploy or cold start.
 const ANALYZE_TIMEOUT_MS = 60_000;
-=======
-const ANALYZE_TIMEOUT_MS = 20_000;
->>>>>>> jack
 
 export class FeedObserver {
     // Orchestrator for the content script pipeline.
@@ -48,14 +44,11 @@ export class FeedObserver {
     private timedOutPostIds = new Set<string>();
     // stores extracted payloads so failed analyses can be retried from the badge.
     private postsById = new Map<string, NormalizedPostContent>();
-<<<<<<< main
     // tracks DOM hosts where an overlay has already been rendered.
     private renderedHosts = new WeakSet<Element>();
-=======
     /** x.com virtualizes tweet cells; scroll often mounts nodes without a mutation burst we observe. */
     private xScrollHandler: (() => void) | null = null;
     private xScrollRescanTimer: ReturnType<typeof setTimeout> | null = null;
->>>>>>> jack
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -250,37 +243,30 @@ export class FeedObserver {
         // so it can be retried on the next scan if the DOM updates
         if (!extracted) return;
 
-<<<<<<< main
         const textContainer =
             type === "post"
                 ? this.adapter.getTextNode(node)
                 : this.adapter.getCommentTextNode(node);
 
         // step 2: dedupe. Set.has() is O(1) lookup.
-        // most posts on a re-scan are ones we've already processed.
-        // In manual mode, still render Detect Now on newly encountered hosts
-        // (e.g. opening a modal for a post already seen in the grid).
-        if (this.seenPostIds.has(extracted.postId)) {
-            if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
-                this.renderManualEntry(extracted, node as HTMLElement, textContainer);
-                this.renderedHosts.add(node);
-            }
-            return;
-=======
-        // Virtualized feeds (X) recycle DOM nodes: the badge is removed but seenPostIds still
-        // blocks re-processing. If the overlay element is gone, allow a fresh badge (or reattach
-        // a cached verdict below). Optional chaining supports test mocks without these methods.
+        // Virtualized feeds (X) recycle DOM nodes: if the badge is gone, clear seen state and
+        // continue so we can reattach. Otherwise, in manual mode still render Detect Now on
+        // newly encountered hosts (e.g. opening a modal for a post already seen in the grid).
         if (this.seenPostIds.has(extracted.postId)) {
             const alive = this.overlay.isBadgeDomAlive?.(extracted.postId);
-            if (alive !== false) {
+            if (alive === false) {
+                this.seenPostIds.delete(extracted.postId);
+                this.overlay.forgetDisconnectedBadge?.(extracted.postId);
+                if (!this.overlay.getCachedDetectionResponse?.(extracted.postId)) {
+                    this.postsById.delete(extracted.postId);
+                }
+            } else {
+                if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
+                    this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+                    this.renderedHosts.add(node);
+                }
                 return;
             }
-            this.seenPostIds.delete(extracted.postId);
-            this.overlay.forgetDisconnectedBadge?.(extracted.postId);
-            if (!this.overlay.getCachedDetectionResponse?.(extracted.postId)) {
-                this.postsById.delete(extracted.postId);
-            }
->>>>>>> jack
         }
 
         if (!this.isEligible(extracted)) {
@@ -299,6 +285,7 @@ export class FeedObserver {
                 node as HTMLElement,
                 extracted.text.plain,
                 cachedResult,
+                textContainer,
             );
             if (DEBUG_EXTRACTION) {
                 console.log(`[FeedObserver] reattached cached verdict`, { postId: extracted.postId });

@@ -33,81 +33,69 @@ export interface DetectResponse {
     highlights?: HighlightSpan[];
 }
 
-<<<<<<< main
-/*
-* Sends text to backend API and returns detection result.
-* @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
-*/
+/**
+ * Single HTTP attempt to POST /detect.
+ * @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
+ */
+async function detectTextOnce(
+    baseUrl: string,
+    cleanedText: string,
+    includeSpans: boolean,
+): Promise<DetectResponse> {
+    const requestBody = {
+        text: cleanedText,
+    };
+
+    const detectUrl =
+        baseUrl +
+        '/detect?include_spans=' +
+        (includeSpans ? 'true' : 'false');
+
+    const response = await fetch(detectUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+    });
+
+    if (response.ok === false) {
+        let message: string = 'HTTP ' + response.status;
+
+        try {
+            const data = await response.json();
+            if (data !== null && data !== undefined) {
+                if (typeof data.detail === 'string') {
+                    message = data.detail;
+                }
+            }
+        } catch {
+            // response is not JSON, keep default message
+        }
+
+        throw new Error(message);
+    }
+
+    const result: DetectResponse = await response.json();
+    return result;
+}
+
+/**
+ * Sends text to backend API and returns detection result.
+ * On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.
+ * @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
+ */
 export async function detectText(
     text: string,
     includeSpans: boolean = true,
 ): Promise<DetectResponse> {
-const baseUrl: string = getBaseUrl();
-
-// remove extra spaces before sending to server
-const cleanedText: string = text.trim();
-
-=======
-async function detectTextOnce(baseUrl: string, cleanedText: string): Promise<DetectResponse> {
->>>>>>> jack
-const requestBody = {
-    text: cleanedText
-};
-
-const detectUrl =
-    baseUrl +
-    '/detect?include_spans=' +
-    (includeSpans ? 'true' : 'false');
-
-const response = await fetch(detectUrl, {
-    method: "POST",
-    headers: {
-    "Content-Type": "application/json"
-    },
-    body: JSON.stringify(requestBody)
-});
-
-// check if request succeeded (status 200–299)
-if (response.ok === false) {
-    // default error message if backend doesn't send one
-    let message: string = "HTTP " + response.status;
-
-    try {
-    // try reading JSON error from backend
-    const data = await response.json();
-
-    // checking step by step instead of optional chaining
-    if (data !== null && data !== undefined) {
-        if (typeof data.detail === "string") {
-        message = data.detail;
-        }
-    }
-    } catch (error) {
-    // when response is not JSON (server error page)
-    // we just keep the default message
-    }
-
-    throw new Error(message);
-}
-
-// parse successful response
-const result: DetectResponse = await response.json();
-
-return result;
-}
-
-/*
-* Sends text to backend API and returns detection result.
-* On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.
-*/
-export async function detectText(text: string): Promise<DetectResponse> {
     const baseUrl: string = getBaseUrl();
     const cleanedText: string = text.trim();
     let lastError: unknown;
     const maxAttempts = 1 + DETECTION_MAX_RETRIES;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            return await detectTextOnce(baseUrl, cleanedText);
+            return await detectTextOnce(baseUrl, cleanedText, includeSpans);
         } catch (e) {
             lastError = e;
             if (attempt < maxAttempts) {

@@ -6,6 +6,7 @@ import {
     getTooltipLanguageLine,
 } from "@src/utils/languageSupport";
 import {
+    applyRichDomHighlightSpans,
     buildHighlightedHtml,
     canApplyInnerHtmlHighlights,
     normalizePlainText,
@@ -25,15 +26,12 @@ export class OverlayRenderer {
     private mapToPostText = new Map<PostId, string>()
     // map each postId to latest error text so detailed mode can show it in tooltip.
     private mapToErrorMessage = new Map<PostId, string>()
-<<<<<<< main
     /** Post/comment body element used for in-post <mark> highlights (adapter text node). */
     private mapToTextBody = new Map<PostId, HTMLElement>()
     /** Saved innerHTML before highlights so we can restore on clear / re-render / toggle off. */
     private mapToOriginalBodyHtml = new Map<PostId, string>()
-=======
     /** Tear-down for tooltips mounted on `document.body` (fixed position). */
     private tooltipCleanupByOverlay = new WeakMap<HTMLElement, () => void>();
->>>>>>> jack
     private settings: DetectionSettings;
 
 
@@ -124,7 +122,7 @@ export class OverlayRenderer {
         overlay.onmouseenter = () => {
             if (tooltip) return;
             tooltip = isSimple
-                ? this.createSimpleTooltip(res)
+                ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
             this.mountTooltipOnBody(overlay, tooltip);
         };
@@ -183,24 +181,10 @@ export class OverlayRenderer {
         const detectNowButton = document.createElement("button");
         detectNowButton.type = "button";
         detectNowButton.textContent = "Detect Now";
-<<<<<<< main
-        Object.assign(detectNowButton.style, {
-            border: "none",
-            borderRadius: "4px",
-            padding: "6px 10px",
-            fontSize: isSimple ? "14px" : "12px",
-            fontWeight: "600",
-            color: "#fff",
-            backgroundColor: "#6b7280",
-            cursor: "pointer",
-        });
+        Object.assign(detectNowButton.style, this.getDetectNowButtonStyle(isSimple));
         detectNowButton.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();
-=======
-        Object.assign(detectNowButton.style, this.getDetectNowButtonStyle(isSimple));
-        detectNowButton.onclick = () => {
->>>>>>> jack
             this.showScanningState(overlay);
             onDetectNow();
         };
@@ -339,11 +323,8 @@ export class OverlayRenderer {
     clear(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
-<<<<<<< main
         this.restorePostBodyHtml(postId);
-=======
         this.dismissTooltipForOverlay(overlay);
->>>>>>> jack
         overlay.remove();
         this.mapToOverlay.delete(postId);
         this.mapToResponse.delete(postId);
@@ -368,14 +349,22 @@ export class OverlayRenderer {
         const plain = this.mapToPostText.get(postId) ?? "";
         const el = this.mapToTextBody.get(postId);
         if (!plain || !el) return;
-        if (!canApplyInnerHtmlHighlights(el)) return;
         if (normalizePlainText(el.innerText ?? "") !== plain) return;
 
         const usable = sanitizeHighlightSpans(spans, plain.length);
         if (usable.length === 0) return;
 
+        if (canApplyInnerHtmlHighlights(el)) {
+            this.mapToOriginalBodyHtml.set(postId, el.innerHTML);
+            el.innerHTML = buildHighlightedHtml(plain, usable);
+            return;
+        }
+
         this.mapToOriginalBodyHtml.set(postId, el.innerHTML);
-        el.innerHTML = buildHighlightedHtml(plain, usable);
+        if (applyRichDomHighlightSpans(el, plain, usable)) {
+            return;
+        }
+        this.mapToOriginalBodyHtml.delete(postId);
     }
 
     private findPostIdForOverlay(overlay: HTMLElement): PostId | null {
@@ -414,8 +403,14 @@ export class OverlayRenderer {
         hostNode: HTMLElement,
         plainText: string,
         res: DetectionResponse,
+        textContainer?: HTMLElement | null,
     ): void {
         this.mapToPostText.set(postId, plainText);
+        if (textContainer) {
+            this.mapToTextBody.set(postId, textContainer);
+        } else {
+            this.mapToTextBody.delete(postId);
+        }
         const overlay = document.createElement("div");
         hostNode.style.position = "relative";
         hostNode.appendChild(overlay);
@@ -433,7 +428,7 @@ export class OverlayRenderer {
         this.renderResult(postId, res);
     }
 
-    private createSimpleTooltip(res: DetectionResponse): HTMLElement {
+    private createSimpleTooltip(res: DetectionResponse, postText: string): HTMLElement {
         const verdictLabel: Record<DetectionResponse["verdict"], string> = {
             likely_ai: "Likely AI-generated",
             likely_human: "Likely human-written",
@@ -702,7 +697,9 @@ export class OverlayRenderer {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
             position: "absolute",
-            ...this.getTooltipPosition(),
+            bottom: "100%",
+            left: "0",
+            marginBottom: "4px",
             minWidth: "220px",
             maxWidth: "320px",
             padding: "12px",
