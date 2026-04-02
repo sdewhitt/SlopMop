@@ -86,7 +86,7 @@ else:
 
 text_detector = TextDetectors()
 if os.path.exists(TEXT_MODEL_WEIGHTS):
-    state = torch.load(TEXT_MODEL_WEIGHTS, map_location=text_detector.device)
+    state = torch.load(TEXT_MODEL_WEIGHTS, map_location=text_detector.device, weights_only=False)
     text_detector.model.load_state_dict(state, strict=True)
     text_detector.model.eval()
     print(f"Loaded text model weights from {TEXT_MODEL_WEIGHTS}")
