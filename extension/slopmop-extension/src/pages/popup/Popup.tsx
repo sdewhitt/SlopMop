@@ -33,8 +33,8 @@ type DetectResponse = {
   confidence?: number;
   explanation?: string;
   metadataComplete?: boolean;
-  detectionSource?: 'text' | 'image' | 'video';
-  imageResult?: { mediaType?: 'image' | 'video' };
+  detectionSource?: 'text' | 'image' | 'video' | 'gif';
+  imageResult?: { mediaType?: 'image' | 'video' | 'gif' };
   // Some backends may use alternative field names.
   confidenceScore?: number;
   confidence_score?: number;
@@ -307,7 +307,11 @@ export default function Popup() {
         .then((tabs) => {
           const url = tabs[0]?.url ?? '';
           setIsSupportedFeedSite(
-            url.includes('reddit.com') || url.includes('instagram.com'),
+            url.includes('reddit.com') ||
+              url.includes('instagram.com') ||
+              url.includes('linkedin.com') ||
+              url.includes('twitter.com') ||
+              url.includes('x.com'),
           );
         })
         .catch(() => setIsSupportedFeedSite(false));
@@ -392,6 +396,7 @@ export default function Popup() {
       uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
+      factCheck: defaultUserSettings.settings.factCheck,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);
@@ -509,6 +514,8 @@ export default function Popup() {
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
   const mediaSourceLabel = detectResponse?.detectionSource === 'video'
     ? 'Video'
+    : detectResponse?.detectionSource === 'gif'
+      ? 'GIF'
     : detectResponse?.detectionSource === 'image'
       ? 'Image'
       : null;

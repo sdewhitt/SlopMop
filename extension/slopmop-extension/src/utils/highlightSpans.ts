@@ -80,3 +80,135 @@ export function canApplyInnerHtmlHighlights(el: HTMLElement): boolean {
     }
     return true;
 }
+
+/** Same collapse rules as normalizePlainText but no final trim — prefix slices align with full normalization. */
+function normalizePlainTextNoTrim(raw: string): string {
+    if (!raw) return '';
+    let text = raw;
+    text = text.replace(/[ \t]+/g, ' ');
+    text = text.replace(/\n{2,}/g, '\n\n');
+    text = text.replace(/\n /g, '\n');
+    return text;
+}
+
+/**
+ * Smallest j in [0, raw.length] such that normalizePlainTextNoTrim(raw.slice(0, j)) === noTrim.slice(0, k).
+ * Used to map indices in the normalized (trimmed) plain string back to raw character offsets.
+ */
+function minJForNoTrimPrefix(raw: string, noTrim: string, k: number): number | null {
+    if (k <= 0) return 0;
+    if (k > noTrim.length) return null;
+    const target = noTrim.slice(0, k);
+    for (let j = 0; j <= raw.length; j++) {
+        if (normalizePlainTextNoTrim(raw.slice(0, j)) === target) return j;
+    }
+    return null;
+}
+
+type TextSeg = { node: Text; rawStart: number; rawEnd: number };
+
+/**
+ * Build a string from text nodes + `<br>` as `\n` (common LinkedIn / rich-inline layout).
+ * Must normalize to the same `plain` the API used.
+ */
+function collectTextNodesWithBr(root: Element): { raw: string; textSegments: TextSeg[] } {
+    const textSegments: TextSeg[] = [];
+    let raw = '';
+
+    const walk = (n: Node): void => {
+        if (n.nodeType === Node.TEXT_NODE) {
+            const t = n as Text;
+            const s = t.nodeValue ?? '';
+            const rs = raw.length;
+            raw += s;
+            textSegments.push({ node: t, rawStart: rs, rawEnd: raw.length });
+            return;
+        }
+        if (n.nodeType !== Node.ELEMENT_NODE) return;
+        const el = n as Element;
+        if (el.tagName === 'BR') {
+            raw += '\n';
+            return;
+        }
+        for (const c of n.childNodes) {
+            walk(c);
+        }
+    };
+    walk(root);
+    return { raw, textSegments };
+}
+
+type WrapOp = { rawEnd: number; node: Text; start: number; end: number };
+
+function mapPlainSpanToRawRange(
+    raw: string,
+    noTrim: string,
+    lead: number,
+    start: number,
+    end: number,
+): [number, number] | null {
+    const j0 = minJForNoTrimPrefix(raw, noTrim, lead + start);
+    const j1 = minJForNoTrimPrefix(raw, noTrim, lead + end);
+    if (j0 === null || j1 === null) return null;
+    return [j0, j1];
+}
+
+function buildWrapOpsForRawRange(
+    rawA: number,
+    rawB: number,
+    textSegments: TextSeg[],
+): WrapOp[] {
+    const ops: WrapOp[] = [];
+    for (const seg of textSegments) {
+        const lo = Math.max(seg.rawStart, rawA);
+        const hi = Math.min(seg.rawEnd, rawB);
+        if (lo >= hi) continue;
+        ops.push({
+            rawEnd: hi,
+            node: seg.node,
+            start: lo - seg.rawStart,
+            end: hi - seg.rawStart,
+        });
+    }
+    return ops;
+}
+
+/**
+ * Apply `<mark class="slopmop-highlight">` around API span ranges while preserving links and markup.
+ * Use when `canApplyInnerHtmlHighlights` is false (e.g. LinkedIn hashtags / mentions as `<a>`).
+ */
+export function applyRichDomHighlightSpans(root: HTMLElement, plain: string, spans: HighlightSpan[]): boolean {
+    const merged = sanitizeHighlightSpans(spans, plain.length);
+    if (merged.length === 0) return true;
+
+    if (normalizePlainText(root.innerText ?? '') !== plain) return false;
+
+    const { raw, textSegments } = collectTextNodesWithBr(root);
+    const noTrim = normalizePlainTextNoTrim(raw);
+    if (noTrim.trim() !== plain) return false;
+    if (normalizePlainText(raw) !== plain) return false;
+
+    const lead = noTrim.length - noTrim.trimStart().length;
+
+    const allOps: WrapOp[] = [];
+    for (const sp of merged) {
+        const mapped = mapPlainSpanToRawRange(raw, noTrim, lead, sp.start, sp.end);
+        if (!mapped) return false;
+        const [rawA, rawB] = mapped;
+        if (rawA >= rawB) continue;
+        allOps.push(...buildWrapOpsForRawRange(rawA, rawB, textSegments));
+    }
+    if (allOps.length === 0) return true;
+
+    allOps.sort((a, b) => b.rawEnd - a.rawEnd);
+
+    for (const op of allOps) {
+        const range = document.createRange();
+        range.setStart(op.node, op.start);
+        range.setEnd(op.node, op.end);
+        const mark = document.createElement('mark');
+        mark.className = 'slopmop-highlight';
+        range.surroundContents(mark);
+    }
+    return true;
+}

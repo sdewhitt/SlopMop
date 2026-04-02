@@ -50,6 +50,7 @@ vi.mock('webextension-polyfill', () => ({
   },
 }));
 
+import browser from 'webextension-polyfill';
 import {
   pruneHistory,
   getHistory,
@@ -169,7 +170,6 @@ describe('History Page UI', () => {
   });
 
   it('clicking "View original post" opens the original post in a new tab', async () => {
-    const browser = (await import('webextension-polyfill')).default;
     (browser.runtime.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: [makeEntry({ postId: 'tab-test', url: 'https://reddit.com/r/test/comments/abc123' })],

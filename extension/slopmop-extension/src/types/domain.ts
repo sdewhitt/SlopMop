@@ -2,7 +2,7 @@
 
 export type PostId = string; 
 export type SiteId = string; // website base URL like reddit.com
-export type MediaType = "image" | "video";
+export type MediaType = "image" | "video" | "gif";
 export enum ContentType {
     TEXT = "TEXT",
     IMAGE = "IMAGE",

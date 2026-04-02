@@ -40,12 +40,18 @@ export class FeedObserver {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
     // one timeout timer per post while waiting for background detection result.
     private pendingAnalyzeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // tracks postIds that currently have an in-flight analyze request.
+    // used to ignore stale/duplicate errors that can arrive after a successful result.
+    private inFlightAnalyzePostIds = new Set<string>();
     // tracks posts that already timed out so late results do not overwrite timeout badge.
     private timedOutPostIds = new Set<string>();
     // stores extracted payloads so failed analyses can be retried from the badge.
     private postsById = new Map<string, NormalizedPostContent>();
     // tracks DOM hosts where an overlay has already been rendered.
     private renderedHosts = new WeakSet<Element>();
+    /** x.com virtualizes tweet cells; scroll often mounts nodes without a mutation burst we observe. */
+    private xScrollHandler: (() => void) | null = null;
+    private xScrollRescanTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -79,6 +85,19 @@ export class FeedObserver {
             subtree: true,
         });
 
+        if (this.adapter.getSiteId() === "x.com") {
+            this.xScrollHandler = () => {
+                if (this.xScrollRescanTimer !== null) {
+                    clearTimeout(this.xScrollRescanTimer);
+                }
+                this.xScrollRescanTimer = setTimeout(() => {
+                    this.xScrollRescanTimer = null;
+                    this.scanAndProcess();
+                }, 120);
+            };
+            window.addEventListener("scroll", this.xScrollHandler, { passive: true, capture: true });
+        }
+
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] started, initial scan complete, observer active`);
         }
@@ -103,9 +122,19 @@ export class FeedObserver {
             clearTimeout(timer);
         }
         this.pendingAnalyzeTimers.clear();
+        this.inFlightAnalyzePostIds.clear();
         this.timedOutPostIds.clear();
         this.postsById.clear();
         this.renderedHosts = new WeakSet<Element>();
+
+        if (this.xScrollHandler) {
+            window.removeEventListener("scroll", this.xScrollHandler, { capture: true });
+            this.xScrollHandler = null;
+        }
+        if (this.xScrollRescanTimer !== null) {
+            clearTimeout(this.xScrollRescanTimer);
+            this.xScrollRescanTimer = null;
+        }
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
@@ -162,6 +191,20 @@ export class FeedObserver {
         this.scanAndProcess();
     }
 
+    /**
+     * X and similar SPAs often mount the thread column after `pushState`; the first scan can see
+     * an empty or stale tree. Run additional full scans (without clearing seen ids) so late-mounted
+     * tweets and replies are picked up without waiting for scroll.
+     */
+    schedulePostNavigationScans(): void {
+        const delaysMs = [80, 250, 700, 1600, 3200];
+        for (const ms of delaysMs) {
+            setTimeout(() => {
+                this.scanAndProcess();
+            }, ms);
+        }
+    }
+
     private scanAndProcess(): void {
         // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
@@ -172,15 +215,22 @@ export class FeedObserver {
         let numComments = 0;
         // Scan for comments
         if (this.settings.scanComments !== "off") {
-            // TODO: add limit to settings and read limit from settings
-            const maxComments = 20;
+            // Instagram comment threads often keep many comments visible while scrolling.
+            // Cap non-Instagram sites to preserve existing behavior, but process all visible
+            // Instagram comments so Detect Now badges continue appearing on scroll.
+            const maxComments = this.adapter.getSiteId() === "instagram.com"
+                ? Number.MAX_SAFE_INTEGER
+                : 50;
             const rawCommentNodes = this.adapter.findVisibleCommentNodes(
                 document,
                 this.settings.scanComments === "auto_top_n" ? Number.MAX_SAFE_INTEGER : maxComments,
             );
-            const commentNodes = this.settings.scanComments === "auto_top_n"
+            const shouldFilterTopLevel =
+                this.settings.scanComments === "auto_top_n" &&
+                this.adapter.getSiteId() !== "instagram.com";
+            const commentNodes = shouldFilterTopLevel
                 ? this.filterTopLevelCommentNodes(rawCommentNodes).slice(0, maxComments)
-                : rawCommentNodes;
+                : rawCommentNodes.slice(0, maxComments);
             numComments = commentNodes.length;
             for (const node of commentNodes) {
                 this.handleCandidatePost(node, "comment");
@@ -210,18 +260,27 @@ export class FeedObserver {
                 : this.adapter.getCommentTextNode(node);
 
         // step 2: dedupe. Set.has() is O(1) lookup.
-        // most posts on a re-scan are ones we've already processed.
-        // In manual mode, still render Detect Now on newly encountered hosts
-        // (e.g. opening a modal for a post already seen in the grid).
+        // Virtualized feeds (X) recycle DOM nodes: if the badge is gone, clear seen state and
+        // continue so we can reattach. Otherwise, in manual mode still render Detect Now on
+        // newly encountered hosts (e.g. opening a modal for a post already seen in the grid).
         if (this.seenPostIds.has(extracted.postId)) {
-            if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
-                this.renderManualEntry(extracted, node as HTMLElement, textContainer);
-                this.renderedHosts.add(node);
+            const alive = this.overlay.isBadgeDomAlive?.(extracted.postId);
+            if (alive === false) {
+                this.seenPostIds.delete(extracted.postId);
+                this.overlay.forgetDisconnectedBadge?.(extracted.postId);
+                if (!this.overlay.getCachedDetectionResponse?.(extracted.postId)) {
+                    this.postsById.delete(extracted.postId);
+                }
+            } else {
+                if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
+                    this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+                    this.renderedHosts.add(node);
+                }
+              
+                return;
             }
-            return;
         }
 
-        // step 3: eligibility. check user settings
         if (!this.isEligible(extracted)) {
             if (DEBUG_EXTRACTION) {
                 console.log(`[FeedObserver] skipped ineligible post ${extracted.postId}`);
@@ -229,8 +288,23 @@ export class FeedObserver {
             return;
         }
 
-        // only mark as seen AFTER extraction succeeded + passed eligibility.
-        // if we marked it earlier and extraction failed, we'd never retry
+        const cachedResult = this.overlay.getCachedDetectionResponse?.(extracted.postId);
+        if (cachedResult) {
+            this.seenPostIds.add(extracted.postId);
+            this.postsById.set(extracted.postId, extracted);
+            this.overlay.mountResultBadgeOnHost?.(
+                extracted.postId,
+                node as HTMLElement,
+                extracted.text.plain,
+                cachedResult,
+                textContainer,
+            );
+            if (DEBUG_EXTRACTION) {
+                console.log(`[FeedObserver] reattached cached verdict`, { postId: extracted.postId });
+            }
+            return;
+        }
+
         this.seenPostIds.add(extracted.postId);
         this.postsById.set(extracted.postId, extracted);
 
@@ -315,6 +389,7 @@ export class FeedObserver {
     private dispatchAnalyze(post: NormalizedPostContent): void {
         // start timeout window before sending message.
         // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
+        this.inFlightAnalyzePostIds.add(post.postId);
         this.startAnalyzeTimeout(post.postId);
         this.bus.sendAnalyze(post);
     }
@@ -346,8 +421,13 @@ export class FeedObserver {
     }
 
     // returns true when the caller should render result/error for this post.
-    // returns false if this post already timed out and we want timeout to stay visible.
-    markAnalyzeCompleted(postId: string): boolean {
+    // returns false for stale errors (no active request) or for timed out posts.
+    markAnalyzeCompleted(postId: string, outcome: "result" | "error" = "result"): boolean {
+        const wasInFlight = this.inFlightAnalyzePostIds.has(postId);
+        if (outcome === "error" && !wasInFlight) {
+            return false;
+        }
+        this.inFlightAnalyzePostIds.delete(postId);
         this.clearAnalyzeTimeout(postId);
         if (this.timedOutPostIds.has(postId)) {
             return false;

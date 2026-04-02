@@ -142,6 +142,32 @@ describe('Instagram extraction pipeline', () => {
     });
   });
 
+  it('extracts media-only gif comments as image content', () => {
+    const extractor = new PostExtractor();
+    const adapter = new InstagramAdapter();
+
+    const article = document.createElement('article');
+    const postLink = document.createElement('a');
+    postLink.href = '/p/CxGifComment01/';
+    article.appendChild(postLink);
+
+    const li = document.createElement('li');
+    const gif = document.createElement('img');
+    gif.src = 'https://media.tenor.com/some-gif-id.gif';
+    Object.defineProperty(gif, 'naturalWidth', { value: 160 });
+    Object.defineProperty(gif, 'naturalHeight', { value: 120 });
+    li.appendChild(gif);
+    article.appendChild(li);
+    document.body.appendChild(article);
+
+    const extracted = extractor.extract(li, adapter, 'comment');
+    expect(extracted).not.toBeNull();
+    expect(extracted?.contentType).toBe(ContentType.IMAGE);
+    expect(extracted?.images).toHaveLength(1);
+    expect(extracted?.images[0].srcUrl).toContain('tenor.com');
+    expect(extracted?.postId).toContain('ig-comment-');
+  });
+
   it('extracts image-only Instagram post when there is no caption', () => {
     const extractor = new PostExtractor();
     const postNode = document.createElement('article');
@@ -408,6 +434,173 @@ describe('Instagram extraction pipeline', () => {
     expect(sendAnalyze.mock.calls[1][0]).toEqual(originalPayload);
   });
 
+  it('does not collapse instagram visible comments to a single top-level comment in auto mode', () => {
+    const extractor = new PostExtractor();
+
+    const commentOne = document.createElement('li');
+    commentOne.id = 'ig-comment-1';
+    const textOne = document.createElement('span');
+    textOne.setAttribute('dir', 'auto');
+    setInnerText(textOne, 'First visible comment.');
+    commentOne.appendChild(textOne);
+
+    const commentTwo = document.createElement('li');
+    commentTwo.id = 'ig-comment-2';
+    const textTwo = document.createElement('span');
+    textTwo.setAttribute('dir', 'auto');
+    setInnerText(textTwo, 'Second visible comment.');
+    commentTwo.appendChild(textTwo);
+
+    const commentThree = document.createElement('li');
+    commentThree.id = 'ig-comment-3';
+    const textThree = document.createElement('span');
+    textThree.setAttribute('dir', 'auto');
+    setInnerText(textThree, 'Third visible comment.');
+    commentThree.appendChild(textThree);
+
+    const renderPending = vi.fn();
+    const renderError = vi.fn();
+    const observer = new FeedObserver(
+      createAdapter({
+        getSiteId: () => 'instagram.com',
+        findPostNodes: () => [],
+        findVisibleCommentNodes: () => [commentOne, commentTwo, commentThree],
+        getCommentId: (node) => node.id || null,
+        getCommentTextNode: (node) => node.querySelector('span'),
+        getCommentPermalink: () => 'https://www.instagram.com/p/AutoCommentPost01/',
+      }),
+      extractor,
+      { renderPending, renderError } as unknown as OverlayRenderer,
+      { sendAnalyze: vi.fn() } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: false,
+        scanComments: 'auto_top_n',
+      },
+    );
+
+    (observer as any).scanAndProcess();
+
+    expect(renderPending).toHaveBeenCalledTimes(3);
+    expect(renderPending).toHaveBeenNthCalledWith(
+      1,
+      'ig-comment-1',
+      commentOne,
+      'First visible comment.',
+      expect.any(Function),
+      expect.any(HTMLElement),
+      expect.any(Function),
+    );
+    expect(renderPending).toHaveBeenNthCalledWith(
+      2,
+      'ig-comment-2',
+      commentTwo,
+      'Second visible comment.',
+      expect.any(Function),
+      expect.any(HTMLElement),
+      expect.any(Function),
+    );
+    expect(renderPending).toHaveBeenNthCalledWith(
+      3,
+      'ig-comment-3',
+      commentThree,
+      'Third visible comment.',
+      expect.any(Function),
+      expect.any(HTMLElement),
+      expect.any(Function),
+    );
+  });
+
+  it('processes all visible instagram comments beyond 20 while scrolling', () => {
+    const extractor = new PostExtractor();
+    const comments: HTMLElement[] = [];
+
+    for (let i = 0; i < 25; i++) {
+      const li = document.createElement('li');
+      li.id = `ig-visible-${i}`;
+      const span = document.createElement('span');
+      span.setAttribute('dir', 'auto');
+      setInnerText(span, `Visible comment ${i}`);
+      li.appendChild(span);
+      comments.push(li);
+    }
+
+    const renderPending = vi.fn();
+    const renderError = vi.fn();
+    const observer = new FeedObserver(
+      createAdapter({
+        getSiteId: () => 'instagram.com',
+        findPostNodes: () => [],
+        findVisibleCommentNodes: () => comments,
+        getCommentId: (node) => node.id || null,
+        getCommentTextNode: (node) => node.querySelector('span'),
+        getCommentPermalink: () => 'https://www.instagram.com/p/AllVisibleComments01/',
+      }),
+      extractor,
+      { renderPending, renderError } as unknown as OverlayRenderer,
+      { sendAnalyze: vi.fn() } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: false,
+        scanComments: 'user_triggered',
+      },
+    );
+
+    (observer as any).scanAndProcess();
+
+    expect(renderPending).toHaveBeenCalledTimes(25);
+  });
+
+  it('does not render duplicate controls when comment wrappers share the same comment id', () => {
+    const extractor = new PostExtractor();
+
+    const topComment = document.createElement('li');
+    topComment.id = 'ig-comment-dup';
+    const topText = document.createElement('span');
+    topText.setAttribute('dir', 'auto');
+    setInnerText(topText, 'Top comment content');
+    topComment.appendChild(topText);
+
+    const wrapperDuplicate = document.createElement('div');
+    wrapperDuplicate.id = 'ig-comment-dup';
+    const wrapperText = document.createElement('span');
+    wrapperText.setAttribute('dir', 'auto');
+    setInnerText(wrapperText, 'Top comment content');
+    wrapperDuplicate.appendChild(wrapperText);
+
+    const renderPending = vi.fn();
+    const observer = new FeedObserver(
+      createAdapter({
+        getSiteId: () => 'instagram.com',
+        findPostNodes: () => [],
+        findVisibleCommentNodes: () => [topComment, wrapperDuplicate],
+        getCommentId: (node) => node.id || null,
+        getCommentTextNode: (node) => node.querySelector('span'),
+        getCommentPermalink: () => 'https://www.instagram.com/p/DupCommentPost01/',
+      }),
+      extractor,
+      { renderPending, renderError: vi.fn() } as unknown as OverlayRenderer,
+      { sendAnalyze: vi.fn() } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: false,
+        scanComments: 'auto_top_n',
+      },
+    );
+
+    (observer as any).scanAndProcess();
+
+    expect(renderPending).toHaveBeenCalledTimes(1);
+    expect(renderPending).toHaveBeenCalledWith(
+      'ig-comment-dup',
+      topComment,
+      'Top comment content',
+      expect.any(Function),
+      expect.any(HTMLElement),
+      expect.any(Function),
+    );
+  });
+
   it('extracts top 25 comment nodes at depth 1 via findVisibleCommentNodes', () => {
     const adapter = new InstagramAdapter();
     // Comments must live inside a feed post article (one with a /p/ link)
@@ -463,6 +656,168 @@ describe('Instagram extraction pipeline', () => {
 
     const comments = adapter.findVisibleCommentNodes(document, 25);
     expect(comments).toHaveLength(0);
+  });
+
+  it('ignores story tray items when feed posts are also present', () => {
+    const adapter = new InstagramAdapter();
+
+    // Stories tray near top of homepage
+    const storiesUl = document.createElement('ul');
+    storiesUl.setAttribute('role', 'list');
+    const storyLi = document.createElement('li');
+    storyLi.setAttribute('role', 'listitem');
+    const storyLink = document.createElement('a');
+    storyLink.href = '/stories/topuser/';
+    const storySpan = document.createElement('span');
+    storySpan.setAttribute('dir', 'auto');
+    setInnerText(storySpan, 'topuser');
+    storyLink.appendChild(storySpan);
+    storyLi.appendChild(storyLink);
+    Object.defineProperty(storyLi, 'getBoundingClientRect', {
+      value: () => ({ width: 66, height: 86, top: 10, bottom: 96, left: 0, right: 66 }),
+    });
+    storiesUl.appendChild(storyLi);
+    document.body.appendChild(storiesUl);
+
+    // Real feed post with one visible comment
+    const article = document.createElement('article');
+    const postLink = document.createElement('a');
+    postLink.href = '/p/FeedWithComments01/';
+    article.appendChild(postLink);
+
+    const commentsUl = document.createElement('ul');
+    commentsUl.setAttribute('role', 'list');
+    const commentLi = document.createElement('li');
+    commentLi.setAttribute('role', 'listitem');
+    const commentSpan = document.createElement('span');
+    commentSpan.setAttribute('dir', 'auto');
+    setInnerText(commentSpan, 'Real comment under feed post');
+    commentLi.appendChild(commentSpan);
+    Object.defineProperty(commentLi, 'getBoundingClientRect', {
+      value: () => ({ width: 420, height: 48, top: 120, bottom: 168, left: 0, right: 420 }),
+    });
+    commentsUl.appendChild(commentLi);
+    article.appendChild(commentsUl);
+    document.body.appendChild(article);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(commentLi);
+  });
+
+  it('does not treat View replies/Hide replies rows as comments', () => {
+    const adapter = new InstagramAdapter();
+
+    const article = document.createElement('article');
+    const postLink = document.createElement('a');
+    postLink.href = '/p/ReplyToggle01/';
+    article.appendChild(postLink);
+
+    const ul = document.createElement('ul');
+
+    const viewRepliesLi = document.createElement('li');
+    const viewRepliesSpan = document.createElement('span');
+    setInnerText(viewRepliesSpan, 'View replies');
+    viewRepliesLi.appendChild(viewRepliesSpan);
+    Object.defineProperty(viewRepliesLi, 'getBoundingClientRect', {
+      value: () => ({ width: 250, height: 30, top: 20, bottom: 50, left: 0, right: 250 }),
+    });
+    ul.appendChild(viewRepliesLi);
+
+    const hideRepliesLi = document.createElement('li');
+    const hideRepliesSpan = document.createElement('span');
+    setInnerText(hideRepliesSpan, 'Hide replies');
+    hideRepliesLi.appendChild(hideRepliesSpan);
+    Object.defineProperty(hideRepliesLi, 'getBoundingClientRect', {
+      value: () => ({ width: 250, height: 30, top: 60, bottom: 90, left: 0, right: 250 }),
+    });
+    ul.appendChild(hideRepliesLi);
+
+    const actualCommentLi = document.createElement('li');
+    const actualCommentSpan = document.createElement('span');
+    actualCommentSpan.setAttribute('dir', 'auto');
+    setInnerText(actualCommentSpan, 'This is an actual comment.');
+    actualCommentLi.appendChild(actualCommentSpan);
+    Object.defineProperty(actualCommentLi, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 40, top: 100, bottom: 140, left: 0, right: 400 }),
+    });
+    ul.appendChild(actualCommentLi);
+
+    article.appendChild(ul);
+    document.body.appendChild(article);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(actualCommentLi);
+  });
+
+  it('finds visible comments inside an instagram post dialog', () => {
+    const adapter = new InstagramAdapter();
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+
+    const permalink = document.createElement('a');
+    permalink.href = '/p/DialogPost01/';
+    dialog.appendChild(permalink);
+
+    const list = document.createElement('ul');
+    list.setAttribute('role', 'list');
+    const comment = document.createElement('li');
+    comment.setAttribute('role', 'listitem');
+    const span = document.createElement('span');
+    span.setAttribute('dir', 'auto');
+    setInnerText(span, 'Dialog comment should be detected');
+    comment.appendChild(span);
+    Object.defineProperty(comment, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 40, top: 10, bottom: 50, left: 0, right: 400 }),
+    });
+    list.appendChild(comment);
+    dialog.appendChild(list);
+    document.body.appendChild(dialog);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(comment);
+  });
+
+  it('creates distinct comment ids for visible comments with identical text', () => {
+    const adapter = new InstagramAdapter();
+
+    const article = document.createElement('article');
+    const postLink = document.createElement('a');
+    postLink.href = '/p/SameTextPost01/';
+    article.appendChild(postLink);
+
+    const ul = document.createElement('ul');
+    for (let i = 0; i < 2; i++) {
+      const li = document.createElement('li');
+      const author = document.createElement('a');
+      author.href = i === 0 ? '/author_one/' : '/author_two/';
+      li.appendChild(author);
+
+      const span = document.createElement('span');
+      span.setAttribute('dir', 'auto');
+      setInnerText(span, 'Same text');
+      li.appendChild(span);
+
+      Object.defineProperty(li, 'getBoundingClientRect', {
+        value: () => ({ width: 380, height: 36, top: 8, bottom: 44, left: 0, right: 380 }),
+      });
+      ul.appendChild(li);
+    }
+
+    article.appendChild(ul);
+    document.body.appendChild(article);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(2);
+
+    const firstId = adapter.getCommentId(comments[0]);
+    const secondId = adapter.getCommentId(comments[1]);
+    expect(firstId).toBeTruthy();
+    expect(secondId).toBeTruthy();
+    expect(firstId).not.toBe(secondId);
   });
 
   it('finds explore-page grid items that are not wrapped in <article>', () => {
@@ -700,7 +1055,7 @@ describe('Instagram extraction pipeline', () => {
     expect(found).not.toContain(article);
   });
 
-  it('does not scan modal dialog comments as feed comments', () => {
+  it('scans modal dialog comments when they are visible', () => {
     const adapter = new InstagramAdapter();
 
     const dialog = document.createElement('div');
@@ -725,7 +1080,8 @@ describe('Instagram extraction pipeline', () => {
     document.body.appendChild(dialog);
 
     const comments = adapter.findVisibleCommentNodes(document, 25);
-    expect(comments).toHaveLength(0);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(li);
   });
 
   it('extracts caption text from modal dialog scope when media node has only blob video', () => {
