@@ -109,26 +109,26 @@ WIKI_USER_AGENT = "SlopMop/1.0 (educational; +https://github.com/SlopMop/SlopMop
 
 CLASSIFIER_PROMPT = """Analyze the user's text (e.g. social media post).
 
-Return ONLY valid JSON with this exact shape:
-{
-  "classification": "opinion" | "factual",
-  "reason": "one short sentence; if opinion, why it is opinion/subjective/not a verifiable fact",
-  "claims": [
-    {
-      "query_text": "short verbatim excerpt from the user's text supporting this claim",
-      "claim": "one concise factual assertion that could be verified (who/what/when/where/number)",
-      "wikipedia_query": "REQUIRED for factual claims: 2–8 words naming the ONE encyclopedia topic that best matches the SUBJECT of the claim (person, law, war, organization, place, treaty, product, species). Like a plausible article title fragment, NOT the full claim sentence and NOT generic nouns alone (avoid bare 'company', 'study', 'government'). If there is no suitable article topic, use an empty string.",
-      "assessment": "one sentence: plausibility or what would need checking (you cannot browse the web)"
-    }
-  ]
-}
+Respond with ONE JSON object only. No markdown fences, no commentary before or after the JSON.
+
+Required keys:
+- "classification": string, exactly "opinion" or "factual"
+- "reason": one short sentence (if opinion, why it is not a verifiable fact)
+- "claims": JSON array (max """ + str(MAX_CLAIMS) + """ items). Use [] for opinion.
+
+Each item in "claims" must be an object with these string keys:
+- "query_text": short verbatim excerpt from the user's text for this claim
+- "claim": one concise factual assertion (who/what/when/where/number)
+- "wikipedia_query": 2-8 words naming the Wikipedia topic for the SUBJECT (person, law, event, org, place). Title-like fragment, not the full claim. Use "" if there is no good topic. Avoid generic words alone.
+- "assessment": one sentence on plausibility or what would need checking
 
 Rules:
-- Use "opinion" when the text is mainly subjective views, questions without factual assertions, jokes, greetings, or rhetoric with **no** specific checkable factual content.
-- Use "factual" only if there is at least one **specific** claim (dates, statistics, "X happened", medical/legal assertions, quoted events). Otherwise use "opinion" and set "claims" to [].
-- For each factual claim, wikipedia_query must target the *specific* entity or event the claim is mainly *about*, so a reader could confirm or contextualize the claim from that article—not any random article that might mention a word from the claim.
-- At most """ + str(MAX_CLAIMS) + """ entries in "claims".
-- Do not include markdown or extra keys."""
+- "opinion" for mainly subjective views, jokes, greetings, or no specific checkable fact.
+- "factual" only with at least one specific checkable claim; else "opinion" and claims [].
+- Do not output keys other than classification, reason, claims, and the four keys inside each claim object.
+
+Valid minimal example (structure only):
+{"classification":"factual","reason":"Contains a dated event.","claims":[{"query_text":"They said it in 2020.","claim":"X happened in 2020.","wikipedia_query":"Event Name","assessment":"Timeline should be verified."}]}"""
 
 
 def _strip_code_fence(s: str) -> str:
@@ -137,6 +137,51 @@ def _strip_code_fence(s: str) -> str:
         s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
         s = re.sub(r"\s*```\s*$", "", s)
     return s.strip()
+
+
+def _parse_classifier_json_blob(raw: str) -> dict[str, Any] | None:
+    """Parse Gemini output: strict JSON, then optionally a {...} substring."""
+    s = _strip_code_fence((raw or "").strip())
+    if not s:
+        return None
+    try:
+        out = json.loads(s)
+        return out if isinstance(out, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = s.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    q = '"'
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == q:
+                in_str = False
+            continue
+        if ch in ('"', "'"):
+            in_str = True
+            q = ch
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                chunk = s[start : i + 1]
+                try:
+                    out = json.loads(chunk)
+                    return out if isinstance(out, dict) else None
+                except json.JSONDecodeError:
+                    return None
+    return None
 
 
 def _wiki_article_url(title: str) -> str:
@@ -352,6 +397,7 @@ async def wikipedia_best_link_for_claim(
 
 
 def _extract_gemini_text(data: dict[str, Any]) -> str | None:
+    """Concatenate all text parts (Gemini may split long JSON across parts)."""
     try:
         cands = data.get("candidates")
         if not isinstance(cands, list) or not cands:
@@ -363,10 +409,15 @@ def _extract_gemini_text(data: dict[str, Any]) -> str | None:
         if not isinstance(content, dict):
             return None
         parts = content.get("parts")
-        if not isinstance(parts, list) or not parts or not isinstance(parts[0], dict):
+        if not isinstance(parts, list) or not parts:
             return None
-        t = parts[0].get("text")
-        return t if isinstance(t, str) else None
+        chunks: list[str] = []
+        for p in parts:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                chunks.append(p["text"])
+        if not chunks:
+            return None
+        return "".join(chunks)
     except (KeyError, IndexError, TypeError):
         return None
 
@@ -398,7 +449,7 @@ async def run_gemini_wiki_fact_check(text: str) -> tuple[list[dict[str, str]], s
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 4096,
             "responseMimeType": "application/json",
         },
     }
@@ -428,9 +479,8 @@ async def run_gemini_wiki_fact_check(text: str) -> tuple[list[dict[str, str]], s
             if not content:
                 return [], "Empty response from Gemini."
 
-            try:
-                parsed = json.loads(_strip_code_fence(content))
-            except json.JSONDecodeError:
+            parsed = _parse_classifier_json_blob(content)
+            if parsed is None:
                 return [], "Gemini returned non-JSON content."
 
             classification = parsed.get("classification") if isinstance(parsed, dict) else None
