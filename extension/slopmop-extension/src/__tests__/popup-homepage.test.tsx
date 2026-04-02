@@ -78,6 +78,7 @@ vi.mock('../lib/firestoreProxy', () => ({
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
 import { PanelProvider } from '@pages/popup/PanelContext';
+import { ThemeProvider } from '../hooks/useTheme';
 import React from 'react';
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -90,9 +91,11 @@ function renderHome() {
   });
 
   const result = render(
-    <AuthProvider>
-      <Popup />
-    </AuthProvider>,
+    <ThemeProvider>
+      <AuthProvider>
+        <Popup />
+      </AuthProvider>
+    </ThemeProvider>,
   );
   return result;
 }
@@ -105,9 +108,11 @@ function renderHomeWithStorage(storageValues: Record<string, unknown>) {
     ...storageValues,
   });
   const result = render(
-    <AuthProvider>
-      <Popup />
-    </AuthProvider>,
+    <ThemeProvider>
+      <AuthProvider>
+        <Popup />
+      </AuthProvider>
+    </ThemeProvider>,
   );
   return result;
 }
@@ -159,11 +164,13 @@ describe('Popup Homepage', () => {
     const closeFn = vi.fn();
     const user = userEvent.setup();
     render(
-      <PanelProvider closePanel={closeFn}>
-        <AuthProvider>
-          <Popup />
-        </AuthProvider>
-      </PanelProvider>,
+      <ThemeProvider>
+        <PanelProvider closePanel={closeFn}>
+          <AuthProvider>
+            <Popup />
+          </AuthProvider>
+        </PanelProvider>
+      </ThemeProvider>,
     );
 
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();

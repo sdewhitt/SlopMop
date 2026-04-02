@@ -76,6 +76,7 @@ vi.mock('../lib/firestoreProxy', () => ({
 
 import Popup from '@pages/popup/Popup';
 import { AuthProvider } from '../hooks/useAuth';
+import { ThemeProvider } from '../hooks/useTheme';
 import React from 'react';
 
 /** Render Popup wrapped with AuthProvider and simulate a signed-in user via storage. */
@@ -84,9 +85,11 @@ function renderPopupSignedIn() {
     slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
   });
   const result = render(
-    <AuthProvider>
-      <Popup />
-    </AuthProvider>,
+    <ThemeProvider>
+      <AuthProvider>
+        <Popup />
+      </AuthProvider>
+    </ThemeProvider>,
   );
   return result;
 }
@@ -95,9 +98,11 @@ function renderPopupSignedIn() {
 function renderPopupSignedOut() {
   (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({});
   const result = render(
-    <AuthProvider>
-      <Popup />
-    </AuthProvider>,
+    <ThemeProvider>
+      <AuthProvider>
+        <Popup />
+      </AuthProvider>
+    </ThemeProvider>,
   );
   return result;
 }
