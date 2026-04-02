@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import browser from 'webextension-polyfill';
 import type { HistoryEntry } from '@src/utils/detectionHistory';
 import type { Verdict } from '@src/types/domain';
 import {
   applyFiltersAndSort,
+  applyKeywordFilter,
   isDefaultPrefs,
   DEFAULT_FILTER_PREFS,
   FILTER_PREFS_KEY,
@@ -296,6 +297,9 @@ export default function HistoryPage() {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [filterPrefs, setFilterPrefs] = useState<HistoryFilterPrefs>(DEFAULT_FILTER_PREFS);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load history entries
   const loadHistory = useCallback(async () => {
@@ -332,6 +336,21 @@ export default function HistoryPage() {
     browser.storage.local.set({ [FILTER_PREFS_KEY]: prefs });
   };
 
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setSearchInput(val);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      setSearchQuery(val);
+    }, 300);
+  };
+
+  const handleSearchClear = () => {
+    setSearchInput('');
+    setSearchQuery('');
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+  };
+
   const handleClear = async () => {
     // Two-step confirmation: first click shows confirm, second click executes
     if (!confirmClear) {
@@ -363,10 +382,10 @@ export default function HistoryPage() {
   const pinned = entries.filter((e) => e.pinned);
   const unpinned = entries.filter((e) => !e.pinned);
 
-  const filteredPinned = applyFiltersAndSort(pinned, filterPrefs);
-  const filteredUnpinned = applyFiltersAndSort(unpinned, filterPrefs);
+  const filteredPinned = applyKeywordFilter(applyFiltersAndSort(pinned, filterPrefs), searchQuery);
+  const filteredUnpinned = applyKeywordFilter(applyFiltersAndSort(unpinned, filterPrefs), searchQuery);
   const totalFiltered = filteredPinned.length + filteredUnpinned.length;
-  const isFiltered = !isDefaultPrefs(filterPrefs);
+  const isFiltered = !isDefaultPrefs(filterPrefs) || searchQuery.trim() !== '';
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
@@ -392,6 +411,38 @@ export default function HistoryPage() {
             }`}
           >
             {clearing ? 'Clearing…' : confirmClear ? 'Confirm clear?' : 'Clear History'}
+          </button>
+        )}
+      </div>
+
+      {/* Search bar */}
+      <div className="relative mb-3">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-500 pointer-events-none"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <input
+          type="text"
+          value={searchInput}
+          onChange={handleSearchChange}
+          placeholder="Search by keyword, platform, or URL…"
+          className="w-full pl-8 pr-7 py-1.5 text-xs bg-gray-900 border border-gray-800 rounded-lg text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-600"
+        />
+        {searchInput && (
+          <button
+            onClick={handleSearchClear}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+            aria-label="Clear search"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         )}
       </div>
