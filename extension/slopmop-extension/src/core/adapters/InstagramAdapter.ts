@@ -134,6 +134,13 @@ export class InstagramAdapter implements SiteAdapter {
       if (!src) return false;
       if (src.startsWith("data:")) return false;
 
+      let hostname = "";
+      try {
+        hostname = new URL(src, window.location.origin).hostname.toLowerCase();
+      } catch {
+        return false;
+      }
+
       const lowerSrc = src.toLowerCase();
       const isCommentGifLike =
         (!!img.closest('li, [role="listitem"]') || !!img.closest('ul[role="list"], [role="list"]')) &&
@@ -144,8 +151,11 @@ export class InstagramAdapter implements SiteAdapter {
 
       // Instagram content images are served from CDN domains
       const isContentHost =
-        src.includes("cdninstagram.com") ||
-        src.includes("fbcdn.net");
+        hostname.includes("cdninstagram.com") ||
+        hostname === "fbcdn.net" ||
+        hostname.endsWith(".fbcdn.net") ||
+        hostname === "instagram.com" ||
+        hostname.endsWith(".instagram.com");
       if (!isContentHost && !isCommentGifLike) return false;
 
       // Exclude profile pictures: images inside the post <header> are

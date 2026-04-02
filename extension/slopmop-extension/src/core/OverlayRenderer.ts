@@ -73,6 +73,18 @@ export class OverlayRenderer {
         return { bottom: "calc(100% + 8px)", right: "0" };
     }
 
+    protected getActionButtonStyle(_hostNode: HTMLElement, isSimple: boolean): Partial<CSSStyleDeclaration> {
+        return {
+            border: "none",
+            borderRadius: "4px",
+            padding: "6px 10px",
+            fontSize: isSimple ? "14px" : "12px",
+            fontWeight: "600",
+            color: "#fff",
+            cursor: "pointer",
+        };
+    }
+
 
     // render DetectionResponse as a badge on the page
     // for now, start with basic appearance, then we can match the UI mockups
@@ -120,7 +132,8 @@ export class OverlayRenderer {
         const removeTooltip = () => {
             tooltip?.remove();
             tooltip = null;
-            overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            surface.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, false);
         };
         const scheduleHide = () => {
             clearHideTimer();
@@ -128,10 +141,11 @@ export class OverlayRenderer {
                 removeTooltip();
             }, OverlayRenderer.TOOLTIP_HIDE_DELAY_MS);
         };
-        overlay.onmouseenter = () => {
+        surface.onmouseenter = () => {
             clearHideTimer();
             if (tooltip) return;
-            overlay.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+            surface.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, true);
             tooltip = isSimple
                 ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
@@ -142,10 +156,10 @@ export class OverlayRenderer {
             tooltip.onmouseleave = () => {
                 scheduleHide();
             };
-            overlay.appendChild(tooltip);
+            surface.appendChild(tooltip);
         };
 
-        overlay.onmouseleave = () => {
+        surface.onmouseleave = () => {
             scheduleHide();
         };
 
@@ -218,15 +232,7 @@ export class OverlayRenderer {
             });
         };
 
-        const buttonStyle: Partial<CSSStyleDeclaration> = {
-            border: "none",
-            borderRadius: "4px",
-            padding: "6px 10px",
-            fontSize: isSimple ? "14px" : "12px",
-            fontWeight: "600",
-            color: "#fff",
-            cursor: "pointer",
-        };
+        const buttonStyle: Partial<CSSStyleDeclaration> = this.getActionButtonStyle(hostNode, isSimple);
 
         // manual + Fact check: outer row with two grey boxes — fact panel persists after Detect runs.
         if (onFactCheck) {
@@ -442,7 +448,8 @@ export class OverlayRenderer {
         const removeTooltip = () => {
             tooltip?.remove();
             tooltip = null;
-            overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            surface.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, false);
         };
         const scheduleHide = () => {
             clearHideTimer();
@@ -450,10 +457,11 @@ export class OverlayRenderer {
                 removeTooltip();
             }, OverlayRenderer.TOOLTIP_HIDE_DELAY_MS);
         };
-        overlay.onmouseenter = () => {
+        surface.onmouseenter = () => {
             clearHideTimer();
             if (tooltip) return;
-            overlay.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+            surface.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, true);
             const errorMessage = this.mapToErrorMessage.get(postId) || "Unknown error";
             tooltip = this.createErrorTooltip(errorMessage);
             tooltip.style.pointerEvents = "auto";
@@ -463,9 +471,9 @@ export class OverlayRenderer {
             tooltip.onmouseleave = () => {
                 scheduleHide();
             };
-            overlay.appendChild(tooltip);
+            surface.appendChild(tooltip);
         };
-        overlay.onmouseleave = () => {
+        surface.onmouseleave = () => {
             scheduleHide();
         };
 
@@ -556,10 +564,12 @@ export class OverlayRenderer {
             tooltip = null;
             pinned = false;
             removeDocDismiss();
+            this.setOverlayLayer(postId, false);
         };
 
         const showTooltip = (): void => {
             if (tooltip) return;
+            this.setOverlayLayer(postId, true);
             tooltip = isSimple
                 ? this.createSimpleFactCheckTooltip(items)
                 : this.createFactCheckTooltipDetailed(items);
@@ -666,10 +676,12 @@ export class OverlayRenderer {
             tooltip = null;
             pinned = false;
             removeDocDismiss();
+            this.setOverlayLayer(postId, false);
         };
 
         const showTooltip = (): void => {
             if (tooltip) return;
+            this.setOverlayLayer(postId, true);
             tooltip = this.createFactCheckErrorTooltip(message);
             factPanel.appendChild(tooltip);
         };
@@ -736,6 +748,14 @@ export class OverlayRenderer {
         return null;
     }
 
+    private setOverlayLayer(postId: PostId, active: boolean): void {
+        const container = this.mapToOverlay.get(postId);
+        if (!container) return;
+        container.style.zIndex = active
+            ? OverlayRenderer.ACTIVE_BADGE_Z_INDEX
+            : OverlayRenderer.BADGE_Z_INDEX;
+    }
+
     /** Element that shows AI detection state (badge / scanning). Fact panel is separate when present. */
     private getDetectSurface(postId: PostId): HTMLElement | null {
         return this.mapToDetectPanel.get(postId) ?? this.mapToOverlay.get(postId) ?? null;
@@ -779,7 +799,7 @@ export class OverlayRenderer {
             fontSize: "14px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             pointerEvents: "auto",
             wordBreak: "break-word",
         });
@@ -831,7 +851,7 @@ export class OverlayRenderer {
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             pointerEvents: "auto",
             wordBreak: "break-word",
         });
@@ -919,7 +939,7 @@ export class OverlayRenderer {
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             pointerEvents: "auto",
             wordBreak: "break-word",
         });

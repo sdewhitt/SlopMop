@@ -24,4 +24,19 @@ export class InstagramOverlayRenderer extends OverlayRenderer {
     protected override getTooltipPosition(): Record<string, string> {
         return { top: "calc(100% + 2px)", right: "0" };
     }
+
+    protected override getActionButtonStyle(
+        _hostNode: HTMLElement,
+        isSimple: boolean,
+    ): Partial<CSSStyleDeclaration> {
+        return {
+            border: "none",
+            borderRadius: "4px",
+            padding: isSimple ? "3px 6px" : "2px 6px",
+            fontSize: isSimple ? "11px" : "10px",
+            fontWeight: "600",
+            color: "#fff",
+            cursor: "pointer",
+        };
+    }
 }
