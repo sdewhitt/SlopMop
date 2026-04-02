@@ -658,6 +658,53 @@ describe('Instagram extraction pipeline', () => {
     expect(comments).toHaveLength(0);
   });
 
+  it('ignores story tray items when feed posts are also present', () => {
+    const adapter = new InstagramAdapter();
+
+    // Stories tray near top of homepage
+    const storiesUl = document.createElement('ul');
+    storiesUl.setAttribute('role', 'list');
+    const storyLi = document.createElement('li');
+    storyLi.setAttribute('role', 'listitem');
+    const storyLink = document.createElement('a');
+    storyLink.href = '/stories/topuser/';
+    const storySpan = document.createElement('span');
+    storySpan.setAttribute('dir', 'auto');
+    setInnerText(storySpan, 'topuser');
+    storyLink.appendChild(storySpan);
+    storyLi.appendChild(storyLink);
+    Object.defineProperty(storyLi, 'getBoundingClientRect', {
+      value: () => ({ width: 66, height: 86, top: 10, bottom: 96, left: 0, right: 66 }),
+    });
+    storiesUl.appendChild(storyLi);
+    document.body.appendChild(storiesUl);
+
+    // Real feed post with one visible comment
+    const article = document.createElement('article');
+    const postLink = document.createElement('a');
+    postLink.href = '/p/FeedWithComments01/';
+    article.appendChild(postLink);
+
+    const commentsUl = document.createElement('ul');
+    commentsUl.setAttribute('role', 'list');
+    const commentLi = document.createElement('li');
+    commentLi.setAttribute('role', 'listitem');
+    const commentSpan = document.createElement('span');
+    commentSpan.setAttribute('dir', 'auto');
+    setInnerText(commentSpan, 'Real comment under feed post');
+    commentLi.appendChild(commentSpan);
+    Object.defineProperty(commentLi, 'getBoundingClientRect', {
+      value: () => ({ width: 420, height: 48, top: 120, bottom: 168, left: 0, right: 420 }),
+    });
+    commentsUl.appendChild(commentLi);
+    article.appendChild(commentsUl);
+    document.body.appendChild(article);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(commentLi);
+  });
+
   it('does not treat View replies/Hide replies rows as comments', () => {
     const adapter = new InstagramAdapter();
 

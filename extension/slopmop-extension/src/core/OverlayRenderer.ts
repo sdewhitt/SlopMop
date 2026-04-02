@@ -1477,13 +1477,16 @@ export class OverlayRenderer {
         overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
     }
 
-    private getMediaLabel(imgRes: ImageDetectionResult): "Image" | "Video" {
-        return imgRes.mediaType === "video" ? "Video" : "Image";
+    private getMediaLabel(imgRes: ImageDetectionResult): "Image" | "Video" | "GIF" {
+        if (imgRes.mediaType === "video") return "Video";
+        if (imgRes.mediaType === "gif") return "GIF";
+        return "Image";
     }
 
-    private getPrimarySourceLabel(res: DetectionResponse): "Image" | "Video" | null {
+    private getPrimarySourceLabel(res: DetectionResponse): "Image" | "Video" | "GIF" | null {
         if (res.detectionSource === "image") return "Image";
         if (res.detectionSource === "video") return "Video";
+        if (res.detectionSource === "gif") return "GIF";
         return null;
     }
 }

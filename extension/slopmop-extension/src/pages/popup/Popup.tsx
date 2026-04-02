@@ -33,8 +33,8 @@ type DetectResponse = {
   confidence?: number;
   explanation?: string;
   metadataComplete?: boolean;
-  detectionSource?: 'text' | 'image' | 'video';
-  imageResult?: { mediaType?: 'image' | 'video' };
+  detectionSource?: 'text' | 'image' | 'video' | 'gif';
+  imageResult?: { mediaType?: 'image' | 'video' | 'gif' };
   // Some backends may use alternative field names.
   confidenceScore?: number;
   confidence_score?: number;
@@ -514,6 +514,8 @@ export default function Popup() {
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
   const mediaSourceLabel = detectResponse?.detectionSource === 'video'
     ? 'Video'
+    : detectResponse?.detectionSource === 'gif'
+      ? 'GIF'
     : detectResponse?.detectionSource === 'image'
       ? 'Image'
       : null;

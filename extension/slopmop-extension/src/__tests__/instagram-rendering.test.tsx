@@ -192,6 +192,49 @@ describe('Instagram overlay rendering', () => {
     expect(overlay?.textContent).toContain('Video: likely_ai (76%)');
   });
 
+  it('labels mixed results as GIF when mediaType is gif', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+
+    const adapter = createAdapter({
+      findPostNodes: () => [postNode],
+      getStablePostId: (node) => (node === postNode ? 'CxMixedGif' : null),
+      findVisibleCommentNodes: () => [],
+    });
+    const renderer = new InstagramOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+    const response: DetectionResponse = {
+      requestId: 'req-ig-gif',
+      postId: 'CxMixedGif',
+      verdict: 'likely_ai',
+      confidence: 0.79,
+      explanation: {
+        summary: 'Caption looks synthetic.',
+        highlights: [],
+        model: { name: 'test-model', version: '1.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 210, inferenceMs: 170 },
+      },
+      imageResult: {
+        verdict: 'likely_human',
+        confidence: 0.21,
+        summary: 'GIF appears authentic.',
+        model: { name: 'nonescape-mini', version: '0.1' },
+        timingMs: 300,
+        mediaType: 'gif',
+      },
+    };
+
+    renderer.renderPending('CxMixedGif', postNode, 'Caption with gif');
+    renderer.renderResult('CxMixedGif', response);
+
+    const overlay = postNode.lastElementChild as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay?.textContent).toContain('GIF: likely_human (21%)');
+  });
+
   it('applies the correct background colour for the verdict', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
