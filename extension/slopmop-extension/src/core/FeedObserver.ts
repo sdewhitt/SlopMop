@@ -408,7 +408,7 @@ export class FeedObserver {
         const timer = setTimeout(() => {
             this.pendingAnalyzeTimers.delete(postId);
             this.timedOutPostIds.add(postId);
-            this.overlay.renderTimeout(postId);
+            this.overlay.renderError(postId, "network timeout", () => { this.retryAnalyze(postId); });
         }, ANALYZE_TIMEOUT_MS);
         this.pendingAnalyzeTimers.set(postId, timer);
     }

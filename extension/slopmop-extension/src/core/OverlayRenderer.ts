@@ -440,12 +440,6 @@ export class OverlayRenderer {
             surface.appendChild(retryButton);
         }
 
-        if (isSimple) {
-            surface.style.cursor = "default";
-            return;
-        }
-
-        // detailed mode keeps the badge compact and pushes the full message into tooltip.
         surface.style.cursor = onRetry ? "default" : "pointer";
         let tooltip: HTMLElement | null = null;
         let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
@@ -480,16 +474,6 @@ export class OverlayRenderer {
             tooltip = null;
         };
 
-    }
-    // timeout has a dedicated badge text so users can tell this was network-related.
-    renderTimeout(postId: PostId): void {
-        const surface = this.getDetectSurface(postId);
-        if (!surface) return;
-        this.restorePostBodyHtml(postId);
-        this.resetOverlayInteractions(surface);
-        surface.style.whiteSpace = "normal";
-        surface.style.backgroundColor = "#f59e0b";
-        surface.textContent = "network timeout";
     }
     // removes a DOM element and its entry from all three maps
     clear(postId: PostId): void {
