@@ -3,13 +3,7 @@
  * Must be called from extension context as vite injects env at build time.
  */
 
-import type { HighlightSpan } from '@src/types/domain';
-/** First attempt plus this many retries before surfacing an error to the user. */
-const DETECTION_MAX_RETRIES = 10;
-const RETRY_DELAY_MS = 150;
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+import type { FactCheckItem, HighlightSpan } from '@src/types/domain';
 
 const getBaseUrl = (): string => {
     const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
@@ -153,6 +147,47 @@ async function detectImageOnce(
     return result;
 }
 
+export interface FactCheckResponse {
+    items: FactCheckItem[];
+}
+
+export class FactCheckApiError extends Error {
+    readonly status: number;
+
+    constructor(message: string, status: number) {
+        super(message);
+        this.name = 'FactCheckApiError';
+        this.status = status;
+    }
+}
+
+/**
+ * POST /fact-check — two-sentence chunking and Google Claim Search on the server.
+ */
+export async function factCheckText(text: string): Promise<FactCheckResponse> {
+    const baseUrl: string = getBaseUrl();
+    const cleanedText: string = text.trim();
+    const response = await fetch(baseUrl + '/fact-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleanedText }),
+    });
+
+    if (response.ok === false) {
+        let message: string = 'HTTP ' + response.status;
+        try {
+            const data = await response.json();
+            if (data !== null && data !== undefined && typeof data.detail === 'string') {
+                message = data.detail;
+            }
+        } catch {
+            /* keep default */
+        }
+        throw new FactCheckApiError(message, response.status);
+    }
+
+    return response.json() as Promise<FactCheckResponse>;
+}
 /*
 * Sends a base64-encoded image to backend API and returns image detection result.
 * On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.

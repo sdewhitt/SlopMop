@@ -44,6 +44,8 @@ export interface DetectionSettings {
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
   highlightSegments: boolean;
+  /** Show Fact check next to Detect Now on posts (manual / eligible feeds). */
+  factCheck: boolean;
   /**
    * Text detection runs only when franc's top guess is among these (plus Scots when English is on).
    * Default all three. Empty disables all text detection.
@@ -94,6 +96,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanComments: 'auto_top_n',
     uiMode: 'simple',
     highlightSegments: true,
+    factCheck: true,
     detectionLanguages: ['eng', 'spa', 'fra'],
   },
   stats: {

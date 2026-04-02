@@ -22,6 +22,10 @@ from nonescape import NonescapeClassifier, NonescapeClassifierMini, preprocess_i
 sys.path.insert(0, os.path.join(_THIS_DIR, "..", "model_training", "text_model"))
 from text_detector import TextDetectors # type: ignore
 
+from fact_check import run_fact_check_for_text
+from llm_fact_check import run_llm_fact_check_for_text
+from gemini_wiki_fact_check import run_gemini_wiki_fact_check
+
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
 # allow all origins, credentials, methods, and headers 
@@ -82,7 +86,7 @@ else:
 
 text_detector = TextDetectors()
 if os.path.exists(TEXT_MODEL_WEIGHTS):
-    state = torch.load(TEXT_MODEL_WEIGHTS, map_location=text_detector.device)
+    state = torch.load(TEXT_MODEL_WEIGHTS, map_location=text_detector.device, weights_only=False)
     text_detector.model.load_state_dict(state, strict=True)
     text_detector.model.eval()
     print(f"Loaded text model weights from {TEXT_MODEL_WEIGHTS}")
@@ -137,6 +141,23 @@ class DetectImageResponse(BaseModel):
     confidence: float          # 0.0 = authentic, 1.0 = AI-generated
     label: str                 # "ai" or "human"
     explanation: str
+
+
+class FactCheckRequest(BaseModel):
+    text: str
+
+
+class FactCheckItem(BaseModel):
+    """One fact-check row (possibly from Claim Search index)."""
+    query_text: str
+    claim: str
+    verdict: str
+    source: str
+    url: str
+
+
+class FactCheckResponse(BaseModel):
+    items: list[FactCheckItem]
 
 
 @app.get("/")
@@ -234,3 +255,54 @@ def detect_image(request: DetectImageRequest):
     )
 
     return DetectImageResponse(confidence=confidence, label=label, explanation=explanation)
+
+
+def _fact_check_http_error(err: str) -> HTTPException:
+    """Map provider error strings to HTTP status for the extension."""
+    low = err.lower()
+    if "rate limit" in low:
+        return HTTPException(status_code=429, detail=err)
+    if (
+        "not configured" in low
+        or "missing api key" in low
+        or "missing openai" in low
+        or "missing gemini" in low
+        or "check openai_api_key" in low
+    ):
+        return HTTPException(status_code=503, detail=err)
+    if "authentication failed" in low or "check gemini_api_key" in low:
+        return HTTPException(status_code=503, detail=err)
+    return HTTPException(status_code=502, detail=err)
+
+
+@app.post("/fact-check", response_model=FactCheckResponse)
+async def fact_check(request: FactCheckRequest):
+    """
+    Fact-check post text. Backend is selected with FACT_CHECK_MODE:
+
+    - ``google`` (default): Claim Search API, chunked queries (see FACT_CHECK.md).
+    - ``llm``: OpenAI JSON output; same response shape; not a substitute for real fact databases.
+    """
+    raw = request.text.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(raw) > MAX_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
+        )
+
+    mode = os.environ.get("FACT_CHECK_MODE", "google").strip().lower()
+    if mode == "llm":
+        items_raw, err = await run_llm_fact_check_for_text(raw)
+    elif mode in ("gemini_wiki", "gemini-wiki", "gemini"):
+        items_raw, err = await run_gemini_wiki_fact_check(raw)
+    else:
+        key = os.environ.get("GOOGLE_FACT_CHECK_API_KEY", "").strip()
+        items_raw, err = await run_fact_check_for_text(raw, api_key=key or None)
+
+    if err:
+        raise _fact_check_http_error(err)
+
+    items = [FactCheckItem(**row) for row in items_raw]
+    return FactCheckResponse(items=items)

@@ -77,6 +77,12 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Automatic Scanning"
           description="When off, posts show a Detect Now button"
         />
+        <Toggle
+          checked={settings.factCheck}
+          onChange={(v) => onUpdateSetting('factCheck', v)}
+          label="Show Fact check"
+          description="When on, Fact check appears beside Detect Now on posts (uses your API)"
+        />
         <div className="py-2.5">
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Comment Scanning</p>
           <div className="flex gap-1.5">

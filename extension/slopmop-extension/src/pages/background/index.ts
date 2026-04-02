@@ -17,7 +17,14 @@ import {
   getIgnoredSites,
   setIgnoredSites as setIgnoredSitesFirestore,
 } from '@src/lib/firestore';
-import { detectText, detectImage, type DetectResponse, type DetectImageResponse } from '@src/lib/api';
+import {
+  detectImage,
+  detectText,
+  factCheckText,
+  FactCheckApiError,
+  type DetectImageResponse,
+  type DetectResponse,
+} from '@src/lib/api';
 import {
   isTextLanguageSupported,
   getLanguageSupportInfo,
@@ -248,6 +255,7 @@ interface BackgroundMessage {
   site?: string;
   patch?: Partial<DetectionSettings>;
   text?: string;
+  url?: string;
   payload?: NormalizedPostContent;
   postId?: string;
 }
@@ -290,6 +298,13 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_FACT_CHECK': {
+      const tabId = sender.tab?.id;
+      if (!tabId) {
+        return Promise.resolve({ success: false, error: 'No active tab.' });
+      }
+      return handleFactCheck(msg.text ?? '', msg.postId ?? '', tabId);
+    }
     case 'SLOPMOP_GET_IGNORED_SITES':
       return handleGetIgnoredSites(msg.uid);
     case 'SLOPMOP_ADD_IGNORED_SITE':
@@ -548,6 +563,47 @@ async function handleDetect(text: string): Promise<MessageResponse> {
   }
 }
 
+/**
+ * Fact-check does not use the same language gate as AI detection so any post text can be checked.
+ * Results are pushed to the tab + storage for the popup panel.
+ */
+async function handleFactCheck(
+  text: string,
+  postId: string,
+  tabId: number,
+): Promise<MessageResponse> {
+  try {
+    const { items } = await factCheckText(text);
+    await browser.storage.local.set({
+      lastFactCheckResult: { postId, items, updatedAtMs: Date.now() },
+      lastFactCheckError: null,
+    });
+    await browser.tabs
+      .sendMessage(tabId, {
+        type: 'FACT_CHECK_RESULT',
+        payload: { postId, items },
+      })
+      .catch(() => {});
+    return { success: true, data: { items } };
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Fact check failed.';
+    const code =
+      err instanceof FactCheckApiError && err.status === 429 ? 'rate_limit' : 'error';
+    await browser.storage.local.set({
+      lastFactCheckResult: null,
+      lastFactCheckError: { postId, message, code, updatedAtMs: Date.now() },
+    });
+    await browser.tabs
+      .sendMessage(tabId, {
+        type: 'FACT_CHECK_ERROR',
+        payload: { postId, message, code },
+      })
+      .catch(() => {});
+    return { success: false, error: message };
+  }
+}
+
 // ── Post analysis handlers ──────────────────────────────────────
 
 /**
@@ -602,6 +658,28 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     enrichedImages = await fetchImagesThrottled(enrichedImages, IMAGE_FETCH_CONCURRENCY);
   } else {
     enrichedImages = enrichedImages.map((img) => ({ ...img, bytesBase64: '' }));
+  }
+
+  // Instagram media URLs can intermittently fail to hotlink from extension context.
+  // If that happens, try deriving preview media from the post permalink HTML.
+  if (
+    settings.scanImages &&
+    post.site === 'instagram.com' &&
+    !enrichedImages.some((img) => img.bytesBase64)
+  ) {
+    const preview = await fetchInstagramPreviewImageCandidate(post.url);
+    if (preview) {
+      const previewBytes = await fetchImageAsBase64(preview.srcUrl);
+      if (previewBytes) {
+        const alreadyPresent = enrichedImages.some((img) => img.srcUrl === preview.srcUrl);
+        const hydratedPreview = { ...preview, bytesBase64: previewBytes };
+        enrichedImages = alreadyPresent
+          ? enrichedImages.map((img) =>
+              img.srcUrl === preview.srcUrl ? { ...img, bytesBase64: previewBytes } : img,
+            )
+          : [hydratedPreview, ...enrichedImages];
+      }
+    }
   }
 
   const enrichedPost = { ...post, images: enrichedImages };

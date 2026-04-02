@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, Callable, List, Optional
+
 import os
 import sys
 import torch  # type: ignore[import-untyped]
@@ -265,6 +267,8 @@ class TextDetectors:
     # encorperate satire detector to help lower false positives
     self._satire_detector = None
     self._initialize_satire_detector()
+    # lazy: satire_detector.extract_satire_keywords_post_then_comments (regex + comment consensus)
+    self._satire_heuristic_scan_fn: Any = None
 
   def _initialize_satire_detector(self) -> None:
     flag = os.environ.get("SLOPMOP_SATIRE_ADJUST", "1").strip().lower()
@@ -325,6 +329,70 @@ class TextDetectors:
     new_prob = max(0.0, prob - penalty)
     return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
 
+
+ # import the satire heuristic scan function
+  def _get_satire_heuristic_scan(self) -> Optional[Callable[..., Any]]:
+    if self._satire_heuristic_scan_fn is False:
+      return None
+    if callable(self._satire_heuristic_scan_fn):
+      return self._satire_heuristic_scan_fn
+    try:
+      satire_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "satire_detector"))
+      if satire_dir not in sys.path:
+        sys.path.insert(0, satire_dir)
+      from satire_detector import extract_satire_keywords_post_then_comments  # type: ignore[import-untyped]
+
+      self._satire_heuristic_scan_fn = extract_satire_keywords_post_then_comments
+    except Exception as e:
+      print(f"[TextDetectors] Satire heuristics unavailable: {e}")
+      self._satire_heuristic_scan_fn = False
+      return None
+    return self._satire_heuristic_scan_fn
+
+  # adjust the probability for satire heuristics
+  def _adjust_prob_for_satire_heuristics(
+    self,
+    text: str,
+    prob: float,
+    human_max: float,
+    ai_min: float,
+    comment_texts: Optional[List[str]] = None,
+  ) -> tuple[float, str]:
+    flag = os.environ.get("SLOPMOP_SATIRE_HEURISTIC", "1").strip().lower()
+    if flag in ("0", "false", "no", ""):
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    if prob < human_max:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    scan = self._get_satire_heuristic_scan()
+    if scan is None:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    try:
+      r = scan(text, comment_texts)
+    except Exception as e:
+      print(f"[TextDetectors] Satire heuristic scan failed: {e}")
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    if not r.keywords:
+      return prob, self.prob_to_label(prob, human_max, ai_min)
+    reason = getattr(r, "consensus_reason", None)
+    strong = reason in ("yes_confirmation", "crowd_10")
+    if strong:
+      penalty = float(os.environ.get("SLOPMOP_SATIRE_HEURISTIC_PENALTY_STRONG", "0.35"))
+    else:
+      penalty = float(os.environ.get("SLOPMOP_SATIRE_HEURISTIC_PENALTY", "0.25"))
+    new_prob = max(0.0, prob - penalty)
+    return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
+
+  def _apply_all_satire_adjustments(
+    self,
+    text: str,
+    prob: float,
+    human_max: float,
+    ai_min: float,
+    comment_texts: Optional[List[str]] = None,
+  ) -> tuple[float, str]:
+    prob, _ = self._adjust_prob_for_satire(text, prob, human_max, ai_min)
+    return self._adjust_prob_for_satire_heuristics(text, prob, human_max, ai_min, comment_texts)
+
   # initialize the model
   def _initialize_model(self):
     """
@@ -361,6 +429,7 @@ class TextDetectors:
     human_max: float = 0.40,
     ai_min: float = 0.70,
     return_pct: bool = False,
+    comment_texts: Optional[List[str]] = None,
   ):
     # clean the text if needed
     if clean:
@@ -409,7 +478,7 @@ class TextDetectors:
       else:
         print("Added 0% to confidence because LLM metadata is present.")
 
-    prob, label = self._adjust_prob_for_satire(text, prob, human_max, ai_min)
+    prob, label = self._apply_all_satire_adjustments(text, prob, human_max, ai_min, comment_texts)
 
     confidence = prob * 100 if return_pct else prob
     return confidence, label
@@ -461,6 +530,7 @@ class TextDetectors:
     ai_min: float = 0.70,
     max_tokens_to_evaluate: int = 24,
     top_k_spans: int = 12,
+    comment_texts: Optional[List[str]] = None,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
     """
     Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
@@ -471,13 +541,17 @@ class TextDetectors:
     if clean:
       text = preprocess_text(text)
     if not text.strip():
-      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
       return round(conf, 4), label, []
 
     # Too little text for meaningful token-level attribution; same confidence, no spans.
     min_chars_for_spans = 5
     if len(text.strip()) < min_chars_for_spans:
-      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
       return round(conf, 4), label, []
 
     enc = self.tokenizer(
@@ -492,7 +566,9 @@ class TextDetectors:
     attention_mask = enc["attention_mask"]
     offset_mapping = enc.get("offset_mapping")
     if offset_mapping is None:
-      conf, label = self.calculate_confidence(text, clean=False, human_max=human_max, ai_min=ai_min)
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
       return round(conf, 4), label, []
 
     input_ids = input_ids.to(self.device)
@@ -556,7 +632,7 @@ class TextDetectors:
       elif prob <= 0.6:
         prob = prob + 0.2
 
-    prob, label = self._adjust_prob_for_satire(text, prob, human_max, ai_min)
+    prob, label = self._apply_all_satire_adjustments(text, prob, human_max, ai_min, comment_texts)
 
     confidence = round(prob, 4)
     return confidence, label, top

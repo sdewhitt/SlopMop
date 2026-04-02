@@ -29,6 +29,33 @@ export const PLATFORM_OPTIONS: { key: string; label: string; match: (p: string) 
   { key: 'youtube',   label: 'YouTube',   match: (p) => p.includes('youtube') },
 ];
 
+// ── Keyword search ────────────────────────────────────────────────
+
+/**
+ * Returns true if the entry matches the search query.
+ * Matches against snippet, platform name, and URL — case-insensitive.
+ * Returns true when query is empty.
+ */
+export function matchesKeyword(entry: HistoryEntry, query: string): boolean {
+  if (!query.trim()) return true;
+  const q = query.trim().toLowerCase();
+  const platform = PLATFORM_OPTIONS.find((o) => o.match(entry.platform))?.label ?? entry.platform;
+  return (
+    entry.snippet.toLowerCase().includes(q) ||
+    platform.toLowerCase().includes(q) ||
+    entry.url.toLowerCase().includes(q)
+  );
+}
+
+/**
+ * Filters entries by keyword search query, then applies platform/confidence
+ * filters and sorting via the existing prefs.
+ */
+export function applyKeywordFilter(entries: HistoryEntry[], query: string): HistoryEntry[] {
+  if (!query.trim()) return entries;
+  return entries.filter((e) => matchesKeyword(e, query));
+}
+
 // ── Pure logic ────────────────────────────────────────────────────
 
 export function applyFiltersAndSort(entries: HistoryEntry[], prefs: HistoryFilterPrefs): HistoryEntry[] {

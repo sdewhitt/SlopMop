@@ -139,9 +139,20 @@ export interface DetectionLanguageUnsupportedPayload {
   hoverTooltipBody: string;
 }
 
+/** One row from POST /fact-check (Google Claim Search–backed). */
+export interface FactCheckItem {
+    query_text: string;
+    claim: string;
+    verdict: string;
+    source: string;
+    url: string;
+}
+
 // similar idea, but from background script to content script
 export type BackgroundToContentMessage =
     | { type: "DETECTION_RESULT"; payload: DetectionResponse }
     | { type: "DETECTION_ERROR"; payload: { postId: PostId; message: string } }
-    | { type: "DETECTION_LANGUAGE_UNSUPPORTED"; payload: DetectionLanguageUnsupportedPayload };
+    | { type: "DETECTION_LANGUAGE_UNSUPPORTED"; payload: DetectionLanguageUnsupportedPayload }
+    | { type: "FACT_CHECK_RESULT"; payload: { postId: PostId; items: FactCheckItem[] } }
+    | { type: "FACT_CHECK_ERROR"; payload: { postId: PostId; message: string; code?: string } };
   

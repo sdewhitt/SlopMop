@@ -27,6 +27,7 @@ import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 import HistoryPage from '../options/HistoryPage';
 import ThemeToggle from './components/ThemeToggle';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
+import type { FactCheckItem } from '@src/types/domain';
 
 type DetectResponse = {
   confidence?: number;
@@ -51,6 +52,8 @@ export default function Popup() {
   const [languageUnsupported, setLanguageUnsupported] = useState<string | null>(null);
   const [simpleMode, setSimpleMode] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [factCheckItems, setFactCheckItems] = useState<FactCheckItem[] | null>(null);
+  const [factCheckError, setFactCheckError] = useState<string | null>(null);
 
   const mergeSettings = useCallback((raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -87,6 +90,8 @@ export default function Popup() {
         'lastDetection',
         'detectionResult',
         'lastDetectLanguageUnsupported',
+        'lastFactCheckResult',
+        'lastFactCheckError',
       ])
       .then((result) => {
         syncStatsFromStorage(result);
@@ -107,6 +112,19 @@ export default function Popup() {
         if (raw && typeof raw === 'object') setDetectResponse(raw as DetectResponse);
         const unsupported = result.lastDetectLanguageUnsupported as { message?: string } | undefined;
         setLanguageUnsupported(unsupported?.message ?? null);
+
+        const fcRes = result.lastFactCheckResult as { items?: FactCheckItem[] } | undefined;
+        const fcErr = result.lastFactCheckError as { message?: string } | undefined;
+        if (fcErr && typeof fcErr.message === 'string' && fcErr.message) {
+          setFactCheckError(fcErr.message);
+          setFactCheckItems(null);
+        } else if (fcRes?.items && Array.isArray(fcRes.items)) {
+          setFactCheckItems(fcRes.items);
+          setFactCheckError(null);
+        } else {
+          setFactCheckItems(null);
+          setFactCheckError(null);
+        }
       });
   }, [mergeSettings, syncStatsFromStorage]);
 
@@ -159,6 +177,7 @@ export default function Popup() {
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
+        factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
       };
       setSettings(merged);
@@ -203,8 +222,27 @@ export default function Popup() {
       if (unsupportedChange?.newValue != null) {
         const v = unsupportedChange.newValue as { message?: string };
         setLanguageUnsupported(v?.message ?? UNSUPPORTED_LANGUAGE_MESSAGE);
-      } else if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
+      } else       if (unsupportedChange?.newValue === undefined && unsupportedChange?.oldValue != null) {
         setLanguageUnsupported(null);
+      }
+
+      const fc = changes['lastFactCheckResult'];
+      if (fc?.newValue != null && typeof fc.newValue === 'object') {
+        const v = fc.newValue as { items?: FactCheckItem[] };
+        if (v.items && Array.isArray(v.items)) {
+          setFactCheckItems(v.items);
+          setFactCheckError(null);
+        }
+      } else if (fc?.newValue === null) {
+        setFactCheckItems(null);
+      }
+
+      const fe = changes['lastFactCheckError'];
+      if (fe?.newValue != null && typeof fe.newValue === 'object') {
+        const v = fe.newValue as { message?: string };
+        if (typeof v.message === 'string') setFactCheckError(v.message);
+      } else if (fe?.newValue === null) {
+        setFactCheckError(null);
       }
     };
 
@@ -358,6 +396,7 @@ export default function Popup() {
       uiMode: defaultUserSettings.settings.uiMode,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
+      factCheck: defaultUserSettings.settings.factCheck,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);
@@ -549,6 +588,44 @@ export default function Popup() {
           <p className="confidence-explanation mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-snug">
             {explanation}
           </p>
+        </section>
+      )}
+
+      {(factCheckItems != null || factCheckError) && (
+        <section className="mt-4 text-left border-t border-gray-200 dark:border-gray-700 pt-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500 mb-2">
+            Fact check (ClaimReview search)
+          </p>
+          {factCheckError && (
+            <p className="text-sm text-red-600 dark:text-red-400 mb-2">{factCheckError}</p>
+          )}
+          {factCheckItems != null && factCheckItems.length === 0 && !factCheckError && (
+            <p className="text-xs text-gray-600 dark:text-gray-400">
+              No indexed fact checks matched these excerpts.
+            </p>
+          )}
+          {factCheckItems != null &&
+            factCheckItems.map((it, i) => (
+              <div
+                key={`${it.url}-${i}`}
+                className="mb-3 rounded-lg border border-gray-200 dark:border-gray-600 p-2 bg-white dark:bg-gray-800/50"
+              >
+                <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{it.claim}</p>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  {[it.verdict, it.source].filter(Boolean).join(' · ')}
+                </p>
+                {it.url ? (
+                  <a
+                    href={it.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 dark:text-blue-400 underline mt-1 inline-block"
+                  >
+                    Open source article
+                  </a>
+                ) : null}
+              </div>
+            ))}
         </section>
       )}
     </div>
