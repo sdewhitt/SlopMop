@@ -20,7 +20,7 @@ OPENAI_FACT_CHECK_MODEL=gpt-4o-mini
 FACT_CHECK_MODE=gemini_wiki
 GEMINI_API_KEY=your_key_from_aistudio_google_com
 # optional:
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ## Gemini + Wikipedia (“free-ish”)

@@ -24,8 +24,8 @@ REQUEST_TIMEOUT_SEC = 60.0
 MAX_INPUT_CHARS = 8000
 MAX_CLAIMS = 4
 
-# https://meta.wikimedia.org/wiki/User-Agent_policy
-WIKI_USER_AGENT = "SlopMopFactCheck/1.0 (educational project; local development)"
+# https://meta.wikimedia.org/wiki/User-Agent_policy — must identify the app + contact/URL or requests may get 403.
+WIKI_USER_AGENT = "SlopMop/1.0 (educational; +https://github.com/SlopMop/SlopMop) httpx"
 
 CLASSIFIER_PROMPT = """Analyze the user's text (e.g. social media post).
 
@@ -150,7 +150,7 @@ async def run_gemini_wiki_fact_check(text: str) -> tuple[list[dict[str, str]], s
     if len(stripped) > MAX_INPUT_CHARS:
         user_block += "\n\n[... truncated ...]"
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
     url = GEMINI_GENERATE_URL.format(model=model) + f"?key={quote(key, safe='')}"
 
     payload: dict[str, Any] = {
