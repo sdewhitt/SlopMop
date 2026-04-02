@@ -36,6 +36,8 @@ export class OverlayRenderer {
             runFactCheck: () => void;
             lastItems: FactCheckItem[] | null;
             lastError: string | null;
+            /** Removes document capture listener used to dismiss pinned fact-check tooltips. */
+            factCheckTooltipCleanup: (() => void) | null;
         }
     >();
     /** When set, detection badge / scanning / errors render here; fact panel stays a sibling. */
@@ -226,6 +228,7 @@ export class OverlayRenderer {
                 runFactCheck: run,
                 lastItems: null,
                 lastError: null,
+                factCheckTooltipCleanup: null,
             });
             factButton.onclick = (event) => {
                 event.preventDefault();
@@ -426,8 +429,17 @@ export class OverlayRenderer {
         this.mapToPostText.delete(postId);
         this.mapToErrorMessage.delete(postId);
         this.mapToTextBody.delete(postId);
+        this.clearFactCheckTooltipListeners(postId);
         this.mapToFactCheckUi.delete(postId);
         this.mapToDetectPanel.delete(postId);
+    }
+
+    private clearFactCheckTooltipListeners(postId: PostId): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (ui?.factCheckTooltipCleanup) {
+            ui.factCheckTooltipCleanup();
+            ui.factCheckTooltipCleanup = null;
+        }
     }
 
     private restorePostBodyHtml(postId: PostId): void {
@@ -447,6 +459,7 @@ export class OverlayRenderer {
         ui.lastItems = items;
         ui.lastError = null;
         factPanel.removeAttribute("title");
+        this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
         factPanel.style.whiteSpace = "normal";
 
@@ -467,17 +480,66 @@ export class OverlayRenderer {
             : "Not recognized";
 
         let tooltip: HTMLElement | null = null;
-        factPanel.onmouseenter = () => {
+        let pinned = false;
+
+        const removeDocDismiss = (): void => {
+            if (ui.factCheckTooltipCleanup) {
+                ui.factCheckTooltipCleanup();
+                ui.factCheckTooltipCleanup = null;
+            }
+        };
+
+        const hideTooltip = (): void => {
+            tooltip?.remove();
+            tooltip = null;
+            pinned = false;
+            removeDocDismiss();
+        };
+
+        const showTooltip = (): void => {
             if (tooltip) return;
             tooltip = isSimple
                 ? this.createSimpleFactCheckTooltip(items)
                 : this.createFactCheckTooltipDetailed(items);
             factPanel.appendChild(tooltip);
         };
-        factPanel.onmouseleave = () => {
-            tooltip?.remove();
-            tooltip = null;
+
+        const setPinned = (next: boolean): void => {
+            pinned = next;
+            removeDocDismiss();
+            if (!next) return;
+            const onDocClick = (e: MouseEvent): void => {
+                if (!tooltip || !pinned) return;
+                const t = e.target instanceof Node ? e.target : null;
+                if (t && factPanel.contains(t)) return;
+                hideTooltip();
+            };
+            document.addEventListener("click", onDocClick, true);
+            ui.factCheckTooltipCleanup = (): void => {
+                document.removeEventListener("click", onDocClick, true);
+            };
         };
+
+        factPanel.onmouseenter = (): void => {
+            if (!tooltip) showTooltip();
+        };
+        factPanel.onmouseleave = (): void => {
+            if (!pinned) hideTooltip();
+        };
+        factPanel.onclick = (e: MouseEvent): void => {
+            e.stopPropagation();
+            const t = e.target instanceof Node ? e.target : null;
+            if (t && tooltip?.contains(t)) return;
+            if (pinned && tooltip) {
+                hideTooltip();
+                return;
+            }
+            showTooltip();
+            setPinned(true);
+        };
+
+        showTooltip();
+        setPinned(true);
     }
 
     renderFactCheckError(postId: PostId, message: string): void {
@@ -487,6 +549,7 @@ export class OverlayRenderer {
         ui.lastError = message;
         ui.lastItems = null;
         factPanel.removeAttribute("title");
+        this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
         factPanel.style.whiteSpace = "normal";
         factPanel.style.backgroundColor = "#f59e0b";
@@ -525,17 +588,66 @@ export class OverlayRenderer {
             return;
         }
 
-        factPanel.style.cursor = "default";
+        factPanel.style.cursor = "pointer";
         let tooltip: HTMLElement | null = null;
-        factPanel.onmouseenter = () => {
+        let pinned = false;
+
+        const removeDocDismiss = (): void => {
+            if (ui.factCheckTooltipCleanup) {
+                ui.factCheckTooltipCleanup();
+                ui.factCheckTooltipCleanup = null;
+            }
+        };
+
+        const hideTooltip = (): void => {
+            tooltip?.remove();
+            tooltip = null;
+            pinned = false;
+            removeDocDismiss();
+        };
+
+        const showTooltip = (): void => {
             if (tooltip) return;
             tooltip = this.createFactCheckErrorTooltip(message);
             factPanel.appendChild(tooltip);
         };
-        factPanel.onmouseleave = () => {
-            tooltip?.remove();
-            tooltip = null;
+
+        const setPinned = (next: boolean): void => {
+            pinned = next;
+            removeDocDismiss();
+            if (!next) return;
+            const onDocClick = (e: MouseEvent): void => {
+                if (!tooltip || !pinned) return;
+                const t = e.target instanceof Node ? e.target : null;
+                if (t && factPanel.contains(t)) return;
+                hideTooltip();
+            };
+            document.addEventListener("click", onDocClick, true);
+            ui.factCheckTooltipCleanup = (): void => {
+                document.removeEventListener("click", onDocClick, true);
+            };
         };
+
+        factPanel.onmouseenter = (): void => {
+            if (!tooltip) showTooltip();
+        };
+        factPanel.onmouseleave = (): void => {
+            if (!pinned) hideTooltip();
+        };
+        factPanel.onclick = (e: MouseEvent): void => {
+            e.stopPropagation();
+            const t = e.target instanceof Node ? e.target : null;
+            if (t && tooltip?.contains(t)) return;
+            if (pinned && tooltip) {
+                hideTooltip();
+                return;
+            }
+            showTooltip();
+            setPinned(true);
+        };
+
+        showTooltip();
+        setPinned(true);
     }
 
     private applyInPostHighlights(postId: PostId, res: DetectionResponse): void {
@@ -583,6 +695,7 @@ export class OverlayRenderer {
         if (!ui) return;
         const { factPanel } = ui;
         factPanel.removeAttribute("title");
+        this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
         factPanel.style.whiteSpace = "normal";
         factPanel.style.backgroundColor = "#6b7280";
@@ -605,9 +718,10 @@ export class OverlayRenderer {
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             zIndex: "10000",
-            pointerEvents: "none",
+            pointerEvents: "auto",
             wordBreak: "break-word",
         });
+        tip.onclick = (e) => e.stopPropagation();
 
         const header = document.createElement("div");
         Object.assign(header.style, {
@@ -744,9 +858,10 @@ export class OverlayRenderer {
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             zIndex: "10000",
-            pointerEvents: "none",
+            pointerEvents: "auto",
             wordBreak: "break-word",
         });
+        tip.onclick = (e) => e.stopPropagation();
 
         const header = document.createElement("div");
         Object.assign(header.style, {

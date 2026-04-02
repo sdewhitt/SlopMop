@@ -23,6 +23,86 @@ WIKI_API = "https://en.wikipedia.org/w/api.php"
 REQUEST_TIMEOUT_SEC = 60.0
 MAX_INPUT_CHARS = 8000
 MAX_CLAIMS = 4
+_WIKI_SEARCH_LIMIT = 10
+_WIKI_MIN_SCORE_WITH_HINT = 2.8
+_WIKI_MIN_SCORE_NO_HINT = 4.2
+
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "as",
+        "by",
+        "with",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "been",
+        "be",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "there",
+        "than",
+        "then",
+        "into",
+        "over",
+        "after",
+        "before",
+        "between",
+        "about",
+        "under",
+        "above",
+        "not",
+        "no",
+        "also",
+        "just",
+        "only",
+        "very",
+        "such",
+        "more",
+        "most",
+        "some",
+        "any",
+        "all",
+        "each",
+        "other",
+        "another",
+    }
+)
 
 # https://meta.wikimedia.org/wiki/User-Agent_policy — must identify the app + contact/URL or requests may get 403.
 WIKI_USER_AGENT = "SlopMop/1.0 (educational; +https://github.com/SlopMop/SlopMop) httpx"
@@ -37,6 +117,7 @@ Return ONLY valid JSON with this exact shape:
     {
       "query_text": "short verbatim excerpt from the user's text supporting this claim",
       "claim": "one concise factual assertion that could be verified (who/what/when/where/number)",
+      "wikipedia_query": "REQUIRED for factual claims: 2–8 words naming the ONE encyclopedia topic that best matches the SUBJECT of the claim (person, law, war, organization, place, treaty, product, species). Like a plausible article title fragment, NOT the full claim sentence and NOT generic nouns alone (avoid bare 'company', 'study', 'government'). If there is no suitable article topic, use an empty string.",
       "assessment": "one sentence: plausibility or what would need checking (you cannot browse the web)"
     }
   ]
@@ -45,6 +126,7 @@ Return ONLY valid JSON with this exact shape:
 Rules:
 - Use "opinion" when the text is mainly subjective views, questions without factual assertions, jokes, greetings, or rhetoric with **no** specific checkable factual content.
 - Use "factual" only if there is at least one **specific** claim (dates, statistics, "X happened", medical/legal assertions, quoted events). Otherwise use "opinion" and set "claims" to [].
+- For each factual claim, wikipedia_query must target the *specific* entity or event the claim is mainly *about*, so a reader could confirm or contextualize the claim from that article—not any random article that might mention a word from the claim.
 - At most """ + str(MAX_CLAIMS) + """ entries in "claims".
 - Do not include markdown or extra keys."""
 
@@ -64,23 +146,118 @@ def _wiki_article_url(title: str) -> str:
     return "https://en.wikipedia.org/wiki/" + quote(t, safe="/():!%'")
 
 
-async def wikipedia_best_link(
-    client: httpx.AsyncClient,
-    search_query: str,
-) -> tuple[str, str]:
-    """
-    Returns (article_url, article_title) using English Wikipedia search.
-    Empty strings if no result.
-    """
+def _significant_tokens(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9']+", (text or "").lower())
+    return {w for w in words if len(w) >= 3 and w not in _STOPWORDS}
+
+
+def _strip_wiki_snippet_html(snippet: str) -> str:
+    return re.sub(r"<[^>]+>", " ", snippet or "")
+
+
+def _count_token_word_matches(lowercased_text: str, tokens: set[str]) -> int:
+    if not lowercased_text or not tokens:
+        return 0
+    n = 0
+    for t in tokens:
+        if re.search(rf"(?<!\w){re.escape(t)}(?!\w)", lowercased_text):
+            n += 1
+    return n
+
+
+def _fallback_search_phrase(claim: str) -> str:
+    """Short query from the claim when the model omits wikipedia_query."""
+    toks = _significant_tokens(claim)
+    if not toks:
+        w = claim.split()[:10]
+        return " ".join(w).strip()[:120]
+    # Preserve order of first appearances in the claim
+    words = re.findall(r"[A-Za-z][A-Za-z0-9']*|[0-9]{4}", claim)
+    out: list[str] = []
+    have: set[str] = set()
+    for raw in words:
+        key = re.sub(r"'s$", "", raw.lower())
+        if len(key) < 3 or key in _STOPWORDS:
+            continue
+        if key not in toks:
+            continue
+        if key in have:
+            continue
+        have.add(key)
+        out.append(raw if raw[:1].isupper() else raw.lower())
+        if len(out) >= 6:
+            break
+    if not out:
+        return " ".join(claim.split()[:8])[:120].strip()
+    return " ".join(out)[:120].strip()
+
+
+def _wiki_disambiguation_title(title: str) -> bool:
+    t = (title or "").lower()
+    return "disambiguation" in t or t.endswith("(disambiguation)")
+
+
+def _wiki_relevance_score(
+    *,
+    claim: str,
+    wiki_hint: str,
+    title: str,
+    snippet: str,
+    rank: int,
+) -> tuple[float, int, int, int]:
+    claim_t = _significant_tokens(claim)
+    hint_t = _significant_tokens(wiki_hint) if wiki_hint else set()
+    title_l = title.lower()
+    snip_l = _strip_wiki_snippet_html(snippet).lower()
+
+    mt = _count_token_word_matches(title_l, claim_t)
+    ms = _count_token_word_matches(snip_l, claim_t)
+    mth = _count_token_word_matches(title_l, hint_t) if hint_t else 0
+    msh = _count_token_word_matches(snip_l, hint_t) if hint_t else 0
+
+    # Hint alignment (model’s intended topic) matters most; pure snippet hits are weaker.
+    score = (
+        5.0 * mth
+        + 2.0 * msh
+        + 2.5 * mt
+        + 0.9 * ms
+        + max(0.0, 1.1 - rank * 0.1)
+    )
+    if _wiki_disambiguation_title(title):
+        score -= 4.0
+    return score, mt, ms, mth
+
+
+def _wiki_passes_threshold(
+    *,
+    wiki_hint: str,
+    score: float,
+    mt: int,
+    ms: int,
+    mth: int,
+) -> bool:
+    if score < 0:
+        return False
+    if wiki_hint.strip():
+        if score < _WIKI_MIN_SCORE_WITH_HINT:
+            return False
+        # Hint must tie the result to the intended topic, not a random mention.
+        return mth >= 1 or (mt >= 2 and ms >= 1)
+    if score < _WIKI_MIN_SCORE_NO_HINT:
+        return False
+    return mt >= 2 or (mt >= 1 and ms >= 3)
+
+
+async def _wikipedia_search_hits(client: httpx.AsyncClient, search_query: str) -> list[dict[str, Any]]:
     q = (search_query or "").strip()[:300]
     if not q:
-        return "", ""
-
+        return []
     params = {
         "action": "query",
         "list": "search",
         "srsearch": q,
-        "srlimit": "1",
+        "srlimit": str(_WIKI_SEARCH_LIMIT),
+        "srprop": "snippet",
         "format": "json",
         "formatversion": "2",
     }
@@ -92,29 +269,86 @@ async def wikipedia_best_link(
             timeout=20.0,
         )
     except (httpx.TimeoutException, httpx.RequestError):
-        return "", ""
-
+        return []
     if r.status_code >= 400:
-        return "", ""
-
+        return []
     try:
         data = r.json()
     except Exception:
-        return "", ""
-
+        return []
     search = (data.get("query") or {}).get("search") if isinstance(data, dict) else None
-    if not isinstance(search, list) or len(search) == 0:
+    return search if isinstance(search, list) else []
+
+
+def _pick_best_wikipedia_hit(
+    claim: str,
+    wiki_query_hint: str,
+    search: list[dict[str, Any]],
+) -> tuple[str, float]:
+    best_title = ""
+    best_score = -1e9
+    for rank, hit in enumerate(search):
+        if not isinstance(hit, dict):
+            continue
+        title = hit.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        snippet = hit.get("snippet") if isinstance(hit.get("snippet"), str) else ""
+        score, mt, ms, mth = _wiki_relevance_score(
+            claim=claim,
+            wiki_hint=wiki_query_hint,
+            title=title,
+            snippet=snippet,
+            rank=rank,
+        )
+        if not _wiki_passes_threshold(
+            wiki_hint=wiki_query_hint,
+            score=score,
+            mt=mt,
+            ms=ms,
+            mth=mth,
+        ):
+            continue
+        if score > best_score:
+            best_score = score
+            best_title = title.strip()
+    return best_title, best_score
+
+
+async def wikipedia_best_link_for_claim(
+    client: httpx.AsyncClient,
+    claim: str,
+    wiki_query_hint: str,
+) -> tuple[str, str]:
+    """
+    Search English Wikipedia and pick the best-ranked title/snippet pair that
+    actually overlaps the claim (and optional model-provided wikipedia_query).
+    Tries the model hint first, then a claim-derived query, and keeps the
+    strongest passing result across both.
+    """
+    hint = (wiki_query_hint or "").strip()
+    queries: list[str] = []
+    if hint:
+        queries.append(hint[:300])
+    fb = _fallback_search_phrase(claim)[:300].strip()
+    if fb and fb not in queries:
+        queries.append(fb)
+    if not queries:
         return "", ""
 
-    first = search[0]
-    if not isinstance(first, dict):
+    best_title = ""
+    best_score = -1e9
+    for raw_q in queries:
+        hits = await _wikipedia_search_hits(client, raw_q)
+        title, score = _pick_best_wikipedia_hit(claim, wiki_query_hint, hits)
+        if title and score > best_score:
+            best_score = score
+            best_title = title
+
+    if not best_title:
         return "", ""
 
-    title = first.get("title")
-    if not isinstance(title, str) or not title.strip():
-        return "", ""
-
-    return _wiki_article_url(title), title
+    return _wiki_article_url(best_title), best_title
 
 
 def _extract_gemini_text(data: dict[str, Any]) -> str | None:
@@ -233,15 +467,29 @@ async def run_gemini_wiki_fact_check(text: str) -> tuple[list[dict[str, str]], s
                 assessment = (
                     c.get("assessment") if isinstance(c.get("assessment"), str) else ""
                 ).strip()
+                wq = c.get("wikipedia_query")
+                wiki_hint = (
+                    wq.strip()
+                    if isinstance(wq, str) and wq.strip()
+                    else ""
+                )
 
-                wiki_url, wiki_title = await wikipedia_best_link(client, claim)
+                wiki_url, wiki_title = await wikipedia_best_link_for_claim(
+                    client, claim.strip(), wiki_hint
+                )
                 if wiki_url:
-                    verdict = assessment or "Related Wikipedia article found (search match; not a full fact verdict)."
+                    verdict = (
+                        assessment
+                        or "Wikipedia article matched for claim topic (context only; not a verdict on truth)."
+                    )
                     source = f"Wikipedia: {wiki_title}"
                     link = wiki_url
                 else:
-                    verdict = assessment or "No matching Wikipedia article in search (claim may still need other sources)."
-                    source = "Gemini + Wikipedia (no search hit)"
+                    verdict = (
+                        assessment
+                        or "No Wikipedia article passed relevance checks for this claim (try other sources)."
+                    )
+                    source = "Gemini + Wikipedia (no strong match)"
                     link = ""
 
                 rows.append(
