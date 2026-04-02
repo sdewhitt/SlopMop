@@ -225,6 +225,11 @@ export class FeedObserver {
         // In manual mode, still render Detect Now on newly encountered hosts
         // (e.g. opening a modal for a post already seen in the grid).
         if (this.seenPostIds.has(extracted.postId)) {
+            // Comments can be discovered through overlapping DOM wrappers that map
+            // to the same stable comment id. Avoid rendering duplicate controls.
+            if (type === "comment") {
+                return;
+            }
             if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
                 this.renderManualEntry(extracted, node as HTMLElement, textContainer);
                 this.renderedHosts.add(node);
