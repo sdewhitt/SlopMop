@@ -296,23 +296,24 @@ export default function Popup() {
   }, [mergeSettings]);
 
   useEffect(() => {
+    const isFeedUrl = (url: string) =>
+      url.includes('reddit.com') ||
+      url.includes('instagram.com') ||
+      url.includes('linkedin.com') ||
+      url.includes('twitter.com') ||
+      url.includes('x.com');
+
     const tabsApi = browser.tabs;
     if (!tabsApi?.query) {
-      setIsSupportedFeedSite(false);
+      // Content script context: browser.tabs is unavailable; use the host page URL directly.
+      setIsSupportedFeedSite(isFeedUrl(window.location.hostname));
       return;
     }
     const refreshFeedSite = () => {
       tabsApi
         .query({ active: true, lastFocusedWindow: true })
         .then((tabs) => {
-          const url = tabs[0]?.url ?? '';
-          setIsSupportedFeedSite(
-            url.includes('reddit.com') ||
-              url.includes('instagram.com') ||
-              url.includes('linkedin.com') ||
-              url.includes('twitter.com') ||
-              url.includes('x.com'),
-          );
+          setIsSupportedFeedSite(isFeedUrl(tabs[0]?.url ?? ''));
         })
         .catch(() => setIsSupportedFeedSite(false));
     };
