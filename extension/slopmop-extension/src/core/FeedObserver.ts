@@ -292,9 +292,9 @@ export class FeedObserver {
             return;
         }
 
-        // manual mode: Fact check (optional) + Detect Now; fact-check works for any script / language.
+        // manual mode: Fact check (optional) + Detect Now; gated by settings.factCheck.
         const onFactCheck =
-            extracted.text.plain.trim().length > 0
+            this.settings.factCheck && extracted.text.plain.trim().length > 0
                 ? () => {
                       void this.bus.sendFactCheck(extracted.postId, extracted.text.plain);
                   }

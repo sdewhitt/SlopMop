@@ -262,12 +262,18 @@ export default function Options() {
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-gray-800">
+              <div className="pt-4 border-t border-gray-800 space-y-4">
                 <Toggle
                   checked={settings.highlightSegments}
                   onChange={(v) => update('highlightSegments', v)}
                   label="Highlight segments that triggered detection"
                   description="Show which parts of the text contributed most to the AI score"
+                />
+                <Toggle
+                  checked={settings.factCheck}
+                  onChange={(v) => update('factCheck', v)}
+                  label="Show Fact check"
+                  description="Fact check button beside Detect Now; runs ClaimReview search via backend"
                 />
               </div>
             </div>

@@ -177,6 +177,7 @@ export default function Popup() {
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
+        factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
       };
       setSettings(merged);
