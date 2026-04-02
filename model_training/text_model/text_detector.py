@@ -1,5 +1,7 @@
+# for Python 3.10+ compatibility
 from __future__ import annotations
 
+# for type hints
 from typing import Any, Callable, List, Optional
 
 import os
@@ -202,13 +204,8 @@ def tokenize_batch(batch, tokenizer, text_column="text"):
   )
 
 
+# spread the mask sequence positions
 def _spread_mask_sequence_positions(mask_indices: list[int], k: int) -> list[int]:
-  """
-  Choose up to k tensor positions from mask_indices (content tokens in order, no padding).
-
-  Using only the first k tokens biases all highlights to the opening sentence; spacing
-  picks across the list gives coverage of the full (truncated) input.
-  """
   if k <= 0 or not mask_indices:
     return []
   n = len(mask_indices)
@@ -244,6 +241,16 @@ def _spread_mask_sequence_positions(mask_indices: list[int], k: int) -> list[int
   return out[:k]
 
 
+# enable verbose logging for so that we can see when satire neural / heuristic adjustment runs (see text_detector.py)
+def _satire_verbose_log_enabled() -> bool:
+  return os.environ.get("SLOPMOP_SATIRE_LOG", "").strip().lower() in ("1", "true", "yes")
+
+
+# temporary: always run satire checks for testing purposes
+def _satire_force_when_human_enabled() -> bool:
+  return os.environ.get("SLOPMOP_SATIRE_FORCE_WHEN_HUMAN", "").strip().lower() in ("1", "true", "yes")
+
+
 class TextDetectors:
   """
   Implementation of the TextDetector class (design section 3)
@@ -269,7 +276,20 @@ class TextDetectors:
     self._initialize_satire_detector()
     # lazy: satire_detector.extract_satire_keywords_post_then_comments (regex + comment consensus)
     self._satire_heuristic_scan_fn: Any = None
+    if _satire_verbose_log_enabled():
+      print(
+        "\033[1m [SlopMop Satire] \033[0m  Verbose logging ON (SLOPMOP_SATIRE_LOG=1) — lines print on every /detect. "
+        f"Neural satire weights: {'loaded' if self._satire_detector is not None else 'NOT loaded'}",
+        flush=True,
+      )
+    if _satire_force_when_human_enabled():
+      print(
+        "\033[1m [SlopMop Satire] \033[0m  SLOPMOP_SATIRE_FORCE_WHEN_HUMAN=1 — satire nudge + keyword scan run even "
+        "when the text is already in the human band (temporary debug).",
+        flush=True,
+      )
 
+  # initialize the satire detector
   def _initialize_satire_detector(self) -> None:
     flag = os.environ.get("SLOPMOP_SATIRE_ADJUST", "1").strip().lower()
     if flag in ("0", "false", "no", ""):
@@ -317,20 +337,41 @@ class TextDetectors:
     ai_min: float,
   ) -> tuple[float, str]:
     ps = self._satire_prob_satire(text)
-    if ps is None:
-      return prob, self.prob_to_label(prob, human_max, ai_min)
-
     min_sat = float(os.environ.get("SLOPMOP_SATIRE_MIN_PROB", "0.5"))
     penalty = float(os.environ.get("SLOPMOP_SATIRE_AI_PENALTY", "0.3"))
+    if ps is None:
+      if _satire_verbose_log_enabled():
+        print("\033[1m [SlopMop Satire] \033[0m  neural: skip (no satire model — check best_satire_detector.pt)", flush=True)
+      return prob, self.prob_to_label(prob, human_max, ai_min)
     if ps < min_sat:
+      if _satire_verbose_log_enabled():
+        print(
+          f"\033[1m [SlopMop Satire] \033[0m  neural: p_satire={ps:.3f} < min_sat={min_sat} → no nudge (raw_AI_prob={prob:.3f})",
+          flush=True,
+        )
       return prob, self.prob_to_label(prob, human_max, ai_min)
-    if prob < human_max:
+    if prob < human_max and not _satire_force_when_human_enabled():
+      if _satire_verbose_log_enabled():
+        print(
+          f"\033[1m [SlopMop Satire] \033[0m  neural: satire OK (p_satire={ps:.3f}) but raw_AI_prob={prob:.3f} < human_max={human_max} "
+          "→ no nudge (already 'human' band)",
+          flush=True,
+        )
       return prob, self.prob_to_label(prob, human_max, ai_min)
+    if prob < human_max and _satire_force_when_human_enabled() and _satire_verbose_log_enabled():
+      print(
+        f"\033[1m [SlopMop Satire] \033[0m neural: FORCE_WHEN_HUMAN — applying nudge despite raw_AI_prob={prob:.3f} < human_max",
+        flush=True,
+      )
     new_prob = max(0.0, prob - penalty)
+    if _satire_verbose_log_enabled():
+      print(
+        f"\033[1m [SlopMop Satire] \033[0m neural: APPLIED 	\033[1m p_satire={ps:.3f}	\033[0m raw_AI {prob:.3f} -> {new_prob:.3f} (penalty={penalty})",
+        flush=True,
+    )
     return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
 
-
- # import the satire heuristic scan function
+  # get the satire heuristic scan function
   def _get_satire_heuristic_scan(self) -> Optional[Callable[..., Any]]:
     if self._satire_heuristic_scan_fn is False:
       return None
@@ -360,11 +401,26 @@ class TextDetectors:
   ) -> tuple[float, str]:
     flag = os.environ.get("SLOPMOP_SATIRE_HEURISTIC", "1").strip().lower()
     if flag in ("0", "false", "no", ""):
+      if _satire_verbose_log_enabled():
+        print("\033[1m [SlopMop Satire] \033[0m  heuristic: disabled (SLOPMOP_SATIRE_HEURISTIC=0)", flush=True)
       return prob, self.prob_to_label(prob, human_max, ai_min)
-    if prob < human_max:
+    if prob < human_max and not _satire_force_when_human_enabled():
+      if _satire_verbose_log_enabled():
+        print(
+          f"\033[1m [SlopMop Satire] \033[0m  heuristic: skip raw_AI_prob={prob:.3f} < human_max={human_max} "
+          "(heuristics only nudge non-human scores)",
+          flush=True,
+        )
       return prob, self.prob_to_label(prob, human_max, ai_min)
+    if prob < human_max and _satire_force_when_human_enabled() and _satire_verbose_log_enabled():
+      print(
+        f"\033[1m [SlopMop Satire] \033[0m  heuristic: FORCE_WHEN_HUMAN — running keyword scan despite raw_AI_prob={prob:.3f} < human_max",
+        flush=True,
+      )
     scan = self._get_satire_heuristic_scan()
     if scan is None:
+      if _satire_verbose_log_enabled():
+        print("\033[1m [SlopMop Satire] \033[0m  heuristic: skip (scanner import failed)", flush=True)
       return prob, self.prob_to_label(prob, human_max, ai_min)
     try:
       r = scan(text, comment_texts)
@@ -372,6 +428,8 @@ class TextDetectors:
       print(f"[TextDetectors] Satire heuristic scan failed: {e}")
       return prob, self.prob_to_label(prob, human_max, ai_min)
     if not r.keywords:
+      if _satire_verbose_log_enabled():
+        print(f"\033[1m [SlopMop Satire] \033[0m  heuristic: no satire keywords/consensus (raw_AI_prob={prob:.3f})", flush=True)
       return prob, self.prob_to_label(prob, human_max, ai_min)
     reason = getattr(r, "consensus_reason", None)
     strong = reason in ("yes_confirmation", "crowd_10")
@@ -380,8 +438,15 @@ class TextDetectors:
     else:
       penalty = float(os.environ.get("SLOPMOP_SATIRE_HEURISTIC_PENALTY", "0.25"))
     new_prob = max(0.0, prob - penalty)
+    if _satire_verbose_log_enabled():
+      print(
+        f"\033[1m [SlopMop Satire] \033[0m  heuristic: 	\033[7m\033[1mAPPLIED keywords={r.keywords!r}\033[0m \033[0m consensus={reason!r} "
+        f"raw_AI {prob:.3f} -> {new_prob:.3f} (penalty={penalty})",
+        flush=True,
+      )
     return new_prob, self.prob_to_label(new_prob, human_max, ai_min)
 
+  # apply all satire adjustments
   def _apply_all_satire_adjustments(
     self,
     text: str,
@@ -395,10 +460,6 @@ class TextDetectors:
 
   # initialize the model
   def _initialize_model(self):
-    """
-    Load the pre-trained transformer.
-    desklib/ai-text-detector-v1.01 uses a custom single-logit architecture; use DesklibAIDetectionModel.
-    """
     print(f"Loading model [{self.model_name}]...")
     self.use_binary_logit = self.model_name == "desklib/ai-text-detector-v1.01"
 
@@ -492,7 +553,6 @@ class TextDetectors:
     return "ai"
 
   def _get_raw_prob(self, text: str, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> float:
-    """Return model output probability (0-1) without LLM metadata adjustment."""
     enc = {"input_ids": input_ids, "attention_mask": attention_mask}
     enc = {k: v.to(self.device) for k, v in enc.items()}
     self.model.eval()
@@ -522,6 +582,7 @@ class TextDetectors:
       probs = torch.softmax(logits, dim=1)[:, 1]
     return [float(x) for x in probs.detach().cpu().flatten().tolist()]
 
+  # score the text with spans
   def score_text_with_spans(
     self,
     text: str,
@@ -532,12 +593,6 @@ class TextDetectors:
     top_k_spans: int = 12,
     comment_texts: Optional[List[str]] = None,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
-    """
-    Returns (confidence, label, highlights) where highlights is [(start, end, score), ...].
-    Uses token masking: mask each token, re-run inference, contribution = baseline - masked.
-    Masked variants are run in **one batched forward** (not N sequential passes).
-    max_tokens_to_evaluate caps how many *content* tokens are masked.
-    """
     if clean:
       text = preprocess_text(text)
     if not text.strip():
