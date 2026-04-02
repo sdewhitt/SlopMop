@@ -429,19 +429,6 @@ export class InstagramAdapter implements SiteAdapter {
       scopes.push(dialog);
     }
 
-    const permalinkAnchors = Array.from(
-      root.querySelectorAll<HTMLAnchorElement>('a[href*="/p/"], a[href*="/reel/"]'),
-    );
-    const permalinkRoots = permalinkAnchors
-      .map((anchor) => anchor.closest("main") ?? anchor.closest("section"))
-      .filter((el): el is HTMLElement => !!el);
-    for (const container of permalinkRoots) {
-      if (container.closest('div[role="dialog"]')) continue;
-      if (seen.has(container)) continue;
-      seen.add(container);
-      scopes.push(container);
-    }
-
     return scopes;
   }
 
