@@ -36,7 +36,9 @@ export class PostExtractor {
             : adapter.getCommentPermalink(node);
 
         // extract images before the empty-text guard so image-only posts aren't dropped.
-        const imageNodes = type === "post" ? adapter.getImageNodes(node) : [];
+        const imageNodes = type === "post" || type === "comment"
+            ? adapter.getImageNodes(node)
+            : [];
         const images = imageNodes.map((img) => {
             const srcUrl = img.currentSrc || img.src;
             return {
@@ -125,6 +127,7 @@ export class PostExtractor {
         const mediaLink = imgNode.closest("a[href]") as HTMLAnchorElement | null;
         const linkHref = mediaLink?.getAttribute("href")?.toLowerCase() ?? "";
         const permalinkLower = (permalink ?? "").toLowerCase();
+        const srcLower = (imgNode.currentSrc || imgNode.src || "").toLowerCase();
 
         if (permalinkLower.includes("/reel/") || linkHref.includes("/reel/")) {
             return "video";
@@ -133,6 +136,11 @@ export class PostExtractor {
         // If the post container has a video element near this image, treat this image as a video poster frame.
         if (postNode.querySelector("video")) {
             return "video";
+        }
+
+        // Preserve GIF labeling in the badge instead of collapsing to generic image.
+        if (srcLower.includes(".gif") || srcLower.includes("image/gif")) {
+            return "gif";
         }
 
         return "image";
