@@ -50,6 +50,7 @@ vi.mock('webextension-polyfill', () => ({
   },
 }));
 
+import browser from 'webextension-polyfill';
 import {
   pruneHistory,
   getHistory,
@@ -169,12 +170,10 @@ describe('History Page UI', () => {
   });
 
   it('clicking "View original post" opens the original post in a new tab', async () => {
-    const browser = (await import('webextension-polyfill')).default;
     (browser.runtime.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: [makeEntry({ postId: 'tab-test', url: 'https://reddit.com/r/test/comments/abc123' })],
     });
-    (browser.tabs.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
 
     render(<HistoryPage />);
 
@@ -188,7 +187,8 @@ describe('History Page UI', () => {
       screen.getByRole('button', { name: /open original post in new tab/i }),
     );
 
-    expect(browser.tabs.create).toHaveBeenCalledWith({
+    expect(browser.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'SLOPMOP_OPEN_URL',
       url: 'https://reddit.com/r/test/comments/abc123',
     });
   });

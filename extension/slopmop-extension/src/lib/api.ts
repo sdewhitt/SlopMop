@@ -5,6 +5,14 @@
 
 import type { FactCheckItem, HighlightSpan } from '@src/types/domain';
 
+/** Extra attempts after the first try (1 + this = total attempts). */
+const DETECTION_MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const getBaseUrl = (): string => {
     const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
 
@@ -27,63 +35,77 @@ export interface DetectResponse {
     highlights?: HighlightSpan[];
 }
 
-/*
-* Sends text to backend API and returns detection result.
-* @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
-*/
+/**
+ * Single HTTP attempt to POST /detect.
+ * @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
+ */
+async function detectTextOnce(
+    baseUrl: string,
+    cleanedText: string,
+    includeSpans: boolean,
+): Promise<DetectResponse> {
+    const requestBody = {
+        text: cleanedText,
+    };
+
+    const detectUrl =
+        baseUrl +
+        '/detect?include_spans=' +
+        (includeSpans ? 'true' : 'false');
+
+    const response = await fetch(detectUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+    });
+
+    if (response.ok === false) {
+        let message: string = 'HTTP ' + response.status;
+
+        try {
+            const data = await response.json();
+            if (data !== null && data !== undefined) {
+                if (typeof data.detail === 'string') {
+                    message = data.detail;
+                }
+            }
+        } catch {
+            // response is not JSON, keep default message
+        }
+
+        throw new Error(message);
+    }
+
+    const result: DetectResponse = await response.json();
+    return result;
+}
+
+/**
+ * Sends text to backend API and returns detection result.
+ * On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.
+ * @param includeSpans If false, requests `/detect?include_spans=false` (faster, no highlight spans).
+ */
 export async function detectText(
     text: string,
     includeSpans: boolean = true,
 ): Promise<DetectResponse> {
-const baseUrl: string = getBaseUrl();
-
-// remove extra spaces before sending to server
-const cleanedText: string = text.trim();
-
-const requestBody = {
-    text: cleanedText
-};
-
-const detectUrl =
-    baseUrl +
-    '/detect?include_spans=' +
-    (includeSpans ? 'true' : 'false');
-
-const response = await fetch(detectUrl, {
-    method: "POST",
-    headers: {
-    "Content-Type": "application/json"
-    },
-    body: JSON.stringify(requestBody)
-});
-
-// check if request succeeded (status 200–299)
-if (response.ok === false) {
-    // default error message if backend doesn't send one
-    let message: string = "HTTP " + response.status;
-
-    try {
-    // try reading JSON error from backend
-    const data = await response.json();
-
-    // checking step by step instead of optional chaining
-    if (data !== null && data !== undefined) {
-        if (typeof data.detail === "string") {
-        message = data.detail;
+    const baseUrl: string = getBaseUrl();
+    const cleanedText: string = text.trim();
+    let lastError: unknown;
+    const maxAttempts = 1 + DETECTION_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await detectTextOnce(baseUrl, cleanedText, includeSpans);
+        } catch (e) {
+            lastError = e;
+            if (attempt < maxAttempts) {
+                await sleep(RETRY_DELAY_MS);
+            }
         }
     }
-    } catch (error) {
-    // when response is not JSON (server error page)
-    // we just keep the default message
-    }
-
-    throw new Error(message);
-}
-
-// parse successful response
-const result: DetectResponse = await response.json();
-
-return result;
+    throw lastError;
 }
 
 // expected response from POST /detect-image
@@ -93,15 +115,11 @@ export interface DetectImageResponse {
     explanation: string;
 }
 
-/*
-* Sends a base64-encoded image to backend API and returns image detection result.
-*/
-export async function detectImage(
+async function detectImageOnce(
+    baseUrl: string,
     imageBase64: string,
-    mimeType: string = "image/jpeg",
+    mimeType: string,
 ): Promise<DetectImageResponse> {
-    const baseUrl: string = getBaseUrl();
-
     const requestBody = {
         image_base64: imageBase64,
         mime_type: mimeType,
@@ -177,4 +195,27 @@ export async function factCheckText(text: string): Promise<FactCheckResponse> {
     }
 
     return response.json() as Promise<FactCheckResponse>;
+}
+/*
+* Sends a base64-encoded image to backend API and returns image detection result.
+* On failure, retries up to DETECTION_MAX_RETRIES times (11 attempts total) before throwing.
+*/
+export async function detectImage(
+    imageBase64: string,
+    mimeType: string = "image/jpeg",
+): Promise<DetectImageResponse> {
+    const baseUrl: string = getBaseUrl();
+    let lastError: unknown;
+    const maxAttempts = 1 + DETECTION_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await detectImageOnce(baseUrl, imageBase64, mimeType);
+        } catch (e) {
+            lastError = e;
+            if (attempt < maxAttempts) {
+                await sleep(RETRY_DELAY_MS);
+            }
+        }
+    }
+    throw lastError;
 }
