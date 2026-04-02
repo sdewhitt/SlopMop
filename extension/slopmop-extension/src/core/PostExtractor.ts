@@ -36,7 +36,9 @@ export class PostExtractor {
             : adapter.getCommentPermalink(node);
 
         // extract images before the empty-text guard so image-only posts aren't dropped.
-        const imageNodes = type === "post" ? adapter.getImageNodes(node) : [];
+        const imageNodes = type === "post" || type === "comment"
+            ? adapter.getImageNodes(node)
+            : [];
         const images = imageNodes.map((img) => {
             const srcUrl = img.currentSrc || img.src;
             return {

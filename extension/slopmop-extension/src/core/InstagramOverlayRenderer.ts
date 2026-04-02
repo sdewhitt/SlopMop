@@ -11,7 +11,17 @@ export class InstagramOverlayRenderer extends OverlayRenderer {
         return { top: "48px", right: "8px" };
     }
 
+    protected override getBadgePositionForHost(hostNode: HTMLElement): Record<string, string> {
+        const isCommentHost =
+            hostNode.matches('li, [role="listitem"]') ||
+            hostNode.closest('ul[role="list"], ol, [role="list"]') !== null;
+        if (isCommentHost) {
+            return { top: "4px", right: "4px" };
+        }
+        return this.getBadgePosition();
+    }
+
     protected override getTooltipPosition(): Record<string, string> {
-        return { top: "calc(100% + 8px)", right: "0" };
+        return { top: "calc(100% + 2px)", right: "0" };
     }
 }
