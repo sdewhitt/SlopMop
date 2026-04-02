@@ -487,24 +487,27 @@ describe('Instagram extraction pipeline', () => {
       'ig-comment-1',
       commentOne,
       'First visible comment.',
-      undefined,
+      expect.any(Function),
       expect.any(HTMLElement),
+      expect.any(Function),
     );
     expect(renderPending).toHaveBeenNthCalledWith(
       2,
       'ig-comment-2',
       commentTwo,
       'Second visible comment.',
-      undefined,
+      expect.any(Function),
       expect.any(HTMLElement),
+      expect.any(Function),
     );
     expect(renderPending).toHaveBeenNthCalledWith(
       3,
       'ig-comment-3',
       commentThree,
       'Third visible comment.',
-      undefined,
+      expect.any(Function),
       expect.any(HTMLElement),
+      expect.any(Function),
     );
   });
 
@@ -546,6 +549,56 @@ describe('Instagram extraction pipeline', () => {
     (observer as any).scanAndProcess();
 
     expect(renderPending).toHaveBeenCalledTimes(25);
+  });
+
+  it('does not render duplicate controls when comment wrappers share the same comment id', () => {
+    const extractor = new PostExtractor();
+
+    const topComment = document.createElement('li');
+    topComment.id = 'ig-comment-dup';
+    const topText = document.createElement('span');
+    topText.setAttribute('dir', 'auto');
+    setInnerText(topText, 'Top comment content');
+    topComment.appendChild(topText);
+
+    const wrapperDuplicate = document.createElement('div');
+    wrapperDuplicate.id = 'ig-comment-dup';
+    const wrapperText = document.createElement('span');
+    wrapperText.setAttribute('dir', 'auto');
+    setInnerText(wrapperText, 'Top comment content');
+    wrapperDuplicate.appendChild(wrapperText);
+
+    const renderPending = vi.fn();
+    const observer = new FeedObserver(
+      createAdapter({
+        getSiteId: () => 'instagram.com',
+        findPostNodes: () => [],
+        findVisibleCommentNodes: () => [topComment, wrapperDuplicate],
+        getCommentId: (node) => node.id || null,
+        getCommentTextNode: (node) => node.querySelector('span'),
+        getCommentPermalink: () => 'https://www.instagram.com/p/DupCommentPost01/',
+      }),
+      extractor,
+      { renderPending, renderError: vi.fn() } as unknown as OverlayRenderer,
+      { sendAnalyze: vi.fn() } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        automaticScanning: false,
+        scanComments: 'auto_top_n',
+      },
+    );
+
+    (observer as any).scanAndProcess();
+
+    expect(renderPending).toHaveBeenCalledTimes(1);
+    expect(renderPending).toHaveBeenCalledWith(
+      'ig-comment-dup',
+      topComment,
+      'Top comment content',
+      expect.any(Function),
+      expect.any(HTMLElement),
+      expect.any(Function),
+    );
   });
 
   it('extracts top 25 comment nodes at depth 1 via findVisibleCommentNodes', () => {
