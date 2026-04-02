@@ -276,6 +276,7 @@ export class FeedObserver {
                     this.renderManualEntry(extracted, node as HTMLElement, textContainer);
                     this.renderedHosts.add(node);
                 }
+              
                 return;
             }
         }

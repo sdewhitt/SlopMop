@@ -16,7 +16,7 @@ export class InstagramOverlayRenderer extends OverlayRenderer {
             hostNode.matches('li, [role="listitem"]') ||
             hostNode.closest('ul[role="list"], ol, [role="list"]') !== null;
         if (isCommentHost) {
-            return { top: "4px", right: "4px" };
+            return { top: "calc(100% + 4px)", right: "4px" };
         }
         return this.getBadgePosition();
     }

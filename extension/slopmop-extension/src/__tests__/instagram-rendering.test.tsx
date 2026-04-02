@@ -101,8 +101,9 @@ describe('Instagram overlay rendering', () => {
 
     const overlay = commentNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    expect(overlay?.style.top).toBe('4px');
+    expect(overlay?.style.top).toBe('calc(100% + 4px)');
     expect(overlay?.style.right).toBe('4px');
+    expect(overlay?.style.bottom).toBe('');
   });
 
   it('renders dual text + image results on the badge for mixed Instagram posts', () => {
