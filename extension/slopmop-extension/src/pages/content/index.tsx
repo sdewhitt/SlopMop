@@ -202,6 +202,13 @@ function startObserver(settings: DetectionSettings): void {
     });
   });
 
+  bus.onFactCheckResult(({ postId, items }) => {
+    overlay.renderFactCheckResult(postId, items);
+  });
+  bus.onFactCheckError(({ postId, message }) => {
+    overlay.renderFactCheckError(postId, message);
+  });
+
   activeObserver.start();
   console.log('[SlopMop] FeedObserver started');
 }

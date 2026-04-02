@@ -1,4 +1,4 @@
-import { DetectionResponse, ImageDetectionResult, PostId } from "@src/types/domain";
+import { DetectionResponse, FactCheckItem, ImageDetectionResult, PostId } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import { getPatternReasons } from "@src/utils/aiTextPatterns";
 import {
@@ -29,6 +29,10 @@ export class OverlayRenderer {
     private mapToTextBody = new Map<PostId, HTMLElement>()
     /** Saved innerHTML before highlights so we can restore on clear / re-render / toggle off. */
     private mapToOriginalBodyHtml = new Map<PostId, string>()
+    private mapToFactCheckUi = new Map<
+        PostId,
+        { factButton: HTMLButtonElement; resultsContainer: HTMLElement; runFactCheck: () => void }
+    >();
     private settings: DetectionSettings;
 
 
@@ -93,7 +97,7 @@ export class OverlayRenderer {
         overlay.onmouseenter = () => {
             if (tooltip) return;
             tooltip = isSimple
-                ? this.createSimpleTooltip(res)
+                ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
             overlay.appendChild(tooltip);
         };
@@ -115,6 +119,7 @@ export class OverlayRenderer {
         plainText: string,
         onDetectNow?: () => void,
         textContainer?: HTMLElement | null,
+        onFactCheck?: () => void,
     ): void {
         this.mapToPostText.set(postId, plainText);
         if (textContainer) {
@@ -149,20 +154,72 @@ export class OverlayRenderer {
             return;
         }
 
-        // manual mode: show a Detect Now button instead of scanning immediately.
-        // this keeps noisy pages readable when users prefer click-to-scan behavior.
-        const detectNowButton = document.createElement("button");
-        detectNowButton.type = "button";
-        detectNowButton.textContent = "Detect Now";
-        Object.assign(detectNowButton.style, {
+        // manual mode: Fact check (left) + Detect Now — scanning waits for Detect click.
+        const column = document.createElement("div");
+        Object.assign(column.style, {
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+            alignItems: "flex-end",
+            maxWidth: "min(92vw, 420px)",
+        });
+
+        const row = document.createElement("div");
+        Object.assign(row.style, {
+            display: "flex",
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: "6px",
+            justifyContent: "flex-end",
+            alignItems: "center",
+        });
+
+        const resultsContainer = document.createElement("div");
+        resultsContainer.setAttribute("data-slopmop-fact", "results");
+
+        const buttonStyle: Partial<CSSStyleDeclaration> = {
             border: "none",
             borderRadius: "4px",
             padding: "6px 10px",
             fontSize: isSimple ? "14px" : "12px",
             fontWeight: "600",
             color: "#fff",
-            backgroundColor: "#6b7280",
             cursor: "pointer",
+        };
+
+        if (onFactCheck) {
+            const factButton = document.createElement("button");
+            factButton.type = "button";
+            factButton.textContent = "Fact check";
+            Object.assign(factButton.style, {
+                ...buttonStyle,
+                backgroundColor: "#2563eb",
+            });
+            const run = () => {
+                onFactCheck();
+            };
+            factButton.onclick = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                factButton.disabled = true;
+                factButton.textContent = "Checking…";
+                resultsContainer.replaceChildren();
+                run();
+            };
+            this.mapToFactCheckUi.set(postId, {
+                factButton,
+                resultsContainer,
+                runFactCheck: run,
+            });
+            row.appendChild(factButton);
+        }
+
+        const detectNowButton = document.createElement("button");
+        detectNowButton.type = "button";
+        detectNowButton.textContent = "Detect Now";
+        Object.assign(detectNowButton.style, {
+            ...buttonStyle,
+            backgroundColor: "#6b7280",
         });
         detectNowButton.onclick = (event) => {
             event.preventDefault();
@@ -170,7 +227,11 @@ export class OverlayRenderer {
             this.showScanningState(overlay);
             onDetectNow();
         };
-        overlay.appendChild(detectNowButton);
+        row.appendChild(detectNowButton);
+
+        column.appendChild(row);
+        column.appendChild(resultsContainer);
+        overlay.appendChild(column);
         this.mapToOverlay.set(postId, overlay);
 
 
@@ -191,6 +252,7 @@ export class OverlayRenderer {
             this.mapToErrorMessage.delete(existingPostId);
             this.mapToTextBody.delete(existingPostId);
             this.mapToOriginalBodyHtml.delete(existingPostId);
+            this.mapToFactCheckUi.delete(existingPostId);
         }
 
         for (const overlay of existingOverlays) {
@@ -312,6 +374,7 @@ export class OverlayRenderer {
         this.mapToPostText.delete(postId);
         this.mapToErrorMessage.delete(postId);
         this.mapToTextBody.delete(postId);
+        this.mapToFactCheckUi.delete(postId);
     }
 
     private restorePostBodyHtml(postId: PostId): void {
@@ -321,6 +384,119 @@ export class OverlayRenderer {
             el.innerHTML = snapshot;
         }
         this.mapToOriginalBodyHtml.delete(postId);
+    }
+
+    /** Append fact-check cards under the manual-action buttons; reopen links in a new tab. */
+    renderFactCheckResult(postId: PostId, items: FactCheckItem[]): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (!ui) return;
+        const { factButton, resultsContainer } = ui;
+        factButton.disabled = false;
+        factButton.textContent = "Fact check";
+        resultsContainer.replaceChildren();
+
+        const shellStyle: Partial<CSSStyleDeclaration> = {
+            maxWidth: "380px",
+            padding: "8px 10px",
+            borderRadius: "6px",
+            backgroundColor: "rgba(17,24,39,0.92)",
+            color: "#e5e7eb",
+            fontSize: "11px",
+            lineHeight: "1.45",
+            textAlign: "left",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+        };
+
+        if (items.length === 0) {
+            const empty = document.createElement("div");
+            Object.assign(empty.style, shellStyle);
+            empty.textContent =
+                "No ClaimReview matches for these excerpts. Fact checks only exist for claims publishers have reviewed.";
+            resultsContainer.appendChild(empty);
+            return;
+        }
+
+        items.forEach((it, idx) => {
+            const card = document.createElement("div");
+            Object.assign(card.style, {
+                ...shellStyle,
+                marginTop: idx === 0 ? "0" : "6px",
+            });
+
+            const claimEl = document.createElement("div");
+            Object.assign(claimEl.style, { fontWeight: "600", marginBottom: "4px" });
+            claimEl.textContent = it.claim;
+            card.appendChild(claimEl);
+
+            const meta = document.createElement("div");
+            meta.textContent = `${it.verdict ? it.verdict + " · " : ""}${it.source}`;
+            Object.assign(meta.style, { color: "#9ca3af", marginBottom: "4px" });
+            card.appendChild(meta);
+
+            if (it.url) {
+                const a = document.createElement("a");
+                a.href = it.url;
+                a.target = "_blank";
+                a.rel = "noopener noreferrer";
+                a.textContent = "Open source article";
+                Object.assign(a.style, {
+                    color: "#93c5fd",
+                    fontWeight: "600",
+                    textDecoration: "underline",
+                });
+                a.onclick = (ev) => ev.stopPropagation();
+                card.appendChild(a);
+            }
+
+            resultsContainer.appendChild(card);
+        });
+    }
+
+    renderFactCheckError(postId: PostId, message: string): void {
+        const ui = this.mapToFactCheckUi.get(postId);
+        if (!ui) return;
+        const { factButton, resultsContainer, runFactCheck } = ui;
+        factButton.disabled = false;
+        factButton.textContent = "Fact check";
+        resultsContainer.replaceChildren();
+
+        const box = document.createElement("div");
+        Object.assign(box.style, {
+            maxWidth: "380px",
+            padding: "8px 10px",
+            borderRadius: "6px",
+            backgroundColor: "rgba(127,29,29,0.9)",
+            color: "#fef2f2",
+            fontSize: "11px",
+            lineHeight: "1.45",
+            textAlign: "left",
+        });
+        box.textContent = message;
+        resultsContainer.appendChild(box);
+
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.textContent = "Retry";
+        Object.assign(retry.style, {
+            marginTop: "6px",
+            border: "none",
+            borderRadius: "4px",
+            padding: "4px 10px",
+            fontSize: "11px",
+            fontWeight: "600",
+            cursor: "pointer",
+            backgroundColor: "#fecaca",
+            color: "#7f1d1d",
+        });
+        retry.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            factButton.disabled = true;
+            factButton.textContent = "Checking…";
+            resultsContainer.replaceChildren();
+            runFactCheck();
+        };
+        resultsContainer.appendChild(retry);
     }
 
     private applyInPostHighlights(postId: PostId, res: DetectionResponse): void {
@@ -347,7 +523,7 @@ export class OverlayRenderer {
         return null;
     }
 
-    private createSimpleTooltip(res: DetectionResponse): HTMLElement {
+    private createSimpleTooltip(res: DetectionResponse, postText: string): HTMLElement {
         const verdictLabel: Record<DetectionResponse["verdict"], string> = {
             likely_ai: "Likely AI-generated",
             likely_human: "Likely human-written",
@@ -766,7 +942,10 @@ export class OverlayRenderer {
 
     private showScanningState(overlay: HTMLElement): void {
         const postId = this.findPostIdForOverlay(overlay);
-        if (postId) this.restorePostBodyHtml(postId);
+        if (postId) {
+            this.restorePostBodyHtml(postId);
+            this.mapToFactCheckUi.delete(postId);
+        }
         this.resetOverlayInteractions(overlay);
         overlay.style.whiteSpace = "normal";
         overlay.style.backgroundColor = "#6b7280";

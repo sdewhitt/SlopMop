@@ -292,7 +292,13 @@ export class FeedObserver {
             return;
         }
 
-        // manual mode: render Detect Now button and wait for user click.
+        // manual mode: Fact check (optional) + Detect Now; fact-check works for any script / language.
+        const onFactCheck =
+            extracted.text.plain.trim().length > 0
+                ? () => {
+                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain);
+                  }
+                : undefined;
         this.overlay.renderPending(
             extracted.postId,
             hostNode,
@@ -301,6 +307,7 @@ export class FeedObserver {
                 this.dispatchAnalyze(extracted);
             },
             textContainer,
+            onFactCheck,
         );
     }
 

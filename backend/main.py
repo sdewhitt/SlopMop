@@ -22,6 +22,8 @@ from nonescape import NonescapeClassifier, NonescapeClassifierMini, preprocess_i
 sys.path.insert(0, os.path.join(_THIS_DIR, "..", "model_training", "text_model"))
 from text_detector import TextDetectors # type: ignore
 
+from fact_check import run_fact_check_for_text
+
 app = FastAPI(title="SlopMop Detection API", version="0.1.0")
 
 # allow all origins, credentials, methods, and headers 
@@ -139,6 +141,23 @@ class DetectImageResponse(BaseModel):
     explanation: str
 
 
+class FactCheckRequest(BaseModel):
+    text: str
+
+
+class FactCheckItem(BaseModel):
+    """One fact-check row (possibly from Claim Search index)."""
+    query_text: str
+    claim: str
+    verdict: str
+    source: str
+    url: str
+
+
+class FactCheckResponse(BaseModel):
+    items: list[FactCheckItem]
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "message": "SlopMop Detection API"}
@@ -234,3 +253,28 @@ def detect_image(request: DetectImageRequest):
     )
 
     return DetectImageResponse(confidence=confidence, label=label, explanation=explanation)
+
+
+@app.post("/fact-check", response_model=FactCheckResponse)
+async def fact_check(request: FactCheckRequest):
+    """Chunk text into two-sentence queries and search Google Fact Check Tools."""
+    raw = request.text.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(raw) > MAX_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
+        )
+
+    key = os.environ.get("GOOGLE_FACT_CHECK_API_KEY", "").strip()
+    items_raw, err = await run_fact_check_for_text(raw, api_key=key or None)
+    if err:
+        if "rate limit" in err.lower():
+            raise HTTPException(status_code=429, detail=err)
+        if "not configured" in err.lower() or "missing api key" in err.lower():
+            raise HTTPException(status_code=503, detail=err)
+        raise HTTPException(status_code=502, detail=err)
+
+    items = [FactCheckItem(**row) for row in items_raw]
+    return FactCheckResponse(items=items)
