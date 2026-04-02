@@ -134,11 +134,19 @@ export class InstagramAdapter implements SiteAdapter {
       if (!src) return false;
       if (src.startsWith("data:")) return false;
 
+      const lowerSrc = src.toLowerCase();
+      const isCommentGifLike =
+        (!!img.closest('li, [role="listitem"]') || !!img.closest('ul[role="list"], [role="list"]')) &&
+        (lowerSrc.includes(".gif") ||
+          lowerSrc.includes("giphy") ||
+          lowerSrc.includes("tenor") ||
+          lowerSrc.includes("gif"));
+
       // Instagram content images are served from CDN domains
       const isContentHost =
         src.includes("cdninstagram.com") ||
         src.includes("fbcdn.net");
-      if (!isContentHost) return false;
+      if (!isContentHost && !isCommentGifLike) return false;
 
       // Exclude profile pictures: images inside the post <header> are
       // always avatars, never feed content.
@@ -156,6 +164,9 @@ export class InstagramAdapter implements SiteAdapter {
       // Filter out small avatars / icons / story circles
       const w = img.naturalWidth || img.width || 0;
       const h = img.naturalHeight || img.height || 0;
+      if (isCommentGifLike) {
+        return w >= 24 && h >= 24;
+      }
       return w >= 150 && h >= 150;
     });
   }
@@ -188,30 +199,32 @@ export class InstagramAdapter implements SiteAdapter {
   }
 
   findVisibleCommentNodes(root: ParentNode = document, limit = 25): Element[] {
-    // Instagram comments live inside feed post <article> elements.
-    // First find all feed-post articles, then search for comment nodes
-    // only within them. This prevents the stories tray and other top-level
-    // list items from being picked up as comments.
-    const articles = Array.from(root.querySelectorAll("article")).filter((article) => {
-      if (article.closest('div[role="dialog"]')) return false;
-      if (!this.getPermalink(article)) return false;
-      if (article.querySelector('a[href*="/stories/"]')) return false;
-      return true;
-    });
-    const selectors = ["ul > li", "ul > div"];
+    // Collect likely post scopes first so we can avoid unrelated list items
+    // (stories tray, suggested users, etc.) while still supporting modal and
+    // permalink page comments.
+    const scopes = this.collectCommentScopes(root);
+    const selectors = [
+      'ul[role="list"] > li[role="listitem"]',
+      'ul[role="list"] > li',
+      "ul > li",
+      "ul > div",
+      'div[role="list"] > div[role="listitem"]',
+    ];
 
     const seen = new Set<Element>();
     const out: Element[] = [];
 
-    for (const article of articles) {
+    for (const scope of scopes) {
       for (const sel of selectors) {
-        const nodes = Array.from(article.querySelectorAll(sel));
+        const nodes = Array.from(scope.querySelectorAll(sel));
         for (const node of nodes) {
           if (seen.has(node)) continue;
           seen.add(node);
 
           // Extra guard: skip any node inside a stories link
           if (node.closest('a[href*="/stories/"]')) continue;
+          if (this.isLikelyCommentComposer(node)) continue;
+          if (this.isLikelyReplyToggle(node)) continue;
 
           if (!this.isElementVisibleInViewport(node)) continue;
           if (!this.getCommentTextNode(node)) continue;
@@ -226,11 +239,26 @@ export class InstagramAdapter implements SiteAdapter {
   }
 
   getCommentId(commentNode: Element): string | null {
-    // Instagram doesn't expose stable comment IDs in the DOM, so we hash
-    // the comment text to generate a deterministic identifier.
-    const text =
-      this.getCommentTextNode(commentNode)?.innerText?.slice(0, 300).trim() ?? "";
-    return text ? `ig-comment-${this.fnv1a(text)}` : null;
+    // Prefer ID-like URL fragments when present.
+    const commentPermalink = this.getCommentPermalink(commentNode);
+    const fromPermalink = commentPermalink
+      ? this.parseCommentIdFromUrl(commentPermalink)
+      : null;
+    if (fromPermalink) return `ig-comment-${fromPermalink}`;
+
+    // Fallback to a deterministic hash using nearby post context + local position.
+    const textNode = this.getCommentTextNode(commentNode);
+    const text = textNode?.innerText?.slice(0, 300).trim() ?? "";
+    const commentImages = this.getImageNodes(commentNode);
+    const mediaSrc = commentImages[0]?.currentSrc || commentImages[0]?.src || "";
+    if (!text && !mediaSrc) return null;
+
+    const postPermalink = this.getPermalink(commentNode) ?? "";
+    const authorHref =
+      commentNode.querySelector<HTMLAnchorElement>('a[href^="/"]')?.getAttribute("href") ?? "";
+    const localIndex = this.getSiblingIndex(commentNode);
+
+    return `ig-comment-${this.fnv1a(`${postPermalink}|${authorHref}|${text}|${mediaSrc}|${localIndex}`)}`;
   }
 
   getCommentTextNode(commentNode: Element): HTMLElement | null {
@@ -241,6 +269,15 @@ export class InstagramAdapter implements SiteAdapter {
   }
 
   getCommentPermalink(commentNode: Element): string | null {
+    const commentLink = commentNode.querySelector<HTMLAnchorElement>(
+      'a[href*="/c/"], a[href*="/comment/"]',
+    );
+    const commentHref = commentLink?.getAttribute("href")?.trim();
+    if (commentHref) {
+      const normalized = this.normalizeUrl(commentHref);
+      if (normalized) return normalized;
+    }
+
     const link = commentNode.querySelector<HTMLAnchorElement>(
       'a[href*="/p/"], a[href*="/reel/"]',
     );
@@ -352,6 +389,94 @@ export class InstagramAdapter implements SiteAdapter {
   private parseShortcodeFromUrl(url: string): string | null {
     const m = url.match(/\/(?:p|reel)\/([A-Za-z0-9_-]+)(?:\/|$)/);
     return m?.[1] ?? null;
+  }
+
+  private parseCommentIdFromUrl(url: string): string | null {
+    const m = url.match(/\/(?:c|comment)\/([A-Za-z0-9_-]+)(?:\/|$)/);
+    return m?.[1] ?? null;
+  }
+
+  private collectCommentScopes(root: ParentNode): Element[] {
+    const scopes: Element[] = [];
+    const seen = new Set<Element>();
+
+    const articles = Array.from(root.querySelectorAll("article")).filter((article) => {
+      if (article.querySelector('a[href*="/stories/"]')) return false;
+      return !!this.getPermalink(article);
+    });
+    for (const article of articles) {
+      if (seen.has(article)) continue;
+      seen.add(article);
+      scopes.push(article);
+    }
+
+    const dialogs = Array.from(root.querySelectorAll('div[role="dialog"]')).filter((dialog) =>
+      !!this.getPermalink(dialog),
+    );
+    for (const dialog of dialogs) {
+      if (seen.has(dialog)) continue;
+      seen.add(dialog);
+      scopes.push(dialog);
+    }
+
+    const permalinkAnchors = Array.from(
+      root.querySelectorAll<HTMLAnchorElement>('a[href*="/p/"], a[href*="/reel/"]'),
+    );
+    const permalinkRoots = permalinkAnchors
+      .map((anchor) => anchor.closest("main") ?? anchor.closest("section"))
+      .filter((el): el is HTMLElement => !!el);
+    for (const container of permalinkRoots) {
+      if (container.closest('div[role="dialog"]')) continue;
+      if (seen.has(container)) continue;
+      seen.add(container);
+      scopes.push(container);
+    }
+
+    return scopes;
+  }
+
+  private isLikelyCommentComposer(node: Element): boolean {
+    if (node.matches('form, [role="textbox"], textarea')) return true;
+    if (node.querySelector('textarea, input[type="text"], [contenteditable="true"]')) {
+      return true;
+    }
+
+    const nodeText = (node as HTMLElement).innerText || node.textContent || "";
+    const text = nodeText.trim().toLowerCase();
+    return text === "add a comment..." || text.startsWith("add a comment");
+  }
+
+  private isLikelyReplyToggle(node: Element): boolean {
+    const commentTextNode = this.getCommentTextNode(node);
+    const nodeText =
+      commentTextNode?.innerText ||
+      commentTextNode?.textContent ||
+      (node as HTMLElement).innerText ||
+      node.textContent ||
+      "";
+    const text = nodeText
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!text) return false;
+
+    const replyToggleLabels = [
+      "view replies",
+      "hide replies",
+      "view more replies",
+      "hide more replies",
+      "view all replies",
+      "hide all replies",
+    ];
+
+    return replyToggleLabels.some((label) => text === label || text.startsWith(`${label} `));
+  }
+
+  private getSiblingIndex(node: Element): number {
+    const parent = node.parentElement;
+    if (!parent) return 0;
+    const siblings = Array.from(parent.children);
+    return siblings.indexOf(node);
   }
 
   private isElementVisibleInViewport(element: Element): boolean {

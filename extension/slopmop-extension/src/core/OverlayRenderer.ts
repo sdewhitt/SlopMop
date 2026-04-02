@@ -15,6 +15,10 @@ import {
 
 export class OverlayRenderer {
     private static readonly OVERLAY_ATTR = "data-slopmop-overlay";
+    private static readonly BADGE_Z_INDEX = "9999";
+    private static readonly ACTIVE_BADGE_Z_INDEX = "2147483646";
+    private static readonly TOOLTIP_Z_INDEX = "2147483647";
+    private static readonly TOOLTIP_HIDE_DELAY_MS = 450;
 
     // map each postId to the overlay element we create for it 
     private mapToOverlay = new Map<PostId, HTMLElement>()
@@ -61,6 +65,10 @@ export class OverlayRenderer {
         return { bottom: "8px", right: "8px" };
     }
 
+    protected getBadgePositionForHost(_hostNode: HTMLElement): Record<string, string> {
+        return this.getBadgePosition();
+    }
+
     protected getTooltipPosition(): Record<string, string> {
         return { bottom: "calc(100% + 8px)", right: "0" };
     }
@@ -102,18 +110,43 @@ export class OverlayRenderer {
         }
 
         let tooltip: HTMLElement | null = null;
+        let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
         const postText = this.mapToPostText.get(postId) ?? "";
-        surface.onmouseenter = () => {
+        const clearHideTimer = () => {
+            if (!hideTooltipTimer) return;
+            clearTimeout(hideTooltipTimer);
+            hideTooltipTimer = null;
+        };
+        const removeTooltip = () => {
+            tooltip?.remove();
+            tooltip = null;
+            overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+        };
+        const scheduleHide = () => {
+            clearHideTimer();
+            hideTooltipTimer = setTimeout(() => {
+                removeTooltip();
+            }, OverlayRenderer.TOOLTIP_HIDE_DELAY_MS);
+        };
+        overlay.onmouseenter = () => {
+            clearHideTimer();
             if (tooltip) return;
+            overlay.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
             tooltip = isSimple
                 ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
-            surface.appendChild(tooltip);
+            tooltip.style.pointerEvents = "auto";
+            tooltip.onmouseenter = () => {
+                clearHideTimer();
+            };
+            tooltip.onmouseleave = () => {
+                scheduleHide();
+            };
+            overlay.appendChild(tooltip);
         };
 
-        surface.onmouseleave = () => {
-            tooltip?.remove();
-            tooltip = null;
+        overlay.onmouseleave = () => {
+            scheduleHide();
         };
 
         this.applyInPostHighlights(postId, res);
@@ -148,9 +181,13 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
-            zIndex: "9999",
+            ...this.getBadgePositionForHost(hostNode),
+            padding: isSimple ? "6px 12px" : "4px 8px",
+            borderRadius: "4px",
             fontSize: isSimple ? "14px" : "12px",
+            zIndex: OverlayRenderer.BADGE_Z_INDEX,
+            backgroundColor: "#6b7280",
+            color: "#fff",
         });
         if (!onDetectNow) {
             // automatic mode: single grey “Scanning…” pill.
@@ -396,15 +433,40 @@ export class OverlayRenderer {
         // detailed mode keeps the badge compact and pushes the full message into tooltip.
         surface.style.cursor = onRetry ? "default" : "pointer";
         let tooltip: HTMLElement | null = null;
-        surface.onmouseenter = () => {
-            if (tooltip) return;
-            const errorMessage = this.mapToErrorMessage.get(postId) || "Unknown error";
-            tooltip = this.createErrorTooltip(errorMessage);
-            surface.appendChild(tooltip);
+        let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
+        const clearHideTimer = () => {
+            if (!hideTooltipTimer) return;
+            clearTimeout(hideTooltipTimer);
+            hideTooltipTimer = null;
         };
-        surface.onmouseleave = () => {
+        const removeTooltip = () => {
             tooltip?.remove();
             tooltip = null;
+            overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+        };
+        const scheduleHide = () => {
+            clearHideTimer();
+            hideTooltipTimer = setTimeout(() => {
+                removeTooltip();
+            }, OverlayRenderer.TOOLTIP_HIDE_DELAY_MS);
+        };
+        overlay.onmouseenter = () => {
+            clearHideTimer();
+            if (tooltip) return;
+            overlay.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+            const errorMessage = this.mapToErrorMessage.get(postId) || "Unknown error";
+            tooltip = this.createErrorTooltip(errorMessage);
+            tooltip.style.pointerEvents = "auto";
+            tooltip.onmouseenter = () => {
+                clearHideTimer();
+            };
+            tooltip.onmouseleave = () => {
+                scheduleHide();
+            };
+            overlay.appendChild(tooltip);
+        };
+        overlay.onmouseleave = () => {
+            scheduleHide();
         };
 
     }
@@ -900,7 +962,7 @@ export class OverlayRenderer {
             fontSize: "14px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             pointerEvents: "none",
         });
 
@@ -967,7 +1029,7 @@ export class OverlayRenderer {
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000", // one layer above the badge's 9999
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             pointerEvents: "none",
         });
 
@@ -1201,7 +1263,7 @@ export class OverlayRenderer {
             fontSize: "12px",
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             pointerEvents: "none",
             wordBreak: "break-word",
         });
@@ -1295,6 +1357,7 @@ export class OverlayRenderer {
         overlay.onmouseenter = null;
         overlay.onmouseleave = null;
         overlay.onclick = null;
+        overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
     }
 
     private getMediaLabel(imgRes: ImageDetectionResult): "Image" | "Video" {

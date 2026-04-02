@@ -86,6 +86,25 @@ describe('Instagram overlay rendering', () => {
     expect(overlay?.style.bottom).toBe('');
   });
 
+  it('positions comment badges near the comment host instead of post offset', () => {
+    const commentNode = document.createElement('li');
+    commentNode.setAttribute('role', 'listitem');
+    document.body.appendChild(commentNode);
+
+    const adapter = createAdapter();
+    const renderer = new InstagramOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+
+    renderer.renderPending('ig-comment-pos', commentNode, 'Comment content');
+
+    const overlay = commentNode.lastElementChild as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay?.style.top).toBe('4px');
+    expect(overlay?.style.right).toBe('4px');
+  });
+
   it('renders dual text + image results on the badge for mixed Instagram posts', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);
@@ -282,5 +301,103 @@ describe('Instagram overlay rendering', () => {
 
     expect(onDetectNow).toHaveBeenCalledTimes(1);
     expect(parentClick).toHaveBeenCalledTimes(0);
+  });
+
+  it('raises explanation tooltip above adjacent detect-now overlays', () => {
+    vi.useFakeTimers();
+    try {
+    const leftHost = document.createElement('article');
+    const rightHost = document.createElement('article');
+    document.body.appendChild(leftHost);
+    document.body.appendChild(rightHost);
+
+    const adapter = createAdapter();
+    const renderer = new InstagramOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      automaticScanning: false,
+    });
+
+    renderer.renderPending('left-post', leftHost, 'Left caption');
+    renderer.renderPending('right-post', rightHost, 'Right caption', () => {});
+
+    const response: DetectionResponse = {
+      requestId: 'req-ig-layer',
+      postId: 'left-post',
+      verdict: 'likely_ai',
+      confidence: 0.87,
+      explanation: {
+        summary: 'Tooltip should be top layer.',
+        highlights: [],
+        model: { name: 'test-model', version: '1.0' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 120, inferenceMs: 90 },
+      },
+    };
+
+    renderer.renderResult('left-post', response);
+
+    const leftOverlay = leftHost.lastElementChild as HTMLElement | null;
+    expect(leftOverlay).not.toBeNull();
+    expect(leftOverlay?.style.zIndex).toBe('9999');
+
+    leftOverlay?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+
+    const tooltip = leftOverlay?.querySelector('div');
+    expect(leftOverlay?.style.zIndex).toBe('2147483646');
+    expect((tooltip as HTMLElement | null)?.style.zIndex).toBe('2147483647');
+
+    leftOverlay?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+    expect(leftOverlay?.style.zIndex).toBe('2147483646');
+    vi.advanceTimersByTime(500);
+    expect(leftOverlay?.style.zIndex).toBe('9999');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps tooltip visible while moving across the badge-tooltip gap', () => {
+    vi.useFakeTimers();
+    try {
+      const host = document.createElement('article');
+      document.body.appendChild(host);
+
+      const adapter = createAdapter();
+      const renderer = new InstagramOverlayRenderer(adapter, {
+        ...defaultUserSettings.settings,
+        uiMode: 'simple',
+      });
+
+      renderer.renderPending('gap-post', host, 'Gap crossing caption');
+      renderer.renderResult('gap-post', {
+        requestId: 'req-gap',
+        postId: 'gap-post',
+        verdict: 'likely_ai',
+        confidence: 0.9,
+        explanation: {
+          summary: 'Hover bridge behavior test.',
+          highlights: [],
+          model: { name: 'test-model', version: '1.0' },
+          cache: { hit: false, ttlRemainingMs: 0 },
+          timing: { totalMs: 110, inferenceMs: 80 },
+        },
+      });
+
+      const overlay = host.lastElementChild as HTMLElement | null;
+      expect(overlay).not.toBeNull();
+
+      overlay?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      const tooltip = overlay?.querySelector('div') as HTMLElement | null;
+      expect(tooltip).not.toBeNull();
+
+      // Simulate crossing the gap: leave badge, then quickly enter tooltip.
+      overlay?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+      tooltip?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+
+      vi.advanceTimersByTime(200);
+      expect(overlay?.contains(tooltip as Node)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

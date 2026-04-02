@@ -172,15 +172,22 @@ export class FeedObserver {
         let numComments = 0;
         // Scan for comments
         if (this.settings.scanComments !== "off") {
-            // TODO: add limit to settings and read limit from settings
-            const maxComments = 20;
+            // Instagram comment threads often keep many comments visible while scrolling.
+            // Cap non-Instagram sites to preserve existing behavior, but process all visible
+            // Instagram comments so Detect Now badges continue appearing on scroll.
+            const maxComments = this.adapter.getSiteId() === "instagram.com"
+                ? Number.MAX_SAFE_INTEGER
+                : 20;
             const rawCommentNodes = this.adapter.findVisibleCommentNodes(
                 document,
                 this.settings.scanComments === "auto_top_n" ? Number.MAX_SAFE_INTEGER : maxComments,
             );
-            const commentNodes = this.settings.scanComments === "auto_top_n"
+            const shouldFilterTopLevel =
+                this.settings.scanComments === "auto_top_n" &&
+                this.adapter.getSiteId() !== "instagram.com";
+            const commentNodes = shouldFilterTopLevel
                 ? this.filterTopLevelCommentNodes(rawCommentNodes).slice(0, maxComments)
-                : rawCommentNodes;
+                : rawCommentNodes.slice(0, maxComments);
             numComments = commentNodes.length;
             for (const node of commentNodes) {
                 this.handleCandidatePost(node, "comment");
