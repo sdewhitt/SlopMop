@@ -284,9 +284,7 @@ export class FeedObserver {
                     this.postsById.delete(extracted.postId);
                 }
             } else {
-                // Re-render on a new host only for posts. Comment lists can expose
-                // duplicate wrappers for the same comment id (notably first comments),
-                // which would otherwise create duplicate Detect/Fact-check controls.
+                // Same id on a new host is only valid for feed posts (e.g. grid vs modal). Comments share one badge per id.
                 if (
                     type === "post" &&
                     !this.settings.automaticScanning &&
@@ -295,7 +293,6 @@ export class FeedObserver {
                     this.renderManualEntry(extracted, node as HTMLElement, textContainer);
                     this.renderedHosts.add(node);
                 }
-              
                 return;
             }
         }

@@ -97,6 +97,6 @@ describe('XOverlayRenderer UI', () => {
     renderer.renderResult('x-status-2', response);
 
     const badge = postNode.querySelector('[style*="position: absolute"]') as HTMLElement;
-    expect(badge?.textContent).toBe('likely_human (88%)');
+    expect(badge?.textContent).toContain('likely_human (88%)');
   });
 });

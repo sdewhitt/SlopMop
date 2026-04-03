@@ -104,7 +104,7 @@ describe('LinkedInOverlayRenderer UI', () => {
     renderer.renderResult('li-activity-456', response);
 
     const badge = postNode.querySelector('[style*="position: absolute"]') as HTMLElement;
-    expect(badge?.textContent).toBe('likely_ai (92%)');
+    expect(badge?.textContent).toContain('likely_ai (92%)');
     // likely_ai uses red (#ef4444); jsdom normalizes to rgb.
     expect(badge?.style.backgroundColor).toBe('rgb(239, 68, 68)');
   });

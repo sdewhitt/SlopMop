@@ -47,6 +47,8 @@ export class OverlayRenderer {
     >();
     /** When set, detection badge / scanning / errors render here; fact panel stays a sibling. */
     private mapToDetectPanel = new Map<PostId, HTMLElement>();
+    /** User-collapsed detection badges (per post); omitted entries mean expanded. */
+    private mapToBadgeCollapsed = new Map<PostId, boolean>();
     /** Tear-down for tooltips mounted on `document.body` (fixed position). */
     private tooltipCleanupByOverlay = new WeakMap<HTMLElement, () => void>();
     private settings: DetectionSettings;
@@ -118,6 +120,7 @@ export class OverlayRenderer {
         surface.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
+        const collapsed = Boolean(this.mapToBadgeCollapsed.get(postId));
 
         const colorMap: Record<DetectionResponse["verdict"], string> = {
             likely_ai: "#ef4444",
@@ -125,21 +128,89 @@ export class OverlayRenderer {
             unknown: "#6b7280",
         };
         surface.style.backgroundColor = colorMap[res.verdict];
-        surface.style.cursor = "pointer";
+
+        Object.assign(surface.style, {
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: collapsed ? "4px" : "6px",
+        });
 
         if (isSimple) {
             surface.style.fontSize = this.getSimpleVerdictBadgeFontSize();
-            surface.style.padding = this.getSimpleVerdictBadgePadding();
+            surface.style.padding = collapsed
+                ? "4px 8px"
+                : this.getSimpleVerdictBadgePadding();
+        } else if (collapsed) {
+            surface.style.padding = "2px 6px";
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
         const sourcePrefix = this.getPrimarySourceLabel(res);
-        if (res.imageResult) {
-            const mediaLabel = this.getMediaLabel(res.imageResult);
-            surface.textContent = `Text: ${textLabel} · ${mediaLabel}: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
-        } else {
-            surface.textContent = sourcePrefix ? `${sourcePrefix}: ${textLabel}` : textLabel;
+        const fullBadgeText = res.imageResult
+            ? (() => {
+                  const mediaLabel = this.getMediaLabel(res.imageResult);
+                  return `Text: ${textLabel} · ${mediaLabel}: ${res.imageResult.verdict} (${Math.round(res.imageResult.confidence * 100)}%)`;
+              })()
+            : sourcePrefix
+              ? `${sourcePrefix}: ${textLabel}`
+              : textLabel;
+
+        if (collapsed) {
+            surface.style.cursor = "default";
+
+            const summary = document.createElement("span");
+            summary.setAttribute("data-slopmop-badge-compact", "1");
+            summary.textContent = this.compactBadgeSummary(res);
+            Object.assign(summary.style, {
+                fontWeight: "700",
+                flex: "0 1 auto",
+                lineHeight: "1.2",
+            });
+
+            const expandBtn = this.createBadgeToggleButton(
+                "+",
+                "Expand detection details",
+                "expand",
+            );
+            expandBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.mapToBadgeCollapsed.delete(postId);
+                this.renderResult(postId, res);
+            };
+
+            surface.appendChild(summary);
+            surface.appendChild(expandBtn);
+            this.applyInPostHighlights(postId, res);
+            return;
         }
+
+        surface.style.cursor = "pointer";
+
+        const label = document.createElement("span");
+        label.setAttribute("data-slopmop-badge-label", "1");
+        label.textContent = fullBadgeText;
+        Object.assign(label.style, {
+            flex: "1",
+            minWidth: "0",
+            wordBreak: "break-word",
+        });
+
+        const collapseBtn = this.createBadgeToggleButton(
+            "−",
+            "Collapse detection details",
+            "collapse",
+        );
+        collapseBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.mapToBadgeCollapsed.set(postId, true);
+            this.renderResult(postId, res);
+        };
+
+        surface.appendChild(label);
+        surface.appendChild(collapseBtn);
 
         let tooltip: HTMLElement | null = null;
         let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
@@ -209,7 +280,7 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
+            ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
             backgroundColor: "#6b7280",
@@ -360,6 +431,7 @@ export class OverlayRenderer {
             this.mapToOriginalBodyHtml.delete(existingPostId);
             this.mapToFactCheckUi.delete(existingPostId);
             this.mapToDetectPanel.delete(existingPostId);
+            this.mapToBadgeCollapsed.delete(existingPostId);
         }
 
         for (const overlay of existingOverlays) {
@@ -492,6 +564,7 @@ export class OverlayRenderer {
         this.clearFactCheckTooltipListeners(postId);
         this.mapToFactCheckUi.delete(postId);
         this.mapToDetectPanel.delete(postId);
+        this.mapToBadgeCollapsed.delete(postId);
     }
 
     private clearFactCheckTooltipListeners(postId: PostId): void {
@@ -1003,7 +1076,7 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
+            ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
             backgroundColor: "#6b7280",
@@ -1448,9 +1521,18 @@ export class OverlayRenderer {
         container.appendChild(section);
     }
 
+    /** Remove an open body-mounted tooltip without changing badge z-index (used before mounting a replacement). */
+    private runTooltipCleanup(overlay: HTMLElement): void {
+        this.tooltipCleanupByOverlay.get(overlay)?.();
+    }
+
     private dismissTooltipForOverlay(overlay: HTMLElement): void {
-        const fn = this.tooltipCleanupByOverlay.get(overlay);
-        fn?.();
+        this.runTooltipCleanup(overlay);
+        overlay.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+        const pid = this.findPostIdForOverlay(overlay);
+        if (pid !== null) {
+            this.setOverlayLayer(pid, false);
+        }
     }
 
     /**
@@ -1458,7 +1540,7 @@ export class OverlayRenderer {
      * `overflow` and later thread rows do not clip or cover the panel.
      */
     private mountTooltipOnBody(overlay: HTMLElement, tooltip: HTMLElement): void {
-        this.dismissTooltipForOverlay(overlay);
+        this.runTooltipCleanup(overlay);
         document.body.appendChild(tooltip);
         const apply = (): void => {
             const r = overlay.getBoundingClientRect();
@@ -1502,5 +1584,46 @@ export class OverlayRenderer {
         if (res.detectionSource === "video") return "Video";
         if (res.detectionSource === "gif") return "GIF";
         return null;
+    }
+
+    private createBadgeToggleButton(
+        text: string,
+        ariaLabel: string,
+        kind: "collapse" | "expand",
+    ): HTMLButtonElement {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = text;
+        btn.setAttribute("aria-label", ariaLabel);
+        btn.setAttribute(
+            kind === "collapse" ? "data-slopmop-badge-collapse" : "data-slopmop-badge-expand",
+            "1",
+        );
+        Object.assign(btn.style, {
+            flex: "0 0 auto",
+            border: "1px solid rgba(255,255,255,0.5)",
+            borderRadius: "4px",
+            padding: "0 5px",
+            minWidth: "22px",
+            fontSize: "12px",
+            lineHeight: "1.25",
+            fontWeight: "700",
+            color: "#fff",
+            backgroundColor: "rgba(0,0,0,0.2)",
+            cursor: "pointer",
+        });
+        return btn;
+    }
+
+    private verdictCompactTag(verdict: DetectionResponse["verdict"]): string {
+        if (verdict === "likely_ai") return "AI";
+        if (verdict === "likely_human") return "Hu";
+        return "?";
+    }
+
+    private compactBadgeSummary(res: DetectionResponse): string {
+        const t = this.verdictCompactTag(res.verdict);
+        if (!res.imageResult) return t;
+        return `${t}·${this.verdictCompactTag(res.imageResult.verdict)}`;
     }
 }

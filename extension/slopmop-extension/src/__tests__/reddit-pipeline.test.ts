@@ -235,7 +235,58 @@ describe('Reddit extraction pipeline', () => {
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    expect(overlay?.textContent).toBe('likely_ai (86%)');
+    expect(overlay?.textContent).toContain('likely_ai (86%)');
+    expect(overlay?.querySelector('[data-slopmop-badge-collapse="1"]')).not.toBeNull();
+  });
+
+  it('collapses and expands the detection badge independently per post', () => {
+    const postA = document.createElement('article');
+    const postB = document.createElement('article');
+    document.body.appendChild(postA);
+    document.body.appendChild(postB);
+    const renderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+    });
+    const resA: DetectionResponse = {
+      requestId: 'req-a',
+      postId: 't3_collapse_a',
+      verdict: 'likely_ai',
+      confidence: 0.86,
+      explanation: {
+        summary: 'A',
+        highlights: [],
+        model: { name: 'm', version: '1' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 1, inferenceMs: 1 },
+      },
+    };
+    const resB: DetectionResponse = {
+      ...resA,
+      requestId: 'req-b',
+      postId: 't3_collapse_b',
+      verdict: 'likely_human',
+      confidence: 0.9,
+    };
+
+    renderer.renderPending('t3_collapse_a', postA, 'post a');
+    renderer.renderPending('t3_collapse_b', postB, 'post b');
+    renderer.renderResult('t3_collapse_a', resA);
+    renderer.renderResult('t3_collapse_b', resB);
+
+    const overlayA = postA.lastElementChild as HTMLElement;
+    const overlayB = postB.lastElementChild as HTMLElement;
+    expect(overlayA.textContent).toContain('likely_ai (86%)');
+    expect(overlayB.textContent).toContain('likely_human (90%)');
+
+    overlayA.querySelector<HTMLButtonElement>('[data-slopmop-badge-collapse="1"]')?.click();
+    expect(overlayA.querySelector('[data-slopmop-badge-compact="1"]')?.textContent).toBe('AI');
+    expect(overlayA.textContent).not.toContain('likely_ai (86%)');
+    expect(overlayB.textContent).toContain('likely_human (90%)');
+
+    overlayA.querySelector<HTMLButtonElement>('[data-slopmop-badge-expand="1"]')?.click();
+    expect(overlayA.textContent).toContain('likely_ai (86%)');
+    expect(overlayA.querySelector('[data-slopmop-badge-label="1"]')).not.toBeNull();
   });
 
   it('renders dual text + image results on the badge for mixed posts', () => {

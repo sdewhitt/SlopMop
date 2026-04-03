@@ -59,7 +59,7 @@ describe('Instagram overlay rendering', () => {
 
     const overlay = postNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    expect(overlay?.textContent).toBe('likely_ai (91%)');
+    expect(overlay?.textContent).toContain('likely_ai (91%)');
   });
 
   it('positions the badge in the top-right corner of the post', () => {
@@ -101,10 +101,8 @@ describe('Instagram overlay rendering', () => {
 
     const overlay = commentNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    //expect(overlay?.style.top).toBe('calc(100% + 4px)');
-    expect(overlay?.style.top).toBe('48px')
-    //expect(overlay?.style.right).toBe('4px');
-    expect(overlay?.style.right).toBe('8px');
+    expect(overlay?.style.top).toBe('calc(100% + 4px)');
+    expect(overlay?.style.right).toBe('4px');
     expect(overlay?.style.bottom).toBe('');
   });
 
