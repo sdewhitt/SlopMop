@@ -10,7 +10,10 @@ function mockInnerText(el: HTMLElement, value: string): void {
   });
 }
 
-function makeResponse(postId: string, highlightedSpans: DetectionResponse['explanation']['highlightedSpans']): DetectionResponse {
+function makeResponse(
+  postId: string,
+  highlightedSpans?: DetectionResponse['explanation']['highlightedSpans'],
+): DetectionResponse {
   return {
     requestId: 'req-1',
     postId,
@@ -18,7 +21,7 @@ function makeResponse(postId: string, highlightedSpans: DetectionResponse['expla
     confidence: 0.9,
     explanation: {
       summary: 'Synthetic span test',
-      highlightedSpans: highlightedSpans ?? [],
+      ...(highlightedSpans !== undefined ? { highlightedSpans } : {}),
       model: { name: 't', version: '1' },
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: 1, inferenceMs: 1 },
@@ -26,7 +29,35 @@ function makeResponse(postId: string, highlightedSpans: DetectionResponse['expla
   };
 }
 
-describe('OverlayRenderer + valid highlightedSpans', () => {
+function setupPendingHighlightCase(
+  postId: string,
+  plain: string,
+  textBody: HTMLElement,
+  host: HTMLElement,
+  preserveBodyDom?: boolean,
+) {
+  host.style.position = 'relative';
+  if (!preserveBodyDom) {
+    textBody.textContent = plain;
+  }
+  mockInnerText(textBody, plain);
+  host.appendChild(textBody);
+  document.body.appendChild(host);
+
+  const renderer = new OverlayRenderer({
+    ...defaultUserSettings.settings,
+    highlightSegments: true,
+    uiMode: 'simple',
+  });
+
+  renderer.renderPending(postId, host, plain, () => {}, textBody);
+
+  const detectSurface = host.querySelector('[data-slopmop-overlay="1"]') as HTMLElement;
+  expect(detectSurface).not.toBeNull();
+  return { renderer, detectSurface };
+}
+
+describe('OverlayRenderer + highlightedSpans', () => {
   const postId = 'post-highlight-1';
 
   beforeEach(() => {
@@ -40,23 +71,8 @@ describe('OverlayRenderer + valid highlightedSpans', () => {
   it('innerHTML path: wraps exact range in post body and keeps verdict text on detect badge', () => {
     const plain = 'Hello world today.';
     const host = document.createElement('div');
-    host.style.position = 'relative';
     const textBody = document.createElement('div');
-    textBody.textContent = plain;
-    mockInnerText(textBody, plain);
-    host.appendChild(textBody);
-    document.body.appendChild(host);
-
-    const renderer = new OverlayRenderer({
-      ...defaultUserSettings.settings,
-      highlightSegments: true,
-      uiMode: 'simple',
-    });
-
-    renderer.renderPending(postId, host, plain, () => {}, textBody);
-
-    const detectSurface = host.querySelector('[data-slopmop-overlay="1"]') as HTMLElement;
-    expect(detectSurface).not.toBeNull();
+    const { renderer, detectSurface } = setupPendingHighlightCase(postId, plain, textBody, host);
     expect(detectSurface.textContent).toContain('Detect Now');
 
     const res = makeResponse(postId, [{ start: 6, end: 11, score: 0.9 }]);
@@ -75,23 +91,10 @@ describe('OverlayRenderer + valid highlightedSpans', () => {
   it('rich DOM path (<a> in body): highlight targets correct range; verdict badge unchanged', () => {
     const plain = 'Hello world today.';
     const host = document.createElement('div');
-    host.style.position = 'relative';
     const textBody = document.createElement('div');
     textBody.innerHTML = 'Hello <a href="https://example.com/x">world</a> today.';
     mockInnerText(textBody, plain);
-    host.appendChild(textBody);
-    document.body.appendChild(host);
-
-    const renderer = new OverlayRenderer({
-      ...defaultUserSettings.settings,
-      highlightSegments: true,
-      uiMode: 'simple',
-    });
-
-    renderer.renderPending(postId, host, plain, () => {}, textBody);
-
-    const detectSurface = host.querySelector('[data-slopmop-overlay="1"]') as HTMLElement;
-    expect(detectSurface).not.toBeNull();
+    const { renderer, detectSurface } = setupPendingHighlightCase(postId, plain, textBody, host, true);
 
     const res = makeResponse(postId, [{ start: 6, end: 11, score: 0.88 }]);
     renderer.renderResult(postId, res);
@@ -103,5 +106,67 @@ describe('OverlayRenderer + valid highlightedSpans', () => {
 
     expect(detectSurface.textContent).toContain('likely_ai');
     expect(detectSurface.textContent).toContain('90%');
+  });
+
+  it('no highlightedSpans (omitted or empty): verdict/confidence only; no mark; no throw', () => {
+    const plain = 'Alpha beta gamma.';
+
+    for (const res of [makeResponse('post-no-span-omit'), makeResponse('post-no-span-empty', [])]) {
+      const host = document.createElement('div');
+      const textBody = document.createElement('div');
+      const { renderer, detectSurface } = setupPendingHighlightCase(res.postId, plain, textBody, host);
+      const bodyHtmlAfterPending = textBody.innerHTML;
+
+      expect(() => renderer.renderResult(res.postId, res)).not.toThrow();
+      expect(textBody.querySelectorAll('mark.slopmop-highlight')).toHaveLength(0);
+      expect(textBody.querySelector('mark')).toBeNull();
+      expect(textBody.innerHTML).toBe(bodyHtmlAfterPending);
+      expect(detectSurface.textContent).toContain('likely_ai');
+      expect(detectSurface.textContent).toContain('90%');
+
+      host.remove();
+    }
+  });
+
+  it('invalid spans are ignored; valid span still applied; no throw', () => {
+    const plain = 'Hello world today.';
+    const host = document.createElement('div');
+    const textBody = document.createElement('div');
+    const pid = 'post-invalid-mix';
+    const { renderer, detectSurface } = setupPendingHighlightCase(pid, plain, textBody, host);
+
+    const spans = [
+      { start: -2, end: 3, score: 1 },
+      { start: 100, end: 200, score: 1 },
+      { start: 11, end: 6, score: 1 },
+      { start: 6, end: 11, score: 0.9 },
+    ];
+
+    const res = makeResponse(pid, spans);
+    expect(() => renderer.renderResult(pid, res)).not.toThrow();
+
+    const mark = textBody.querySelector('mark.slopmop-highlight');
+    expect(mark).not.toBeNull();
+    expect(mark?.textContent).toBe('world');
+    expect(detectSurface.textContent).toContain('likely_ai');
+  });
+
+  it('only invalid spans: no marks; no throw', () => {
+    const plain = 'Short.';
+    const host = document.createElement('div');
+    const textBody = document.createElement('div');
+    const pid = 'post-invalid-only';
+    const { renderer, detectSurface } = setupPendingHighlightCase(pid, plain, textBody, host);
+    const htmlBefore = textBody.innerHTML;
+
+    const res = makeResponse(pid, [
+      { start: -1, end: 2, score: 1 },
+      { start: 3, end: 1, score: 1 },
+      { start: 0, end: 99, score: 1 },
+    ]);
+    expect(() => renderer.renderResult(pid, res)).not.toThrow();
+    expect(textBody.querySelectorAll('mark.slopmop-highlight')).toHaveLength(0);
+    expect(textBody.innerHTML).toBe(htmlBefore);
+    expect(detectSurface.textContent).toContain('likely_ai');
   });
 });
