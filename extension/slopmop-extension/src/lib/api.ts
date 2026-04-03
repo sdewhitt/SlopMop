@@ -43,10 +43,15 @@ async function detectTextOnce(
     baseUrl: string,
     cleanedText: string,
     includeSpans: boolean,
+    commentTexts?: string[],
 ): Promise<DetectResponse> {
-    const requestBody = {
+    const requestBody: { text: string; comment_texts?: string[] } = {
         text: cleanedText,
     };
+    // add the comment texts to the request body if they are provided
+    if (commentTexts !== undefined && commentTexts.length > 0) {
+        requestBody.comment_texts = commentTexts;
+    }
 
     const detectUrl =
         baseUrl +
@@ -90,6 +95,7 @@ async function detectTextOnce(
 export async function detectText(
     text: string,
     includeSpans: boolean = true,
+    commentTexts?: string[],
 ): Promise<DetectResponse> {
     const baseUrl: string = getBaseUrl();
     const cleanedText: string = text.trim();
@@ -97,7 +103,7 @@ export async function detectText(
     const maxAttempts = 1 + DETECTION_MAX_RETRIES;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            return await detectTextOnce(baseUrl, cleanedText, includeSpans);
+            return await detectTextOnce(baseUrl, cleanedText, includeSpans, commentTexts);
         } catch (e) {
             lastError = e;
             if (attempt < maxAttempts) {

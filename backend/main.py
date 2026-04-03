@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import List, Optional
+
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,6 +98,8 @@ else:
     print(f"WARNING: No text model weights at {TEXT_MODEL_WEIGHTS}, using base model")
 
 MAX_TEXT_LENGTH = 5000
+MAX_COMMENT_TEXTS = 50
+MAX_COMMENT_SNIPPET_CHARS = 4000
 
 
 def _span_mask_eval_cap() -> int:
@@ -116,6 +122,8 @@ print(
 
 class DetectRequest(BaseModel):
     text: str
+    # optional visible comment bodies (same post) for satire keyword / consensus heuristics on the main post score.
+    comment_texts: Optional[List[str]] = None
 
 
 class HighlightSpan(BaseModel):
@@ -129,7 +137,7 @@ class DetectResponse(BaseModel):
     confidence: float  # 0.0 = human, 1.0 = AI
     label: str  # "ai" or "human"
     explanation: str  # explanation for the detection
-    highlights: list[HighlightSpan] = []  # spans for segment highlighting
+    highlights: List[HighlightSpan] = []  # spans for segment highlighting
 
 
 class DetectImageRequest(BaseModel):
@@ -157,20 +165,41 @@ class FactCheckItem(BaseModel):
 
 
 class FactCheckResponse(BaseModel):
-    items: list[FactCheckItem]
+    items: List[FactCheckItem]
 
 
 @app.get("/")
 def root():
     return {"status": "ok", "message": "SlopMop Detection API"}
 
+# normalize the comment texts
+def _normalize_comment_texts(raw: Optional[List[str]]) -> Optional[List[str]]:
+    if not raw:
+        return None
+    out: list[str] = []
+    for c in raw:
+        if not isinstance(c, str):
+            continue
+        s = c.strip()
+        if not s:
+            continue
+        if len(s) > MAX_COMMENT_SNIPPET_CHARS:
+            s = s[:MAX_COMMENT_SNIPPET_CHARS]
+        out.append(s)
+        if len(out) >= MAX_COMMENT_TEXTS:
+            break
+    return out or None
+
 
 # helper function to score text and get segment highlights
-def score_text_with_spans(text: str) -> tuple[float, str, list[HighlightSpan]]:
+def score_text_with_spans(
+    text: str, comment_texts: Optional[List[str]] = None
+) -> tuple[float, str, List[HighlightSpan]]:
     confidence, label, spans = text_detector.score_text_with_spans(
         text,
         clean=True,
         max_tokens_to_evaluate=SPAN_MASK_EVAL_CAP,
+        comment_texts=comment_texts,
     )
     if label == "mixed":
         label = "ai" if confidence >= 0.5 else "human"
@@ -178,22 +207,34 @@ def score_text_with_spans(text: str) -> tuple[float, str, list[HighlightSpan]]:
     return round(confidence, 4), label, highlights
 
 
-def score_text_without_spans(text: str) -> tuple[float, str]:
+def score_text_without_spans(text: str, comment_texts: Optional[List[str]] = None) -> tuple[float, str]:
     """Single forward pass; no token masking (faster)."""
-    confidence, label = text_detector.calculate_confidence(text, clean=True)
+    confidence, label = text_detector.calculate_confidence(
+        text, clean=True, comment_texts=comment_texts
+    )
     if label == "mixed":
         label = "ai" if confidence >= 0.5 else "human"
     return round(float(confidence), 4), label
 
-def generate_explanation(confidence: float, label: str) -> str:
+def generate_explanation(confidence: float, label: str, text_char_len: int = 0) -> str:
+    """
+    User-facing copy for /detect. Scores come from model_training/text_model (DistilBERT + satire
+    adjustments), not from mock keyword rules — older copy incorrectly said 'Mock heuristic'.
+    """
+    pct = round(float(confidence) * 100, 2)
+    short_note = ""
+    if 0 < text_char_len < 120:
+        short_note = (
+            " Very short text (e.g. titles like “Whoops!”) often gives noisy scores and odd token highlights; "
+            "prefer analyzing the full post body when possible."
+        )
     if label == "ai":
         return (
-            f"Mock heuristic flagged this as AI-like with confidence {confidence}. "
-            "The text contains multiple transition-style phrases commonly seen in generated writing."
+            f"SlopMop text classifier: {pct}% estimated AI-like (transformer + optional satire nudge).{short_note} "
+            "Highlight segments show token-level influence (leave-one-token-out), not keyword mock rules."
         )
     return (
-        f"Mock heuristic flagged this as human-like with confidence {confidence}. "
-        "The text contains few AI-style marker phrases based on current rules."
+        f"SlopMop text classifier: {pct}% estimated AI-like; labeled human/mixed (below likely-AI band).{short_note}"
     )
 
 @app.post("/detect", response_model=DetectResponse)
@@ -218,13 +259,15 @@ def detect(
             detail=f"text must be at most {MAX_TEXT_LENGTH} characters",
         )
 
+    comment_texts = _normalize_comment_texts(request.comment_texts)
+
     if include_spans:
-        confidence, label, highlights = score_text_with_spans(clean_text)
+        confidence, label, highlights = score_text_with_spans(clean_text, comment_texts)
     else:
-        confidence, label = score_text_without_spans(clean_text)
+        confidence, label = score_text_without_spans(clean_text, comment_texts)
         highlights = []
 
-    explanation = generate_explanation(confidence, label)
+    explanation = generate_explanation(confidence, label, len(clean_text))
     return DetectResponse(confidence=confidence, label=label, explanation=explanation, highlights=highlights)
 
 

@@ -31,16 +31,22 @@ def preprocess_image(image: Image.Image) -> Tensor:
     Returns:
         Preprocessed tensor ready for model input
     """
-    transform = T.Compose(
+    # JPEG() exists in torchvision v2 only on newer releases; older CPU builds
+    # raise AttributeError — optional for inference (artifact simulation).
+    _steps = [
+        T.ToImage(),
+        T.Resize(256),
+        T.CenterCrop(224),
+    ]
+    if getattr(T, "JPEG", None) is not None:
+        _steps.append(T.JPEG(quality=100))
+    _steps.extend(
         [
-            T.ToImage(),
-            T.Resize(256),
-            T.CenterCrop(224),
-            T.JPEG(quality=100),
             T.ToDtype(torch.float32, scale=True),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
+    transform = T.Compose(_steps)
     return transform(image)
 
 

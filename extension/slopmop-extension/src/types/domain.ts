@@ -35,6 +35,8 @@ export interface NormalizedPostContent {
       authorHandle: string;
       timestampText: string;
     };
+    // visible comment bodies under this post (feed analysis) — sent to /detect for satire heuristics on the main score.
+    commentTexts?: string[];
   }
 
 export interface DetectionRequest {

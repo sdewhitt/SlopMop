@@ -1172,7 +1172,7 @@ export class OverlayRenderer {
             tip.appendChild(patternEl);
         }
 
-        // Backend explanation (e.g. mock heuristic copy) — show whenever highlights are off,
+        // Backend explanation (text classifier + optional satire nudge) — show whenever highlights are off,
         // and when on (above per-segment detail below).
         const summary = document.createElement("div");
         Object.assign(summary.style, {

@@ -19,6 +19,9 @@ const DEBOUNCE_MS = 200;
 // if analysis takes longer than this, we show a timeout badge to the user.
 // Remote ML APIs (e.g. Render) often need >15s after deploy or cold start.
 const ANALYZE_TIMEOUT_MS = 60_000;
+/** Max comments to send with post text for backend satire heuristics (consensus, markers). */
+const MAX_COMMENTS_FOR_DETECT_API = 30;
+const MAX_COMMENT_SNIPPET_CHARS = 2000;
 
 export class FeedObserver {
     // Orchestrator for the content script pipeline.
@@ -254,6 +257,15 @@ export class FeedObserver {
         // so it can be retried on the next scan if the DOM updates
         if (!extracted) return;
 
+        // collect the comment texts for the post
+        // this is used for the satire heuristics
+        if (type === "post") {
+            const commentTexts = this.collectCommentTextsForPost(node);
+            if (commentTexts.length > 0) {
+                extracted.commentTexts = commentTexts;
+            }
+        }
+
         const textContainer =
             type === "post"
                 ? this.adapter.getTextNode(node)
@@ -407,6 +419,29 @@ export class FeedObserver {
         if (!post) return false;
         this.dispatchAnalyze(post);
         return true;
+    }
+
+    /**
+     * gathers visible comment strings under the post node for /detect comment_texts
+     * (satire keyword + consensus heuristics on the main post score).
+     */
+    private collectCommentTextsForPost(postNode: Element): string[] {
+        const nodes = this.adapter.findVisibleCommentNodes(postNode, MAX_COMMENTS_FOR_DETECT_API);
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const n of nodes) {
+            const el = this.adapter.getCommentTextNode(n);
+            const raw = el?.innerText?.trim() ?? "";
+            if (raw.length < 2) continue;
+            let t = raw.replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n\n").trim();
+            if (t.length > MAX_COMMENT_SNIPPET_CHARS) {
+                t = t.slice(0, MAX_COMMENT_SNIPPET_CHARS);
+            }
+            if (seen.has(t)) continue;
+            seen.add(t);
+            out.push(t);
+        }
+        return out;
     }
 
     // starts a per-post timeout for detection responses.
