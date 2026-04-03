@@ -15,8 +15,9 @@ function settingsWithLanguages(langs: DetectionSettings['detectionLanguages']): 
 }
 
 /**
- * Exercises the same helpers used by background/index.ts (handleAnalyzePost early exit +
- * handleDetect storage gate) so skipping POST /detect and badge/popup copy stay in sync.
+ * Exercises the same helpers used by background/index.ts 
+ * (handleAnalyzePost early exit + handleDetect storage gate) 
+ * so skipping POST /detect and badge/popup copy stay in sync.
  */
 describe('detectLanguageGate', () => {
   it('analyze post: text-only, high-confidence unsupported language → tab message; blocks before /detect', () => {
@@ -30,6 +31,8 @@ describe('detectLanguageGate', () => {
     expect(msg?.type).toBe('DETECTION_LANGUAGE_UNSUPPORTED');
     expect(msg?.payload.postId).toBe('post-1');
     expect(msg?.payload.message).toContain('Spanish');
+    expect(msg?.payload.detectedCode).toBe('spa');
+    expect(msg?.payload.confidence).toBeGreaterThanOrEqual(0.85);
     expect(msg?.payload.detectedLanguageName).toBe('Spanish');
     expect(msg?.payload.hoverTooltipTitle.length).toBeGreaterThan(0);
   });

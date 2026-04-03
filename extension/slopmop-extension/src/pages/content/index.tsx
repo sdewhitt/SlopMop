@@ -199,6 +199,14 @@ function startObserver(settings: DetectionSettings): void {
     });
   });
   bus.onDetectionLanguageUnsupported((payload) => {
+    console.log(
+      '[SlopMop] Language detection (franc):',
+      payload.detectedCode,
+      '(' + payload.detectedLanguageName + '),',
+      'confidence:',
+      Math.round(payload.confidence * 100) + '%',
+      '— skipping POST /detect',
+    );
     if (!activeObserver?.markAnalyzeCompleted(payload.postId)) return;
     overlay.renderLanguageUnsupported(payload.postId, {
       simpleTitle: payload.hoverSimple,

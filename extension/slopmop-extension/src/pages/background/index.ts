@@ -779,6 +779,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       payload: {
         postId: enrichedPost.postId,
         message: copyBlocked.badge,
+        detectedCode: langInfo!.detectedCode,
+        confidence: langInfo!.confidence,
         detectedLanguageName: langInfo!.detectedName,
         hoverSimple: copyBlocked.hoverSimple,
         hoverTooltipTitle: copyBlocked.hoverTooltipTitle,
@@ -843,6 +845,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         payload: {
           postId: enrichedPost.postId,
           message: copyBoth.badge,
+          detectedCode: langInfo!.detectedCode,
+          confidence: langInfo!.confidence,
           detectedLanguageName: langInfo!.detectedName,
           hoverSimple: copyBoth.hoverSimple,
           hoverTooltipTitle: copyBoth.hoverTooltipTitle,

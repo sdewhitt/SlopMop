@@ -35,6 +35,8 @@ export function tryAnalyzePostLanguageUnsupported(
     payload: {
       postId,
       message: copy.badge,
+      detectedCode: langInfo.detectedCode,
+      confidence: langInfo.confidence,
       detectedLanguageName: langInfo.detectedName,
       hoverSimple: copy.hoverSimple,
       hoverTooltipTitle: copy.hoverTooltipTitle,

@@ -358,6 +358,14 @@ export class FeedObserver {
                 formatDetectionLanguagesForUi(this.settings.detectionLanguages),
                 this.settings.detectionLanguages,
             );
+            console.log(
+                '[SlopMop] Language detection (franc):',
+                langInfo.detectedCode,
+                '(' + langInfo.detectedName + '),',
+                'confidence:',
+                Math.round(langInfo.confidence * 100) + '%',
+                '— skipping POST /detect (manual entry)',
+            );
             this.overlay.renderLanguageUnsupported(extracted.postId, {
                 simpleTitle: copy.hoverSimple,
                 tooltipTitle: copy.hoverTooltipTitle,

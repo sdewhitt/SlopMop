@@ -383,24 +383,26 @@ export class OverlayRenderer {
         surface.style.backgroundColor = "#f59e0b";
         surface.style.whiteSpace = "normal";
 
-        const isSimple = this.settings.uiMode === "simple";
         surface.textContent = "Unsupported language";
         surface.style.cursor = "default";
+        surface.removeAttribute("title");
 
-        if (isSimple) {
-            surface.setAttribute("title", hover.simpleTitle);
-            return;
-        }
-
+        // Match Detect / verdict tooltips: same shell as createSimpleTooltip vs createTooltip, mounted on
+        // document.body so feed overflow does not clip. Title/body carry "Unchecked in settings" vs
+        // "Unsupported language" from getLanguageUnsupportedCopy.
         let tooltip: HTMLElement | null = null;
         surface.onmouseenter = () => {
             if (tooltip) return;
+            surface.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, true);
             tooltip = this.createLanguageUnsupportedTooltip(hover.tooltipTitle, hover.tooltipBody);
-            surface.appendChild(tooltip);
+            this.mountTooltipOnBody(surface, tooltip);
         };
         surface.onmouseleave = () => {
-            tooltip?.remove();
+            this.dismissTooltipForOverlay(surface);
             tooltip = null;
+            surface.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, false);
         };
     }
 
@@ -1279,40 +1281,68 @@ export class OverlayRenderer {
         return row;
     }
 
+    /**
+     * Visually aligned with {@link createSimpleTooltip} / {@link createTooltip} (Detect Now hover).
+     * {@code title} is "Unchecked in settings" or "Unsupported language"; {@code body} is the explanation.
+     */
     private createLanguageUnsupportedTooltip(title: string, body: string): HTMLElement {
+        const isSimple = this.settings.uiMode === "simple";
         const tip = document.createElement("div");
         Object.assign(tip.style, {
-            position: "absolute",
-            bottom: "100%",
-            left: "0",
-            marginBottom: "4px",
-            minWidth: "220px",
-            maxWidth: "320px",
-            padding: "12px",
+            wordBreak: "break-word",
+            pointerEvents: "none",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
             borderRadius: "8px",
             backgroundColor: "#1f2937",
             color: "#f3f4f6",
-            fontSize: "12px",
             lineHeight: "1.5",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            zIndex: "10000",
-            pointerEvents: "none",
-            wordBreak: "break-word",
         });
 
-        const header = document.createElement("div");
-        Object.assign(header.style, {
-            fontWeight: "700",
-            fontSize: "13px",
-            marginBottom: "6px",
-            color: "#fbbf24",
-        });
-        header.textContent = title;
-        tip.appendChild(header);
-
-        const bodyEl = document.createElement("div");
-        bodyEl.textContent = body;
-        tip.appendChild(bodyEl);
+        if (isSimple) {
+            Object.assign(tip.style, {
+                minWidth: "200px",
+                maxWidth: "300px",
+                padding: "14px",
+                fontSize: "14px",
+            });
+            const header = document.createElement("div");
+            Object.assign(header.style, {
+                fontWeight: "700",
+                fontSize: "16px",
+                marginBottom: "8px",
+            });
+            header.textContent = title;
+            tip.appendChild(header);
+            const summary = document.createElement("div");
+            Object.assign(summary.style, { fontSize: "14px", marginTop: "8px" });
+            summary.textContent = body;
+            tip.appendChild(summary);
+        } else {
+            Object.assign(tip.style, {
+                minWidth: "240px",
+                maxWidth: "300px",
+                maxHeight: "400px",
+                overflowY: "auto",
+                padding: "12px",
+                fontSize: "12px",
+            });
+            const header = document.createElement("div");
+            Object.assign(header.style, {
+                fontWeight: "700",
+                fontSize: "14px",
+                marginBottom: "6px",
+            });
+            header.textContent = title;
+            tip.appendChild(header);
+            const bodyEl = document.createElement("div");
+            Object.assign(bodyEl.style, {
+                marginTop: "6px",
+                color: "#e5e7eb",
+            });
+            bodyEl.textContent = body;
+            tip.appendChild(bodyEl);
+        }
 
         return tip;
     }
