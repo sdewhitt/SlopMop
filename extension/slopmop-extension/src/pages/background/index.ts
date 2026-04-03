@@ -34,6 +34,10 @@ import {
   UNSUPPORTED_LANGUAGE_MESSAGE,
   UNSUPPORTED_LANGUAGE_BADGE,
 } from '@src/utils/languageSupport';
+import {
+  tryAnalyzePostLanguageUnsupported,
+  tryPopupDetectLanguageBlock,
+} from '@src/pages/background/detectLanguageGate';
 import type {
   DetectionResponse,
   HighlightSpan,
@@ -538,17 +542,10 @@ async function handleTogglePin(postId: string): Promise<MessageResponse> {
 
 async function handleDetect(text: string): Promise<MessageResponse> {
   const popupSettings = await getDetectionSettings();
-  const enabledIso = expandUserDetectionLanguages(popupSettings.detectionLanguages);
-  const enabledLabel = formatDetectionLanguagesForUi(popupSettings.detectionLanguages);
-  if (!isTextLanguageSupported(text, enabledIso)) {
-    const langInfo = getLanguageSupportInfo(text, enabledIso);
-    const copy = getLanguageUnsupportedCopy(langInfo, enabledLabel, popupSettings.detectionLanguages);
-    await browser.storage.local.set({
-      lastDetectResponse: null,
-      detectResponse: null,
-      lastDetectLanguageUnsupported: { message: copy.popupMessage },
-    });
-    return { success: false, error: copy.popupMessage };
+  const gate = tryPopupDetectLanguageBlock(text, popupSettings);
+  if (gate.blocked) {
+    await browser.storage.local.set(gate.storage);
+    return { success: false, error: gate.errorMessage };
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
@@ -686,20 +683,14 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
-  if (!hasImages && !isTextLanguageSupported(plainText, enabledIso)) {
-    const langInfo = getLanguageSupportInfo(plainText, enabledIso);
-    const copy = getLanguageUnsupportedCopy(langInfo, enabledLabel, settings.detectionLanguages);
-    await browser.tabs.sendMessage(tabId, {
-      type: 'DETECTION_LANGUAGE_UNSUPPORTED',
-      payload: {
-        postId: enrichedPost.postId,
-        message: copy.badge,
-        detectedLanguageName: langInfo.detectedName,
-        hoverSimple: copy.hoverSimple,
-        hoverTooltipTitle: copy.hoverTooltipTitle,
-        hoverTooltipBody: copy.hoverTooltipBody,
-      },
-    });
+  const earlyLangUnsupported = tryAnalyzePostLanguageUnsupported(
+    enrichedPost.postId,
+    plainText,
+    hasImages,
+    settings,
+  );
+  if (earlyLangUnsupported) {
+    await browser.tabs.sendMessage(tabId, earlyLangUnsupported);
     await finalizeStats(false);
     return;
   }

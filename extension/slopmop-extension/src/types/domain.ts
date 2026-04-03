@@ -131,7 +131,7 @@ export interface DetectionLanguageUnsupportedPayload {
   message: string;
   /** Human-readable name for feed tooltip, e.g. "German". */
   detectedLanguageName: string;
-  /** Native `title` on the Error badge (simple UI). */
+  /** Native `title` on the language badge (simple UI). */
   hoverSimple: string;
   /** Detailed tooltip header (detailed UI). */
   hoverTooltipTitle: string;

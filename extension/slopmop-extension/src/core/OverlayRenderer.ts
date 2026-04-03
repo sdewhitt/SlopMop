@@ -368,7 +368,7 @@ export class OverlayRenderer {
     }
 
     /**
-     * Language blocked — compact “Error” badge; hover explains unsupported language and what was detected.
+     * Language blocked — compact “Unsupported language” badge; hover explains what was detected and settings.
      */
     renderLanguageUnsupported(
         postId: PostId,
@@ -384,8 +384,8 @@ export class OverlayRenderer {
         surface.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
-        surface.textContent = "Error";
-        surface.style.cursor = "help";
+        surface.textContent = "Unsupported language";
+        surface.style.cursor = "default";
 
         if (isSimple) {
             surface.setAttribute("title", hover.simpleTitle);
