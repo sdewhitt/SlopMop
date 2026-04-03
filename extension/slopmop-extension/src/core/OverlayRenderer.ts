@@ -550,7 +550,7 @@ export class OverlayRenderer {
         };
 
         const hideTooltip = (): void => {
-            tooltip?.remove();
+            this.dismissTooltipForOverlay(factPanel);
             tooltip = null;
             pinned = false;
             removeDocDismiss();
@@ -563,7 +563,7 @@ export class OverlayRenderer {
             tooltip = isSimple
                 ? this.createSimpleFactCheckTooltip(items)
                 : this.createFactCheckTooltipDetailed(items);
-            factPanel.appendChild(tooltip);
+            this.mountTooltipOnBody(factPanel, tooltip);
         };
 
         const setPinned = (next: boolean): void => {
@@ -573,7 +573,7 @@ export class OverlayRenderer {
             const onDocClick = (e: MouseEvent): void => {
                 if (!tooltip || !pinned) return;
                 const t = e.target instanceof Node ? e.target : null;
-                if (t && factPanel.contains(t)) return;
+                if (t && (factPanel.contains(t) || tooltip.contains(t))) return;
                 hideTooltip();
             };
             document.addEventListener("click", onDocClick, true);
@@ -662,7 +662,7 @@ export class OverlayRenderer {
         };
 
         const hideTooltip = (): void => {
-            tooltip?.remove();
+            this.dismissTooltipForOverlay(factPanel);
             tooltip = null;
             pinned = false;
             removeDocDismiss();
@@ -673,7 +673,7 @@ export class OverlayRenderer {
             if (tooltip) return;
             this.setOverlayLayer(postId, true);
             tooltip = this.createFactCheckErrorTooltip(message);
-            factPanel.appendChild(tooltip);
+            this.mountTooltipOnBody(factPanel, tooltip);
         };
 
         const setPinned = (next: boolean): void => {
@@ -683,7 +683,7 @@ export class OverlayRenderer {
             const onDocClick = (e: MouseEvent): void => {
                 if (!tooltip || !pinned) return;
                 const t = e.target instanceof Node ? e.target : null;
-                if (t && factPanel.contains(t)) return;
+                if (t && (factPanel.contains(t) || tooltip.contains(t))) return;
                 hideTooltip();
             };
             document.addEventListener("click", onDocClick, true);
