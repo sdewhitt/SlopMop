@@ -288,6 +288,7 @@ class TextDetectors:
         "when the text is already in the human band (temporary debug).",
         flush=True,
       )
+    # log the satire detection line for testing purposes
 
   # initialize the satire detector
   def _initialize_satire_detector(self) -> None:
@@ -335,14 +336,18 @@ class TextDetectors:
     prob: float,
     human_max: float,
     ai_min: float,
-  ) -> tuple[float, str]:
+  ) -> tuple[float, str, bool, Optional[float]]:
+    # get the probability of the satire
     ps = self._satire_prob_satire(text)
     min_sat = float(os.environ.get("SLOPMOP_SATIRE_MIN_PROB", "0.5"))
     penalty = float(os.environ.get("SLOPMOP_SATIRE_AI_PENALTY", "0.3"))
+
+    # if the satire model did not run, skip the satire adjustment
+    # returns the probability, label, whether the satire adjustment was applied, and the probability of the satire
     if ps is None:
       if _satire_verbose_log_enabled():
         print("\033[1m [SlopMop Satire] \033[0m  neural: skip (no satire model — check best_satire_detector.pt)", flush=True)
-      return prob, self.prob_to_label(prob, human_max, ai_min)
+      return prob, self.prob_to_label(prob, human_max, ai_min), False, None
     if ps < min_sat:
       if _satire_verbose_log_enabled():
         print(
