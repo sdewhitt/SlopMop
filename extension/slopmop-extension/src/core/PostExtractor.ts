@@ -63,7 +63,7 @@ export class PostExtractor {
         if (!normalizedText && images.length === 0 && !hasVisualOnlyReelCandidate) return null;
 
         // classify ContentType
-        const contentType: ContentType = hasVisualOnlyReelCandidate
+        const contentType: ContentType | string = hasVisualOnlyReelCandidate
             ? "IMAGE"
             : classify(normalizedText, images.length);
 

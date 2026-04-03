@@ -19,7 +19,7 @@ export interface NormalizedPostContent {
     postId: PostId;
     url: string;
     capturedAtMs: number;
-    contentType: ContentType;
+    contentType: ContentType | string;
     text: {
       plain: string;
       languageHint: string;
