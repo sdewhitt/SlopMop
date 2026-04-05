@@ -11,4 +11,6 @@ export interface SiteAdapter {
   getCommentId(commentNode: Element): string | null;
   getCommentTextNode(commentNode: Element): HTMLElement | null;
   getCommentPermalink(commentNode: Element): string | null;
+  /** Narrower host element for badge positioning on comments whose container nests children (e.g. Reddit shreddit-comment). */
+  getCommentOverlayHost?(commentNode: Element): HTMLElement | null;
 }

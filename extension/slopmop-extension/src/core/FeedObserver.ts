@@ -180,8 +180,10 @@ export class FeedObserver {
     // detection misses posts (e.g. virtual scrolling, non-standard DOM updates).
     // (strange reddit cases)
     // all visible posts from adapter.findPostNodes() are processed in one batch.
+    // forceAnalyze bypasses the manual-mode gate so every unseen post is
+    // immediately sent for analysis (used when the user clicks "Scan Entire Page").
     scanEntirePage(): void {
-        this.scanAndProcess();
+        this.scanAndProcess(true);
     }
 
     /**
@@ -208,12 +210,12 @@ export class FeedObserver {
         }
     }
 
-    private scanAndProcess(): void {
+    private scanAndProcess(forceAnalyze = false): void {
         // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
         // each node is one post container on the page
         for (const node of nodes) {
-            this.handleCandidatePost(node, "post");
+            this.handleCandidatePost(node, "post", forceAnalyze);
         }
         let numComments = 0;
         // Scan for comments
@@ -236,20 +238,17 @@ export class FeedObserver {
                 : rawCommentNodes.slice(0, maxComments);
             numComments = commentNodes.length;
             for (const node of commentNodes) {
-                this.handleCandidatePost(node, "comment");
+                this.handleCandidatePost(node, "comment", forceAnalyze);
             }
-
         }
-        
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] scan found ${nodes.length+numComments} candidate nodes`);
         }
-
     }
 
 
-    private handleCandidatePost(node: Element, type: "post" | "comment"): void {
+    private handleCandidatePost(node: Element, type: "post" | "comment", forceAnalyze = false): void {
         // step 1: extract. turn raw DOM node into clean NormalizedPostContent
         // returns null if the node is missing critical data (no postId, etc.)
         const extracted = this.extractor.extract(node, this.adapter, type);
@@ -271,10 +270,19 @@ export class FeedObserver {
                 ? this.adapter.getTextNode(node)
                 : this.adapter.getCommentTextNode(node);
 
+        // For comments on sites with nested containers (e.g. Reddit shreddit-comment),
+        // the adapter can supply a narrower host so the badge anchors to the comment's
+        // own text instead of the bottom of the entire reply subtree.
+        const hostNode: HTMLElement =
+            (type === "comment" && this.adapter.getCommentOverlayHost?.(node))
+            || (node as HTMLElement);
+
         // step 2: dedupe. Set.has() is O(1) lookup.
         // Virtualized feeds (X) recycle DOM nodes: if the badge is gone, clear seen state and
         // continue so we can reattach. Otherwise, in manual mode still render Detect Now on
-        // newly encountered hosts (e.g. opening a modal for a post already seen in the grid).
+        // newly encountered hosts for posts only (e.g. opening a modal for a post already seen
+        // in the grid). Comments use one id across sibling DOM rows (LinkedIn headline + body);
+        // re-rendering on a second host duplicates overlays.
         if (this.seenPostIds.has(extracted.postId)) {
             const alive = this.overlay.isBadgeDomAlive?.(extracted.postId);
             if (alive === false) {
@@ -284,11 +292,15 @@ export class FeedObserver {
                     this.postsById.delete(extracted.postId);
                 }
             } else {
-                if (!this.settings.automaticScanning && !this.renderedHosts.has(node)) {
-                    this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+                if (
+                    type === "post" &&
+                    !this.settings.automaticScanning &&
+                    !this.renderedHosts.has(node)
+                ) {
+                    this.renderManualEntry(extracted, hostNode, textContainer);
                     this.renderedHosts.add(node);
                 }
-              
+
                 return;
             }
         }
@@ -306,7 +318,7 @@ export class FeedObserver {
             this.postsById.set(extracted.postId, extracted);
             this.overlay.mountResultBadgeOnHost?.(
                 extracted.postId,
-                node as HTMLElement,
+                hostNode,
                 extracted.text.plain,
                 cachedResult,
                 textContainer,
@@ -329,11 +341,12 @@ export class FeedObserver {
             });
         }
 
-        if (this.settings.automaticScanning) {
-            // automatic mode: render scanning state immediately and dispatch analysis now.
+        if (this.settings.automaticScanning || forceAnalyze) {
+            // automatic mode (or explicit "Scan Entire Page"): render scanning state
+            // immediately and dispatch analysis now.
             this.overlay.renderPending(
                 extracted.postId,
-                node as HTMLElement,
+                hostNode,
                 extracted.text.plain,
                 undefined,
                 textContainer,
@@ -343,7 +356,7 @@ export class FeedObserver {
             return;
         }
 
-        this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+        this.renderManualEntry(extracted, hostNode, textContainer);
         this.renderedHosts.add(node);
     }
 

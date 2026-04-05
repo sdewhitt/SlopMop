@@ -225,9 +225,13 @@ export class LinkedInAdapter implements SiteAdapter {
       const fromComponentKey = this.findCommentRootsFromComponentKey(post);
       const legacy = Array.from(post.querySelectorAll('[data-urn*="urn:li:comment"]'));
       const modern = this.findModernCommentRootsInPost(post);
-      const nodes = [...fromComponentKey, ...legacy, ...modern];
+      const merged = [...fromComponentKey, ...legacy, ...modern];
+      const nodes = merged.filter(
+        (el) => !merged.some((other) => other !== el && other.contains(el)),
+      );
+      const dedupedNodes = this.dedupeCommentNodesByCommentThread(nodes);
 
-      for (const node of nodes) {
+      for (const node of dedupedNodes) {
         if (seen.has(node)) continue;
         // Exclude nodes inside the social actions bar (e.g. "Comment" button).
         if (this.isLikelyActionBarItem(node)) continue;
@@ -241,6 +245,46 @@ export class LinkedInAdapter implements SiteAdapter {
       }
     }
 
+    return out;
+  }
+
+  /**
+   * One badge per comment thread. LinkedIn often splits a comment into sibling rows (headline +
+   * body), each with its own root; they share the same replaceableComment_* ancestor but get
+   * different text-based ids. Collapse to a single host per urn:li:comment block (prefer the row
+   * with the longest extracted text — usually the body).
+   */
+  private dedupeCommentNodesByCommentThread(nodes: Element[]): Element[] {
+    const bestForBlock = new Map<Element, Element>();
+    for (const node of nodes) {
+      const block = node.closest('[componentkey*="urn:li:comment"]');
+      if (!block) continue;
+      const existing = bestForBlock.get(block);
+      if (!existing) {
+        bestForBlock.set(block, node);
+        continue;
+      }
+      const lenA = this.getCommentTextNode(existing)?.innerText?.length ?? 0;
+      const lenB = this.getCommentTextNode(node)?.innerText?.length ?? 0;
+      if (lenB > lenA) bestForBlock.set(block, node);
+    }
+
+    const seenIds = new Set<string>();
+    const out: Element[] = [];
+    for (const node of nodes) {
+      const block = node.closest('[componentkey*="urn:li:comment"]');
+      if (block) {
+        if (bestForBlock.get(block) !== node) continue;
+        out.push(node);
+        continue;
+      }
+      const id = this.getCommentId(node);
+      if (id) {
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+      }
+      out.push(node);
+    }
     return out;
   }
 
@@ -371,6 +415,12 @@ export class LinkedInAdapter implements SiteAdapter {
   }
 
   private commentRootForExpandable(tb: HTMLElement, post: Element): Element {
+    // Prefer the comment row wrapper (replaceableComment_...) over the outer feed listitem.
+    // Otherwise the nearest listitem is often the whole post card, which breaks dedup and
+    // would attach badges to the wrong host.
+    const commentBlock = tb.closest<HTMLElement>('[componentkey*="urn:li:comment"]');
+    if (commentBlock && post.contains(commentBlock)) return commentBlock;
+
     const li = tb.closest("div[role='listitem']");
     if (li && post.contains(li)) return li;
     const p = tb.parentElement;
@@ -617,9 +667,12 @@ export class LinkedInAdapter implements SiteAdapter {
 
   /**
    * e.g. componentkey="replaceableComment_urn:li:comment:(urn:li:activity:ACT_ID,COMMENT_ID)"
+   * Row-level keys may include urn:li:comment but only hash to ck-*; keep walking to find a
+   * parent replaceableComment_* tuple so sibling headline/body rows share one stable id.
    */
   private parseCommentIdFromComponentKey(node: Element): string | null {
     let el: Element | null = node;
+    let hashFallback: string | null = null;
     while (el) {
       const ck = el.getAttribute("componentkey")?.trim();
       if (ck && ck.includes("urn:li:comment")) {
@@ -627,12 +680,13 @@ export class LinkedInAdapter implements SiteAdapter {
         if (tuple) return tuple[1];
         const simple = ck.match(/urn:li:comment:\(?(\d+)/);
         if (simple) return simple[1];
-        const hash = this.fnv1a(ck);
-        return `ck-${hash}`;
+        if (hashFallback === null) {
+          hashFallback = `ck-${this.fnv1a(ck)}`;
+        }
       }
       el = el.parentElement;
     }
-    return null;
+    return hashFallback;
   }
 
   private parseCommentIdFromUrl(_url: string): string | null {

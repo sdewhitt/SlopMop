@@ -30,9 +30,8 @@ describe('LinkedInOverlayRenderer UI', () => {
     document.body.innerHTML = '';
   });
 
-  it('positions the Detect Now badge at top-right (top: 48px, right: 8px) of the post', () => {
-    // LinkedInOverlayRenderer overrides getBadgePosition to place the badge
-    // below the post header (top: 48px) instead of bottom-right.
+  it('positions the Detect Now badge like X (top: 6px, right: 88px) of the post', () => {
+    // LinkedInOverlayRenderer extends XOverlayRenderer — same top row placement as X.
     const postNode = document.createElement('article');
     postNode.style.position = 'relative';
     document.body.appendChild(postNode);
@@ -51,8 +50,8 @@ describe('LinkedInOverlayRenderer UI', () => {
 
     const overlay = postNode.querySelector('[style*="position: absolute"]') as HTMLElement;
     expect(overlay).not.toBeNull();
-    expect(overlay?.style.top).toBe('48px');
-    expect(overlay?.style.right).toBe('8px');
+    expect(overlay?.style.top).toBe('6px');
+    expect(overlay?.style.right).toBe('88px');
     // Should NOT have bottom positioning (unlike default OverlayRenderer).
     expect(overlay?.style.bottom).toBe('');
   });

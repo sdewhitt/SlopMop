@@ -225,6 +225,10 @@ export class RedditAdapter implements SiteAdapter {
     );
   }
 
+  getCommentOverlayHost(commentNode: Element): HTMLElement | null {
+    return this.getCommentTextNode(commentNode);
+  }
+
   private normalizeUrl(rawUrl: string): string | null {
     try {
       const url = new URL(rawUrl, window.location.origin);
