@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 # for type hints
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, cast
 
 import os
 import sys
@@ -10,6 +10,8 @@ import torch  # type: ignore[import-untyped]
 import torch.nn as nn
 from transformers import AutoModel, AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # type: ignore[import-untyped]
 from transformers.modeling_utils import PreTrainedModel  # type: ignore[import-untyped]
+from transformers.configuration_utils import PretrainedConfig  # type: ignore[import-untyped]
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase  # type: ignore[import-untyped]
 
 # for regex (url, emoji) removal
 import re
@@ -46,7 +48,7 @@ from stress_test_generator import StressTestGenerator
 
 # Custom model for desklib/ai-text-detector-v1.01 (single logit + sigmoid, not AutoModelForSequenceClassification)
 class DesklibAIDetectionModel(PreTrainedModel):
-  config_class = AutoConfig
+  config_class: type[PretrainedConfig] = AutoConfig  # type: ignore[assignment]
 
   # initialize the model
   def __init__(self, config):
@@ -56,6 +58,8 @@ class DesklibAIDetectionModel(PreTrainedModel):
 
 
   def forward(self, input_ids, attention_mask=None, labels=None):
+    if attention_mask is None:
+      raise ValueError("attention_mask is required")
     # forward pass to get the outputs
     outputs = self.model(input_ids, attention_mask=attention_mask)
     # get the last hidden state
@@ -260,8 +264,8 @@ class TextDetectors:
   def __init__(self):
     self.model_name = "distilbert-base-uncased"
     # empty container for tokenizor (translator) and model
-    self.tokenizer = None
-    self.model = None
+    self.tokenizer: Optional[PreTrainedTokenizerBase] = None
+    self.model: Optional[nn.Module] = None
     # CPU > MPS (Apple Silicon) > CUDA (NVIDIA) for speed
     if torch.cuda.is_available():
       self.device = torch.device("cuda")
@@ -289,6 +293,16 @@ class TextDetectors:
         flush=True,
       )
     # log the satire detection line for testing purposes
+
+  def _require_model(self) -> nn.Module:
+    if self.model is None:
+      raise RuntimeError("Text model is not initialized")
+    return self.model
+
+  def _require_tokenizer(self) -> PreTrainedTokenizerBase:
+    if self.tokenizer is None:
+      raise RuntimeError("Tokenizer is not initialized")
+    return self.tokenizer
 
   # initialize the satire detector
   def _initialize_satire_detector(self) -> None:
@@ -336,18 +350,17 @@ class TextDetectors:
     prob: float,
     human_max: float,
     ai_min: float,
-  ) -> tuple[float, str, bool, Optional[float]]:
+  ) -> tuple[float, str]:
     # get the probability of the satire
     ps = self._satire_prob_satire(text)
     min_sat = float(os.environ.get("SLOPMOP_SATIRE_MIN_PROB", "0.5"))
     penalty = float(os.environ.get("SLOPMOP_SATIRE_AI_PENALTY", "0.3"))
 
     # if the satire model did not run, skip the satire adjustment
-    # returns the probability, label, whether the satire adjustment was applied, and the probability of the satire
     if ps is None:
       if _satire_verbose_log_enabled():
         print("\033[1m [SlopMop Satire] \033[0m  neural: skip (no satire model — check best_satire_detector.pt)", flush=True)
-      return prob, self.prob_to_label(prob, human_max, ai_min), False, None
+      return prob, self.prob_to_label(prob, human_max, ai_min)
     if ps < min_sat:
       if _satire_verbose_log_enabled():
         print(
@@ -474,8 +487,9 @@ class TextDetectors:
         self.model = DesklibAIDetectionModel.from_pretrained(self.model_name)
       else:
         self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-      self.model.to(self.device)
-      self.model.eval()
+      model = self._require_model()
+      model.to(self.device)
+      model.eval()
       print(f"Successfully loaded [{self.model_name}] to [{self.device}]")
     except Exception as e:
       # if error, fall back to desklib/ai-text-detector-v1.01
@@ -485,7 +499,7 @@ class TextDetectors:
       self.use_binary_logit = True
       self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
       self.model = DesklibAIDetectionModel.from_pretrained(self.model_name)
-      self.model.to(self.device)
+      self._require_model().to(self.device)
 
   # could change the human_max and ai_min to be more accurate
   def calculate_confidence(
@@ -497,11 +511,13 @@ class TextDetectors:
     return_pct: bool = False,
     comment_texts: Optional[List[str]] = None,
   ):
+    tokenizer = self._require_tokenizer()
+    model = self._require_model()
     # clean the text if needed
     if clean:
       text = preprocess_text(text)
     # tokenize the text
-    enc = self.tokenizer(
+    enc = tokenizer(
       text,
       padding="max_length",
       truncation=True,
@@ -511,10 +527,10 @@ class TextDetectors:
     # move the text to the device
     enc = {k: v.to(self.device) for k, v in enc.items()}
     # evaluation mode
-    self.model.eval()
+    model.eval()
     # output, no weights are updated
     with torch.no_grad():
-      outputs = self.model(**enc)
+      outputs = model(**enc)
     logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
     if self.use_binary_logit:
       prob = torch.sigmoid(logits.squeeze(-1)).item()
@@ -558,11 +574,12 @@ class TextDetectors:
     return "ai"
 
   def _get_raw_prob(self, text: str, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> float:
+    model = self._require_model()
     enc = {"input_ids": input_ids, "attention_mask": attention_mask}
     enc = {k: v.to(self.device) for k, v in enc.items()}
-    self.model.eval()
+    model.eval()
     with torch.no_grad():
-      outputs = self.model(**enc)
+      outputs = model(**enc)
     logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
     if self.use_binary_logit:
       return torch.sigmoid(logits.squeeze(-1)).item()
@@ -575,11 +592,12 @@ class TextDetectors:
     attention_mask: torch.Tensor,
   ) -> list[float]:
     """Batched probabilities (0-1 each); tensors shaped [batch, seq_len]."""
+    model = self._require_model()
     enc = {"input_ids": input_ids, "attention_mask": attention_mask}
     enc = {k: v.to(self.device) for k, v in enc.items()}
-    self.model.eval()
+    model.eval()
     with torch.no_grad():
-      outputs = self.model(**enc)
+      outputs = model(**enc)
     logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
     if self.use_binary_logit:
       probs = torch.sigmoid(logits.squeeze(-1))
@@ -598,6 +616,7 @@ class TextDetectors:
     top_k_spans: int = 12,
     comment_texts: Optional[List[str]] = None,
   ) -> tuple[float, str, list[tuple[int, int, float]]]:
+    tokenizer = self._require_tokenizer()
     if clean:
       text = preprocess_text(text)
     if not text.strip():
@@ -614,7 +633,7 @@ class TextDetectors:
       )
       return round(conf, 4), label, []
 
-    enc = self.tokenizer(
+    enc = tokenizer(
       text,
       padding="max_length",
       truncation=True,
@@ -631,14 +650,15 @@ class TextDetectors:
       )
       return round(conf, 4), label, []
 
-    input_ids = input_ids.to(self.device)
-    attention_mask = attention_mask.to(self.device)
+    input_ids = cast(torch.Tensor, input_ids).to(self.device)
+    attention_mask = cast(torch.Tensor, attention_mask).to(self.device)
     offset_mapping = offset_mapping[0]
 
     baseline_prob = self._get_raw_prob(text, input_ids, attention_mask)
-    mask_token_id = self.tokenizer.mask_token_id
+    mask_token_id = tokenizer.mask_token_id
     if mask_token_id is None:
-      mask_token_id = self.tokenizer.pad_token_id or 0
+      mask_token_id = tokenizer.pad_token_id or 0
+    mask_token_id_int = cast(int, mask_token_id)
 
     contributions: list[tuple[int, int, float]] = []
     # Only mask real content tokens, and cap at max_tokens_to_evaluate forwards.
@@ -652,7 +672,7 @@ class TextDetectors:
       if start == 0 and end == 0:
         continue
       token_id = input_ids[0, i].item()
-      if token_id in (self.tokenizer.pad_token_id, self.tokenizer.cls_token_id, self.tokenizer.sep_token_id):
+      if token_id in (tokenizer.pad_token_id, tokenizer.cls_token_id, tokenizer.sep_token_id):
         continue
       mask_indices.append(i)
 
@@ -664,7 +684,7 @@ class TextDetectors:
       batch_ids = input_ids.expand(k, -1).clone()
       batch_attn = attention_mask.expand(k, -1).clone()
       for row, i in enumerate(to_eval):
-        batch_ids[row, i] = mask_token_id
+        batch_ids[row, i] = mask_token_id_int
       masked_probs = self._get_raw_probs_batch(batch_ids, batch_attn)
       for row, i in enumerate(to_eval):
         o = offset_mapping[i]
@@ -700,6 +720,8 @@ class TextDetectors:
 if __name__ == "__main__":
     datasets.disable_progress_bars()
     detector = TextDetectors()
+    detector.model = cast(nn.Module, detector.model)
+    detector.tokenizer = cast(PreTrainedTokenizerBase, detector.tokenizer)
 
     # load the best model state from file if it exists
     best_model_path = os.path.join(os.path.dirname(__file__), "best_text_detector(smaller).pt")
@@ -712,10 +734,10 @@ if __name__ == "__main__":
       state = torch.load(best_model_path, map_location=detector.device)
       is_desklib_checkpoint = any(k.startswith("model.") for k in state.keys())
       if detector.use_binary_logit and is_desklib_checkpoint:
-        detector.model.load_state_dict(state, strict=True)
+        detector.model.load_state_dict(state, strict=True)  # type: ignore[attr-defined]
         print(f"Loaded best model weights from {best_model_path}.")
       elif (not detector.use_binary_logit) and (not is_desklib_checkpoint):
-        detector.model.load_state_dict(state, strict=True)
+        detector.model.load_state_dict(state, strict=True)  # type: ignore[attr-defined]
         print(f"Loaded best model weights from {best_model_path}.")
     if state is None:
       print(f"No saved best model found; using freshly loaded weights.")
@@ -816,15 +838,16 @@ if __name__ == "__main__":
     cleaned_test_stress_dataset = test_stress_dataset.map(lambda ex: clean_example(ex, text_column))
 
     # if the checkpoint is desklib, use knowledge distillation
+    teacher_model: Optional[DesklibAIDetectionModel] = None
+    teacher_tokenizer: Optional[PreTrainedTokenizerBase] = None
     if is_desklib_checkpoint:
-      teacher_model = None
-      teacher_tokenizer = None
       # load the teacher model
       teacher_model = DesklibAIDetectionModel.from_pretrained("desklib/ai-text-detector-v1.01")
       # load the teacher model state from file
+      assert state is not None
       teacher_model.load_state_dict(state, strict=True)
       # move the teacher model to the device
-      teacher_model.to(detector.device)
+      cast(nn.Module, teacher_model).to(detector.device)
       # set the teacher model to evaluation mode
       teacher_model.eval()
       # load the teacher tokenizer
@@ -838,11 +861,14 @@ if __name__ == "__main__":
         labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
         return {"text": texts, "label": labels}
       
-      train_dataloader_distill = DataLoader(cleaned_train_dataset, batch_size=16, shuffle=True, collate_fn=collate_text_batch) if USE_KNOWLEDGE_DISTILLATION else None
+      train_dataloader_distill = DataLoader(cleaned_train_dataset, batch_size=16, shuffle=True, collate_fn=collate_text_batch) if USE_KNOWLEDGE_DISTILLATION else None  # type: ignore[arg-type]
     else:
       tokenized_train_dataset = cleaned_train_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
       tokenized_train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-      train_dataloader = DataLoader(tokenized_train_dataset, batch_size=16, shuffle=True)
+      train_dataloader = DataLoader(tokenized_train_dataset, batch_size=16, shuffle=True)  # type: ignore[arg-type]
+
+    train_dataloader_distill = locals().get("train_dataloader_distill")
+    train_dataloader = locals().get("train_dataloader")
 
     
     tokenized_val_dataset = cleaned_val_dataset.map(lambda x: tokenize_batch(x, detector.tokenizer, text_column), batched=True, batch_size=1000)
@@ -854,9 +880,9 @@ if __name__ == "__main__":
     tokenized_test_normal_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
     tokenized_test_stress_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
 
-    val_dataloader = DataLoader(tokenized_val_dataset, batch_size=16, shuffle=False)
-    test_normal_dataloader = DataLoader(tokenized_test_normal_dataset, batch_size=16, shuffle=False)
-    test_stress_dataloader = DataLoader(tokenized_test_stress_dataset, batch_size=16, shuffle=False)
+    val_dataloader = DataLoader(tokenized_val_dataset, batch_size=16, shuffle=False)  # type: ignore[arg-type]
+    test_normal_dataloader = DataLoader(tokenized_test_normal_dataset, batch_size=16, shuffle=False)  # type: ignore[arg-type]
+    test_stress_dataloader = DataLoader(tokenized_test_stress_dataset, batch_size=16, shuffle=False)  # type: ignore[arg-type]
 
     # create the optimizer and loss function
     optimizer = AdamW(detector.model.parameters(), lr=5e-5)
@@ -904,13 +930,19 @@ if __name__ == "__main__":
       detector.model.train()
       batch_counter = 0
       dataloader = train_dataloader_distill if USE_KNOWLEDGE_DISTILLATION else train_dataloader
+      if dataloader is None:
+        raise RuntimeError("Training dataloader was not initialized")
+      time_taken = 0.0
 
       for batch in tqdm(dataloader, desc=f"Training", unit="batch"):
         batch_counter += 1
         start = time.time()
+        teacher_input_ids: Optional[torch.Tensor] = None
+        teacher_attention_mask: Optional[torch.Tensor] = None
 
         # if knowledge distillation is enabled, use the teacher model to get the logits
         if USE_KNOWLEDGE_DISTILLATION:
+          assert teacher_tokenizer is not None
           # get the texts and labels
           texts, labels = batch["text"], batch["label"].to(detector.device)
           # tokenize the texts
@@ -918,11 +950,11 @@ if __name__ == "__main__":
           # tokenize the texts for the teacher model
           teacher_enc = teacher_tokenizer(texts, padding="max_length", truncation=True, max_length=512, return_tensors="pt")
           # move the input ids and attention mask to the device
-          input_ids = student_enc["input_ids"].to(detector.device)
+          input_ids = cast(torch.Tensor, student_enc["input_ids"]).to(detector.device)
           # move the attention mask to the device
-          attention_mask = student_enc["attention_mask"].to(detector.device)
-          teacher_input_ids = teacher_enc["input_ids"].to(detector.device)
-          teacher_attention_mask = teacher_enc["attention_mask"].to(detector.device)
+          attention_mask = cast(torch.Tensor, student_enc["attention_mask"]).to(detector.device)
+          teacher_input_ids = cast(torch.Tensor, teacher_enc["input_ids"]).to(detector.device)
+          teacher_attention_mask = cast(torch.Tensor, teacher_enc["attention_mask"]).to(detector.device)
         else:
           # if knowledge distillation is not enabled, just use current model to get the logits
           input_ids = batch["input_ids"].to(detector.device)
@@ -938,6 +970,9 @@ if __name__ == "__main__":
 
         # if knowledge distillation is enabled, use the teacher model to get the logits
         if USE_KNOWLEDGE_DISTILLATION:
+          assert teacher_model is not None
+          assert teacher_input_ids is not None
+          assert teacher_attention_mask is not None
           # get the outputs from the teacher model
           with torch.no_grad():
             teacher_outputs = teacher_model(teacher_input_ids, attention_mask=teacher_attention_mask)
@@ -1064,7 +1099,7 @@ if __name__ == "__main__":
         early_stopping_counter = 0
 
         # copy the best model state so that we can load it for later runs as well
-        best_model_state = copy.deepcopy(detector.model.state_dict())
+        best_model_state = copy.deepcopy(detector.model.state_dict())  # type: ignore[attr-defined]
         best_epoch = epoch
       else:
         # increment the early stopping counter
@@ -1091,11 +1126,11 @@ if __name__ == "__main__":
     # load the best model state if it exists
     if best_model_state:
       print(f"Loading best model state from epoch {best_epoch+1}")
-      detector.model.load_state_dict(best_model_state)
+      detector.model.load_state_dict(best_model_state)  # type: ignore[attr-defined]
       # save the best model state to a file
-      torch.save(detector.model.state_dict(), "model_training/text_model/best_text_detector(smaller).pt")
+      torch.save(detector.model.state_dict(), "model_training/text_model/best_text_detector(smaller).pt")  # type: ignore[attr-defined]
 
-      best_model_state_fp = detector.model.state_dict()
+      best_model_state_fp = detector.model.state_dict()  # type: ignore[attr-defined]
       best_model_state_fp16 = {k: v.half() for k, v in best_model_state_fp.items()}
       torch.save(best_model_state_fp16, os.path.join(os.path.dirname(__file__), "best_text_detector_fp16(smaller).pt"))
       torch.save(best_model_state, best_model_path)
@@ -1146,7 +1181,7 @@ if __name__ == "__main__":
     tester = StressTestGenerator()
 
     stress_test_dataset = tester.generate_stress_test_dataset(test_stress_dataset)
-    stress_test_dataloader = DataLoader(stress_test_dataset, batch_size=16, shuffle=False)
+    stress_test_dataloader = DataLoader(stress_test_dataset, batch_size=16, shuffle=False)  # type: ignore[arg-type]
 
     detector.model.eval()
     total_stress_test_loss = 0.0
