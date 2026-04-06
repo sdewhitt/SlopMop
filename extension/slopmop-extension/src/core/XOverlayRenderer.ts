@@ -25,7 +25,7 @@ export class XOverlayRenderer extends OverlayRenderer {
     };
   }
 
-  protected override getDetectNowButtonStyle(isSimple: boolean): Record<string, string> {
+  protected override getActionButtonStyle(_hostNode: HTMLElement, isSimple: boolean): Partial<CSSStyleDeclaration> {
     return {
       border: "none",
       borderRadius: "3px",

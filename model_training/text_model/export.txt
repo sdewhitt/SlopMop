@@ -60,3 +60,39 @@ Avg val accuracy: 98.33%
 Best model from epoch: 2
 Test loss: 0.0123 | Test accuracy: 100.00%
 Stress test loss: 0.0280 | Stress test accuracy: 98.33%
+
+
+ ------------------------------------- 
+    Batch 1: Loss: 0.0001304160 | Accuracy: 100.00% | s/batch: 23.3137269020
+    Batch 2: Loss: 0.0000508413 | Accuracy: 100.00% | s/batch: 30.1133410931
+    Batch 3: Loss: 0.0001785253 | Accuracy: 100.00% | s/batch: 27.9511649609
+    Batch 4: Loss: 0.0000638251 | Accuracy: 100.00% | s/batch: 24.7469162941
+    Batch 5: Loss: 0.0000444623 | Accuracy: 100.00% | s/batch: 22.0619790554
+    Batch 6: Loss: 0.0000210253 | Accuracy: 100.00% | s/batch: 34.4157879353
+    Batch 7: Loss: 0.0000188348 | Accuracy: 100.00% | s/batch: 26.1046159267
+    Batch 8: Loss: 0.0000235580 | Accuracy: 100.00% | s/batch: 21.0728800297
+    Batch 9: Loss: 0.0000217926 | Accuracy: 100.00% | s/batch: 19.1648027897
+    Batch 10: Loss: 0.0000110640 | Accuracy: 100.00% | s/batch: 19.9341490269
+    Batch 11: Loss: 0.0000129639 | Accuracy: 100.00% | s/batch: 18.0313079357
+    Batch 12: Loss: 0.7325750589 | Accuracy: 93.75% | s/batch: 19.0872678757
+    Batch 13: Loss: 0.0000141708 | Accuracy: 100.00% | s/batch: 20.9187729359
+    Batch 14: Loss: 0.0000151168 | Accuracy: 100.00% | s/batch: 21.1845130920
+    Batch 15: Loss: 0.0000090375 | Accuracy: 100.00% | s/batch: 19.4624037743
+    Batch 16: Loss: 0.0000055060 | Accuracy: 100.00% | s/batch: 18.3207700253
+    Batch 17: Loss: 0.0000222305 | Accuracy: 100.00% | s/batch: 19.2377307415
+    Batch 18: Loss: 0.0000199811 | Accuracy: 100.00% | s/batch: 20.1207411289
+    Batch 19: Loss: 0.0000103934 | Accuracy: 100.00% | s/batch: 20.3356530666
+    Batch 20: Loss: 0.0000471036 | Accuracy: 100.00% | s/batch: 18.9521150589
+    Batch 21: Loss: 0.0001210015 | Accuracy: 100.00% | s/batch: 19.9370322227
+    Batch 22: Loss: 0.0000348796 | Accuracy: 100.00% | s/batch: 20.5761830807
+    Batch 23: Loss: 0.0002832251 | Accuracy: 100.00% | s/batch: 20.2766511440
+    Batch 24: Loss: 0.7964316607 | Accuracy: 93.75% | s/batch: 19.8005928993
+    Batch 25: Loss: 0.0000185141 | Accuracy: 100.00% | s/batch: 22.5719759464
+    Batch 26: Loss: 0.6366100907 | Accuracy: 93.75% | s/batch: 20.8195288181
+    Batch 27: Loss: 0.0000504536 | Accuracy: 100.00% | s/batch: 21.2251160145
+    Batch 28: Loss: 0.0001090919 | Accuracy: 100.00% | s/batch: 21.5561978817
+    Batch 29: Loss: 0.0006834209 | Accuracy: 100.00% | s/batch: 25.0723199844
+    Batch 30: Loss: 0.0000115483 | Accuracy: 100.00% | s/batch: 23.2277309895
+    Batch 31: Loss: 0.0000441499 | Accuracy: 100.00% | s/batch: 28.3036668301
+    Batch 32: Loss: 0.4451507628 | Accuracy: 93.75% | s/batch: 21.8143138885
+    Batch 33: Loss: 0.0000304635 | Accuracy: 100.00% | s/batch: 21.7661089897

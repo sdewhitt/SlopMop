@@ -72,12 +72,12 @@ def preprocess_text(text):
 
   return re.sub(r'\s+', ' ', clean_up).strip()
 
-
+# clean the example
 def clean_example(example: dict, text_column: str = "text") -> dict:
   example[text_column] = preprocess_text(example[text_column])
   return example
 
-
+# get the text column
 def get_text_column(dataset: Dataset) -> str:
   cols = dataset.column_names
   if "text" in cols:
@@ -87,7 +87,7 @@ def get_text_column(dataset: Dataset) -> str:
       return c
   return cols[0] if cols else "text"
 
-
+# tokenize the batch
 def tokenize_batch(batch: dict, tokenizer, text_column: str = "text") -> dict:
   return tokenizer(
     batch[text_column],
@@ -149,15 +149,23 @@ def add_satire_keyword(keyword: str) -> None:
     _SATIRE_PATTERN = _build_keyword_pattern()
 
 
-# ── Regex extras: hashtags, Reddit-style /s (not covered by word-boundary keyword list) ──
+# hashtags, reddit-style /s /satire /shitpost /meme (not in plain keyword list) (keep in sync with extension/slopmop-extension/src/utils/satireKeywordScan.ts)
+# canonical tags first (#satire, #shitpost, #meme), then compound tags like #my-shitpost-joke.
 _HASHTAG_SATIRE = re.compile(
-  r"#[\w-]*(?:satire|parody|sarcasm|shitpost|shitposts|meme|joke)\b",
+  r"(?:"
+  r"#(?:satire|shitpost|meme)\b"
+  r"|"
+  r"#[\w-]*(?:satire|parody|sarcasm|shitpost|shitposts|meme|joke)\b"
+  r")",
   re.IGNORECASE,
 )
 # "shit post" / "shit-post" as hashtag-style
 _HASHTAG_SHIT_POST = re.compile(r"#\s*shit[\s_-]*post\b", re.IGNORECASE)
-# Reddit/forum sarcasm end-marker
-_REDDIT_S_MARKER = re.compile(r"(?:^|[\s>])(/[sS])(?:\s|$|[.,!?])")
+# reddit/forum end-markers: /s, /satire, /shitpost, /meme (same placement rules as classic /s)
+_REDDIT_SLASH_MARKERS = re.compile(
+  r"(?:^|[\s>])(/(?:satire|shitpost|meme|s))(?:\s|$|[.,!?])",
+  re.IGNORECASE,
+)
 
 # result of scanning post body then optional comments for satire cues
 class SatireKeywordScanResult(NamedTuple):
@@ -177,8 +185,8 @@ def extract_satire_markers_regex(text: str) -> List[str]:
     found.add(m.group(0).lower())
   for m in _HASHTAG_SHIT_POST.finditer(text):
     found.add(re.sub(r"\s+", "", m.group(0).lower()))
-  if _REDDIT_S_MARKER.search(text):
-    found.add("/s")
+  for m in _REDDIT_SLASH_MARKERS.finditer(text):
+    found.add(m.group(1).lower())
   return sorted(found)
 
 
@@ -189,16 +197,22 @@ _RE_THIS_POST_SATIRE = re.compile(
   r"(?:is|isn't|is not|was|wasn't|must be|has to be|looks like|seems|reads like|ain't)\s+"
   r"(?:satire|a joke|parody|sarcasm|sarcastic|shitpost|shit post|trolling|fake|humor)\b",
 )
+
+# check if the comment is a satire question
 _RE_IS_THIS_SATIRE_Q = re.compile(
   r"(?i)\b(?:is this|is it|isn't this|isn't it)\s+(?:satire|a joke|parody|sarcastic|serious|real)\b",
 )
-# "satire -> yes" / "this is satire → no"
+# check if the comment is a satire answer
 _RE_ARROW_SATIRE_ANSWER = re.compile(
   r"(?i)(?:this\s+is\s+)?(?:satire|a joke|parody|sarcasm|shitpost)\s*(?:->|→|—|:)\s*(yes|no)\b",
 )
+
+# check if the comment is an affirmation word
 _RE_AFFIRM_WORDS = re.compile(
   r"(?i)\b(?:yes|yeah|yep|yup|definitely|absolutely|sure|correct|exactly|it is|this is|for sure|100%)\b",
 )
+
+# check if the comment is a denial after a satire question
 _RE_DENY_AFTER_SATIRE_Q = re.compile(
   r"(?i)(?:satire|parody|joke|sarcasm|shitpost)\s*\?[^\n]{0,25}\bno\b",
 )
@@ -258,10 +272,11 @@ def _count_satire_meta_comments(comment_texts: List[str]) -> int:
   return sum(1 for c in comment_texts if c and isinstance(c, str) and _comment_discusses_post_satire(c))
 
 
-# Minimum number of meta-comments about post satire to treat as crowd signal
+# minimum number of meta-comments about post satire to treat as crowd signal
 SATIRE_COMMENT_CROWD_THRESHOLD = 10
 
 
+# merge the comment keywords for consensus
 def _merge_comment_keywords_for_consensus(
   comment_texts: List[str],
   max_comments: int = 5,
@@ -344,7 +359,7 @@ def has_satire_markers_post_or_comments(
   r = extract_satire_keywords_post_then_comments(post_text, comment_texts)
   return len(r.keywords) > 0
 
-
+# satire dataset
 class SatireDataset(TorchDataset):
   def __init__(
     self,
@@ -356,16 +371,23 @@ class SatireDataset(TorchDataset):
     max_length: int = 512,
     preprocess_fn=None,
   ) -> None:
+    # load the dataset from the csv file
     if csv_path is not None:
+      # if the csv file is provided, load the dataset from the csv file
       self.texts, self.labels = self._load_csv(csv_path, text_column)
     elif texts is not None and labels is not None:
+      # if the texts and labels are provided, load the dataset from the texts and labels
       self.texts = list(texts)
       self.labels = list(labels)
     else:
+      # if neither the csv file nor the texts and labels are provided, raise an error
       raise ValueError("Provide either csv_path or (texts, labels)")
 
+    # set the tokenizer
     self.tokenizer = tokenizer
+    # set the max length
     self.max_length = max_length
+    # set the preprocess function
     self.preprocess_fn = preprocess_fn or preprocess_text
 
     # Preprocess and tokenize all examples
@@ -378,12 +400,15 @@ class SatireDataset(TorchDataset):
     texts: List[str] = []
     labels: List[int] = []
 
+    # open the csv file and read the data
     with open(csv_path, newline="", encoding="utf-8") as f:
       reader = csv.DictReader(f)
       cols = reader.fieldnames or []
+      # get the text column
       tc = text_column if text_column in cols else ("text" if "text" in cols else cols[0])
       for row in reader:
         text = row.get(tc, "")
+        # get the label
         label = row.get("label", 0)
         texts.append(str(text) if text else "")
         labels.append(int(label) if label is not None and str(label).strip() else 0)
@@ -407,6 +432,7 @@ class SatireDataset(TorchDataset):
   def __len__(self) -> int:
     return len(self.labels)
 
+  # get the item at the given index
   def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
     return {
       "input_ids": self.input_ids[idx].clone(),
@@ -415,6 +441,8 @@ class SatireDataset(TorchDataset):
     }
 
 
+
+# sample a subset of the dataset (similar/same from text_model/text_detector.py)
 def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
   rng = random.Random(seed)
   indices_0 = [i for i in range(len(dataset)) if dataset["label"][i] == 0]
@@ -439,6 +467,7 @@ _WEAK_SARCASM = re.compile(
 )
 
 
+# get the weak sarcasm label from the text (sarcasms that are not obvious)
 def weak_sarcasm_label_from_text(text: str) -> int:
   if not text or not isinstance(text, str):
     return 0
@@ -477,6 +506,8 @@ def merge_hf_reddit_sarcasm_with_csv(
 
   csv_texts: List[str] = []
   csv_labels: List[int] = []
+
+  # open the csv file and read the data
   with open(csv_path, newline="", encoding="utf-8") as f:
     reader = csv.DictReader(f)
     cols = reader.fieldnames or []
@@ -569,6 +600,7 @@ class SatireDetector:
       self.device = torch.device("cpu")
     self._initialize_model()
 
+  # initialize the model
   def _initialize_model(self) -> None:
     print(f"Loading model [{self.model_name}]...")
     self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
@@ -629,6 +661,7 @@ def train_on_social_media_data(
 ) -> None:
   # load the dataset
   print(f"Loading dataset from {csv_path}...")
+  # mix the hugging face reddit-sarcasm dataset with the local CSV dataset for increased size of dataset
   if use_hf_reddit_sarcasm:
     print(
       f"Mixing Hugging Face {REDDIT_SARCASM_DATASET} ({hf_split_slice}, sample_subset) with CSV for sarcasm/satire cues."

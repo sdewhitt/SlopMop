@@ -35,6 +35,8 @@ export interface NormalizedPostContent {
       authorHandle: string;
       timestampText: string;
     };
+    // visible comment bodies under this post (feed analysis) — sent to /detect for satire heuristics on the main score.
+    commentTexts?: string[];
   }
 
 export interface DetectionRequest {
@@ -129,9 +131,13 @@ export type ContentToBackgroundMessage = // union type
 export interface DetectionLanguageUnsupportedPayload {
   postId: PostId;
   message: string;
+  /** ISO 639-3 from franc (e.g. spa for Spanish; not the same as BCP 47 es). */
+  detectedCode: string;
+  /** Top guess confidence 0–1 from francAll. */
+  confidence: number;
   /** Human-readable name for feed tooltip, e.g. "German". */
   detectedLanguageName: string;
-  /** Native `title` on the Error badge (simple UI). */
+  /** Native `title` on the language badge (simple UI). */
   hoverSimple: string;
   /** Detailed tooltip header (detailed UI). */
   hoverTooltipTitle: string;
