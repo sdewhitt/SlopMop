@@ -37,6 +37,29 @@ import panelCss from './panel.css?inline';
 let panelRoot: HTMLElement | null = null;
 let reactRoot: Root | null = null;
 let visible = false;
+let shadowContainer: HTMLElement | null = null;
+
+function resolveThemeMode(
+  pref: string | undefined,
+  legacy: string | undefined,
+): 'dark' | 'light' {
+  if (pref === 'dark') return 'dark';
+  if (pref === 'light') return 'light';
+  if (pref === 'system' || (!pref && !legacy)) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  if (legacy === 'dark') return 'dark';
+  return 'light';
+}
+
+function applyThemeToPanel(mode: 'dark' | 'light'): void {
+  if (!shadowContainer) return;
+  if (mode === 'dark') {
+    shadowContainer.classList.add('dark');
+  } else {
+    shadowContainer.classList.remove('dark');
+  }
+}
 
 function hidePanel() {
   if (panelRoot) {
@@ -72,7 +95,17 @@ function createPanel() {
   container.className = 'slopmop-panel';
   shadow.appendChild(container);
 
+  shadowContainer = container;
+
   document.body.appendChild(panelRoot);
+
+  // Apply initial theme
+  void browser.storage.local.get(['themePreference', 'theme']).then((result) => {
+    applyThemeToPanel(resolveThemeMode(
+      result.themePreference as string | undefined,
+      result.theme as string | undefined,
+    ));
+  });
 
   // Prevent scroll events from reaching the host page
   shadow.addEventListener('wheel', (e) => e.stopPropagation(), { passive: false });
@@ -241,6 +274,12 @@ async function initFeedObserver(): Promise<void> {
 
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
+
+  if (changes.themePreference || changes.theme) {
+    const pref = (changes.themePreference?.newValue ?? changes.theme?.newValue) as string | undefined;
+    applyThemeToPanel(resolveThemeMode(pref, undefined));
+  }
+
   if (!changes.settings && !changes.ignoredSites) return;
 
   void browser.storage.local.get(['settings', 'ignoredSites']).then((stored) => {
