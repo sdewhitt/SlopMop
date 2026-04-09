@@ -101,10 +101,8 @@ describe('Instagram overlay rendering', () => {
 
     const overlay = commentNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    //expect(overlay?.style.top).toBe('calc(100% + 4px)');
-    expect(overlay?.style.top).toBe('48px')
-    //expect(overlay?.style.right).toBe('4px');
-    expect(overlay?.style.right).toBe('8px');
+    expect(overlay?.style.top).toBe('calc(100% + 4px)');
+    expect(overlay?.style.right).toBe('4px');
     expect(overlay?.style.bottom).toBe('');
   });
 

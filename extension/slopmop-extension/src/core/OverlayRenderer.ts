@@ -56,6 +56,38 @@ export class OverlayRenderer {
         this.settings = settings;
     }
 
+    private getEffectiveBadgeSize(): DetectionSettings["badgeSize"] {
+        const requested = this.settings.badgeSize ?? "medium";
+        if (this.settings.accessibilityMode && requested === "small") {
+            return "medium";
+        }
+        return requested;
+    }
+
+    private getBadgeScale(target: "spacing" | "font"): number {
+        const size = this.getEffectiveBadgeSize();
+        if (this.settings.accessibilityMode) {
+            const modeScale: Record<DetectionSettings["badgeSize"], number> =
+                target === "font"
+                    ? { small: 1, medium: 1.08, large: 1.18 }
+                    : { small: 1, medium: 1.08, large: 1.18 };
+            return modeScale[size];
+        }
+        const normalScale: Record<DetectionSettings["badgeSize"], number> =
+            target === "font"
+                ? { small: 0.9, medium: 1, large: 1.15 }
+                : { small: 0.88, medium: 1, large: 1.2 };
+        return normalScale[size];
+    }
+
+    protected scaleByBadgeSize(value: string, target: "spacing" | "font" = "spacing"): string {
+        const scale = this.getBadgeScale(target);
+        return value.replace(/(-?\d*\.?\d+)px/g, (_, num) => {
+            const scaled = Math.max(1, Math.round(parseFloat(num) * scale * 100) / 100);
+            return `${scaled}px`;
+        });
+    }
+
     /** Merge new settings and re-apply visible badges/tooltip wiring for completed scans. */
     updateSettings(settings: DetectionSettings): void {
         this.settings = settings;
@@ -78,9 +110,9 @@ export class OverlayRenderer {
     /** Padding/font for the pending badge container (before result). Subclasses may tighten for dense UIs. */
     protected getPendingBadgeContainerStyle(isSimple: boolean): Record<string, string> {
         return {
-            padding: isSimple ? "6px 12px" : "4px 8px",
-            borderRadius: "4px",
-            fontSize: isSimple ? "14px" : "12px",
+            padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
         };
     }
 
@@ -88,9 +120,9 @@ export class OverlayRenderer {
     protected getActionButtonStyle(_hostNode: HTMLElement, isSimple: boolean): Partial<CSSStyleDeclaration> {
         return {
             border: "none",
-            borderRadius: "4px",
-            padding: "6px 10px",
-            fontSize: isSimple ? "14px" : "12px",
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            padding: this.scaleByBadgeSize("6px 10px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
             fontWeight: "600",
             color: "#fff",
             backgroundColor: "#6b7280",
@@ -99,11 +131,19 @@ export class OverlayRenderer {
     }
 
     protected getSimpleVerdictBadgeFontSize(): string {
-        return "14px";
+        return this.scaleByBadgeSize("14px", "font");
     }
 
     protected getSimpleVerdictBadgePadding(): string {
-        return "6px 12px";
+        return this.scaleByBadgeSize("6px 12px", "spacing");
+    }
+
+    protected getDetailedVerdictBadgeFontSize(): string {
+        return this.scaleByBadgeSize("12px", "font");
+    }
+
+    protected getDetailedVerdictBadgePadding(): string {
+        return this.scaleByBadgeSize("4px 8px", "spacing");
     }
 
     // render DetectionResponse as a badge on the page
@@ -130,6 +170,9 @@ export class OverlayRenderer {
         if (isSimple) {
             surface.style.fontSize = this.getSimpleVerdictBadgeFontSize();
             surface.style.padding = this.getSimpleVerdictBadgePadding();
+        } else {
+            surface.style.fontSize = this.getDetailedVerdictBadgeFontSize();
+            surface.style.padding = this.getDetailedVerdictBadgePadding();
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
@@ -209,7 +252,7 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
+            ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
             backgroundColor: "#6b7280",
@@ -218,8 +261,8 @@ export class OverlayRenderer {
         if (!onDetectNow) {
             // automatic mode: single grey “Scanning…” pill.
             Object.assign(overlay.style, {
-                padding: isSimple ? "6px 12px" : "4px 8px",
-                borderRadius: "4px",
+                padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+                borderRadius: this.scaleByBadgeSize("4px", "spacing"),
                 backgroundColor: "#6b7280",
                 color: "#fff",
             });
@@ -232,8 +275,8 @@ export class OverlayRenderer {
         const greyBoxStyle = (el: HTMLElement): void => {
             Object.assign(el.style, {
                 position: "relative",
-                padding: isSimple ? "6px 12px" : "4px 8px",
-                borderRadius: "4px",
+                padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+                borderRadius: this.scaleByBadgeSize("4px", "spacing"),
                 backgroundColor: "#6b7280",
                 color: "#fff",
                 display: "flex",
@@ -322,9 +365,9 @@ export class OverlayRenderer {
 
         // manual, no fact check: original single grey box + Detect Now.
         Object.assign(overlay.style, {
-            padding: isSimple ? "6px 12px" : "4px 8px",
-            borderRadius: "4px",
-            fontSize: isSimple ? "14px" : "12px",
+            padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
             backgroundColor: "#6b7280",
             color: "#fff",
         });
@@ -1003,7 +1046,7 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
+            ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
             backgroundColor: "#6b7280",
