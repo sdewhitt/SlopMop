@@ -19,6 +19,9 @@ Configure one of these options in `.env.local`:
 If neither is set, Firebase Admin falls back to Application Default Credentials,
 which usually requires `GOOGLE_APPLICATION_CREDENTIALS` locally.
 
+Report email frequency is server-controlled via `REPORT_NOTIFICATION_INTERVAL`
+(`immediate`, `daily`, or `weekly`). End users cannot override this value.
+
 Run locally with:
 
 ```bash

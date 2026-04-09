@@ -15,6 +15,7 @@ import {
   type ReportRecord,
   type ReportStatus,
 } from "../../lib/reportTypes";
+import { getConfiguredReportNotificationInterval } from "../../lib/reportConfig";
 
 function asIso(value: unknown): string | null {
   if (!value) return null;
@@ -29,6 +30,19 @@ function asIso(value: unknown): string | null {
     return date.toISOString();
   }
   return null;
+}
+
+function isMissingIndexError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  const code = (error as { code?: unknown }).code;
+
+  return (
+    code === 9 ||
+    message.includes("failed_precondition") ||
+    message.includes("requires an index")
+  );
 }
 
 function toReportRecord(
@@ -74,7 +88,6 @@ function validateCreateBody(body: unknown):
         message: string;
         pageUrl: string | null;
         reporterEmail: string | null;
-        notificationInterval: ReportRecord["notificationInterval"];
         userAgent: string | null;
       };
     }
@@ -106,17 +119,6 @@ function validateCreateBody(body: unknown):
     return { valid: false, error: "Report message must be 2000 characters or less" };
   }
 
-  const notificationInterval = candidate.notificationInterval;
-  if (
-    notificationInterval !== undefined &&
-    !isReportNotificationInterval(notificationInterval)
-  ) {
-    return {
-      valid: false,
-      error: "Invalid notification interval. Use immediate, daily, or weekly.",
-    };
-  }
-
   return {
     valid: true,
     value: {
@@ -125,7 +127,6 @@ function validateCreateBody(body: unknown):
       message,
       pageUrl: normalizeOptionalString(candidate.pageUrl),
       reporterEmail: normalizeOptionalString(candidate.reporterEmail)?.toLowerCase() ?? null,
-      notificationInterval: notificationInterval ?? "immediate",
       userAgent: normalizeOptionalString(candidate.userAgent),
     },
   };
@@ -143,10 +144,13 @@ export async function POST(request: Request) {
     const authUser = await authenticateOptionalUser(
       request.headers.get("authorization")
     );
+    const configuredNotificationInterval =
+      getConfiguredReportNotificationInterval();
 
     const now = FieldValue.serverTimestamp();
     const data = {
       ...validation.value,
+      notificationInterval: configuredNotificationInterval,
       status: "open" as const,
       submitterUid: authUser?.uid ?? null,
       submitterEmail: authUser?.email ?? null,
@@ -157,7 +161,7 @@ export async function POST(request: Request) {
       createdAt: now,
       updatedAt: now,
       lastNotifiedAt:
-        validation.value.notificationInterval === "immediate" ? now : null,
+        configuredNotificationInterval === "immediate" ? now : null,
     };
 
     const ref = await initAdminDb().collection("reports").add(data);
@@ -172,21 +176,21 @@ export async function POST(request: Request) {
       reporterEmail: validation.value.reporterEmail,
       submitterUid: authUser?.uid ?? null,
       submitterEmail: authUser?.email ?? null,
-      notificationInterval: validation.value.notificationInterval,
+      notificationInterval: configuredNotificationInterval,
       userAgent: validation.value.userAgent,
       resolutionNote: null,
       addressedAt: null,
       addressedByUid: null,
       addressedByEmail: null,
       lastNotifiedAt:
-        validation.value.notificationInterval === "immediate"
+        configuredNotificationInterval === "immediate"
           ? new Date().toISOString()
           : null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    if (validation.value.notificationInterval === "immediate") {
+    if (configuredNotificationInterval === "immediate") {
       await sendReportSubmittedEmail(reportForEmail);
     }
 
@@ -194,7 +198,7 @@ export async function POST(request: Request) {
       {
         ok: true,
         reportId: ref.id,
-        notificationScheduledFor: validation.value.notificationInterval,
+        notificationScheduledFor: configuredNotificationInterval,
       },
       { status: 201 }
     );
@@ -231,19 +235,51 @@ export async function GET(request: Request) {
       );
     }
 
-    let query = initAdminDb()
-      .collection("reports")
-      .orderBy("createdAt", "desc")
-      .limit(limit);
+    const reportsRef = initAdminDb().collection("reports");
 
-    if (statusParam !== "all") {
-      query = query.where("status", "==", statusParam as ReportStatus);
+    let reports: ReportRecord[] = [];
+
+    if (statusParam === "all") {
+      const snap = await reportsRef
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+
+      reports = snap.docs.map((doc) =>
+        toReportRecord(doc.id, doc.data() as Record<string, unknown>)
+      );
+    } else {
+      try {
+        const snap = await reportsRef
+          .where("status", "==", statusParam as ReportStatus)
+          .orderBy("createdAt", "desc")
+          .limit(limit)
+          .get();
+
+        reports = snap.docs.map((doc) =>
+          toReportRecord(doc.id, doc.data() as Record<string, unknown>)
+        );
+      } catch (queryError) {
+        if (!isMissingIndexError(queryError)) {
+          throw queryError;
+        }
+
+        const fallbackScanLimit = Math.min(limit * 5, 500);
+        const fallbackSnap = await reportsRef
+          .orderBy("createdAt", "desc")
+          .limit(fallbackScanLimit)
+          .get();
+
+        reports = fallbackSnap.docs
+          .map((doc) => toReportRecord(doc.id, doc.data() as Record<string, unknown>))
+          .filter((report) => report.status === statusParam)
+          .slice(0, limit);
+
+        console.warn(
+          "[reports][GET] Missing composite index for status+createdAt. Using fallback in-memory filter."
+        );
+      }
     }
-
-    const snap = await query.get();
-    const reports = snap.docs.map((doc) =>
-      toReportRecord(doc.id, doc.data() as Record<string, unknown>)
-    );
 
     return NextResponse.json({ reports }, { status: 200 });
   } catch (error) {

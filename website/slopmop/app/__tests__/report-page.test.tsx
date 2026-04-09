@@ -39,7 +39,6 @@ describe('Report Page', () => {
     await user.type(screen.getByLabelText(/Message/i), 'The detector incorrectly flagged satire as AI.')
     await user.type(screen.getByLabelText(/Related Page URL/i), 'https://example.com/post/123')
     await user.type(screen.getByLabelText(/Email for follow-up/i), 'reporter@example.com')
-    await user.selectOptions(screen.getByLabelText(/Dev Notification Interval/i), 'daily')
 
     await user.click(screen.getByRole('button', { name: /Submit Report/i }))
 
@@ -52,8 +51,12 @@ describe('Report Page', () => {
       })
     )
 
+    const requestInit = (global.fetch as jest.Mock).mock.calls[0][1] as RequestInit
+    const payload = JSON.parse(String(requestInit.body)) as Record<string, unknown>
+    expect(payload.notificationInterval).toBeUndefined()
+
     expect(
-      await screen.findByText(/Report submitted \(ID: report-123\)\. Notifications: daily\./i)
+      await screen.findByText(/Report submitted \(ID: report-123\)\. Dev notifications are sent on the configured daily schedule\./i)
     ).toBeInTheDocument()
   })
 })

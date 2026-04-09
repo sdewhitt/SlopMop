@@ -37,8 +37,21 @@ import {
 import { sendReportSubmittedEmail } from '../lib/reportEmail'
 
 describe('/api/reports route', () => {
+  const originalEnv = process.env
+
+  beforeAll(() => {
+    process.env = { ...originalEnv }
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
+    process.env = { ...originalEnv }
+    delete process.env.REPORT_NOTIFICATION_INTERVAL
+    delete process.env.REPORT_DEFAULT_NOTIFICATION_INTERVAL
+  })
+
+  afterAll(() => {
+    process.env = originalEnv
   })
 
   it('returns 400 for invalid report payload', async () => {
@@ -76,7 +89,7 @@ describe('/api/reports route', () => {
         type: 'bug',
         source: 'website',
         message: 'Detected issue details',
-        notificationInterval: 'immediate',
+        notificationInterval: 'weekly',
       }),
     })
 
@@ -88,6 +101,39 @@ describe('/api/reports route', () => {
     expect(collection).toHaveBeenCalledWith('reports')
     expect(add).toHaveBeenCalled()
     expect(sendReportSubmittedEmail).toHaveBeenCalledTimes(1)
+
+    const inserted = add.mock.calls[0][0] as Record<string, unknown>
+    expect(inserted.notificationInterval).toBe('immediate')
+    expect(data.notificationScheduledFor).toBe('immediate')
+  })
+
+  it('uses server-configured notification interval for all reports', async () => {
+    process.env.REPORT_NOTIFICATION_INTERVAL = 'weekly'
+
+    const add = jest.fn().mockResolvedValue({ id: 'report-456' })
+    const collection = jest.fn().mockReturnValue({ add })
+    ;(initAdminDb as jest.Mock).mockReturnValue({ collection })
+
+    const request = new Request('http://localhost/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'other',
+        source: 'website',
+        message: 'Weekly digest check',
+        notificationInterval: 'immediate',
+      }),
+    })
+
+    const response = await POST(request)
+    const data = await response.json()
+
+    expect(response.status).toBe(201)
+    expect(data.notificationScheduledFor).toBe('weekly')
+
+    const inserted = add.mock.calls[0][0] as Record<string, unknown>
+    expect(inserted.notificationInterval).toBe('weekly')
+    expect(sendReportSubmittedEmail).not.toHaveBeenCalled()
   })
 
   it('returns 403 when admin auth fails on GET', async () => {
@@ -108,10 +154,9 @@ describe('/api/reports route', () => {
       email: 'admin@example.com',
     })
 
-    const query = {
+    const filteredQuery = {
       orderBy: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
       get: jest.fn().mockResolvedValue({
         docs: [
           {
@@ -135,7 +180,9 @@ describe('/api/reports route', () => {
     }
 
     ;(initAdminDb as jest.Mock).mockReturnValue({
-      collection: jest.fn().mockReturnValue(query),
+      collection: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnValue(filteredQuery),
+      }),
     })
 
     const response = await GET(
@@ -146,5 +193,68 @@ describe('/api/reports route', () => {
     expect(response.status).toBe(200)
     expect(data.reports).toHaveLength(1)
     expect(data.reports[0].id).toBe('report-1')
+  })
+
+  it('falls back when composite index is missing', async () => {
+    ;(requireAdminUser as jest.Mock).mockResolvedValue({
+      uid: 'admin-1',
+      email: 'admin@example.com',
+    })
+
+    const indexedQuery = {
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      get: jest.fn().mockRejectedValue(
+        new Error('9 FAILED_PRECONDITION: The query requires an index.')
+      ),
+    }
+
+    const fallbackQuery = {
+      limit: jest.fn().mockReturnThis(),
+      get: jest.fn().mockResolvedValue({
+        docs: [
+          {
+            id: 'report-open',
+            data: () => ({
+              type: 'bug',
+              source: 'website',
+              status: 'open',
+              message: 'Open report',
+              notificationInterval: 'daily',
+              createdAt: { toDate: () => new Date('2026-01-02T00:00:00.000Z') },
+              updatedAt: { toDate: () => new Date('2026-01-02T00:00:00.000Z') },
+            }),
+          },
+          {
+            id: 'report-addressed',
+            data: () => ({
+              type: 'other',
+              source: 'website',
+              status: 'addressed',
+              message: 'Addressed report',
+              notificationInterval: 'daily',
+              createdAt: { toDate: () => new Date('2026-01-01T00:00:00.000Z') },
+              updatedAt: { toDate: () => new Date('2026-01-01T00:00:00.000Z') },
+            }),
+          },
+        ],
+      }),
+    }
+
+    ;(initAdminDb as jest.Mock).mockReturnValue({
+      collection: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnValue(indexedQuery),
+        orderBy: jest.fn().mockReturnValue(fallbackQuery),
+      }),
+    })
+
+    const response = await GET(
+      new Request('http://localhost/api/reports?status=open&limit=100')
+    )
+    const data = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(data.reports).toHaveLength(1)
+    expect(data.reports[0].id).toBe('report-open')
   })
 })

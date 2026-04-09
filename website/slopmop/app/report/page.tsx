@@ -6,9 +6,7 @@ import Navbar from "../components/navbar";
 import Footer from "../components/footer";
 import { useAuth } from "../context/AuthContext";
 import {
-  REPORT_NOTIFICATION_INTERVALS,
   REPORT_TYPES,
-  type ReportNotificationInterval,
   type ReportType,
 } from "../lib/reportTypes";
 
@@ -18,12 +16,6 @@ const TYPE_LABELS: Record<ReportType, string> = {
   other: "Other",
 };
 
-const INTERVAL_LABELS: Record<ReportNotificationInterval, string> = {
-  immediate: "Immediate",
-  daily: "Daily digest",
-  weekly: "Weekly digest",
-};
-
 export default function ReportPage() {
   const { user } = useAuth();
 
@@ -31,8 +23,6 @@ export default function ReportPage() {
   const [message, setMessage] = useState("");
   const [pageUrl, setPageUrl] = useState("");
   const [reporterEmail, setReporterEmail] = useState("");
-  const [interval, setInterval] =
-    useState<ReportNotificationInterval>("immediate");
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -83,7 +73,6 @@ export default function ReportPage() {
           message: message.trim(),
           pageUrl: pageUrl.trim() || null,
           reporterEmail: reporterEmail.trim() || null,
-          notificationInterval: interval,
           userAgent:
             typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
         }),
@@ -104,7 +93,7 @@ export default function ReportPage() {
       setPageUrl("");
 
       setSuccess(
-        `Report submitted (ID: ${body.reportId ?? "unknown"}). Notifications: ${body.notificationScheduledFor ?? interval}.`
+        `Report submitted (ID: ${body.reportId ?? "unknown"}). Dev notifications are sent on the configured ${body.notificationScheduledFor ?? "default"} schedule.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit report");
@@ -186,7 +175,7 @@ export default function ReportPage() {
             />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div>
             <div>
               <label
                 htmlFor="report-email"
@@ -202,29 +191,6 @@ export default function ReportPage() {
                 placeholder="you@example.com"
                 className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2 dark:border-neutral-700"
               />
-            </div>
-
-            <div>
-              <label
-                htmlFor="report-interval"
-                className="mb-1 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
-              >
-                Dev Notification Interval
-              </label>
-              <select
-                id="report-interval"
-                value={interval}
-                onChange={(e) =>
-                  setInterval(e.target.value as ReportNotificationInterval)
-                }
-                className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2 dark:border-neutral-700"
-              >
-                {REPORT_NOTIFICATION_INTERVALS.map((item) => (
-                  <option key={item} value={item}>
-                    {INTERVAL_LABELS[item]}
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 
