@@ -223,6 +223,25 @@ export default function Options() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Detection</h2>
             <div className="bg-gray-900 rounded-xl p-4 space-y-4">
               <div>
+                <label className="text-sm font-medium text-gray-200">Badge Size</label>
+                <p className="text-xs text-gray-500 mb-2">Adjust in-page detection indicator size for readability</p>
+                <div className="flex gap-2">
+                  {(['small', 'medium', 'large'] as const).map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => update('badgeSize', size)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                        settings.badgeSize === size
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <label className="text-sm font-medium text-gray-200">Sensitivity</label>
                 <p className="text-xs text-gray-500 mb-2">Higher sensitivity flags more content but may increase false positives</p>
                 <div className="flex gap-2">

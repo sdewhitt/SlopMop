@@ -1122,7 +1122,7 @@ function mapToDetectionResponse(
           start: s.start,
           end: s.end,
           reason:
-            'Segment influence (leave-one-token-out): ' +
+            'Segment influence (model attribution): ' +
             `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
         }))
       : [];

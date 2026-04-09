@@ -57,11 +57,15 @@ class DesklibAIDetectionModel(PreTrainedModel):
     self.classifier = nn.Linear(config.hidden_size, 1)
 
 
-  def forward(self, input_ids, attention_mask=None, labels=None):
+  def forward(self, input_ids=None, attention_mask=None, labels=None, inputs_embeds=None):
     if attention_mask is None:
       raise ValueError("attention_mask is required")
-    # forward pass to get the outputs
-    outputs = self.model(input_ids, attention_mask=attention_mask)
+    if inputs_embeds is not None:
+      outputs = self.model(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
+    elif input_ids is not None:
+      outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+    else:
+      raise ValueError("One of input_ids or inputs_embeds is required")
     # get the last hidden state
     last_hidden_state = outputs[0]
     # expand the attention mask to the same size as the last hidden state
@@ -604,6 +608,142 @@ class TextDetectors:
     else:
       probs = torch.softmax(logits, dim=1)[:, 1]
     return [float(x) for x in probs.detach().cpu().flatten().tolist()]
+
+  def _get_input_embedding_layer(self) -> nn.Module:
+    model = self._require_model()
+    if isinstance(model, DesklibAIDetectionModel):
+      return model.model.get_input_embeddings()
+    return model.get_input_embeddings()
+
+  def _logits_from_inputs_embeds(
+    self,
+    inputs_embeds: torch.Tensor,
+    attention_mask: torch.Tensor,
+  ) -> torch.Tensor:
+    model = self._require_model()
+    model.eval()
+    if isinstance(model, DesklibAIDetectionModel):
+      out = model(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
+      return cast(torch.Tensor, out["logits"])
+    out = model(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
+    return cast(torch.Tensor, out.logits)
+
+  def score_text_with_gradient_spans(
+    self,
+    text: str,
+    clean: bool = True,
+    human_max: float = 0.40,
+    ai_min: float = 0.70,
+    top_k_spans: int = 12,
+    comment_texts: Optional[List[str]] = None,
+  ) -> tuple[float, str, list[tuple[int, int, float]]]:
+    tokenizer = self._require_tokenizer()
+    if clean:
+      text = preprocess_text(text)
+    if not text.strip():
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
+      return round(conf, 4), label, []
+
+    min_chars_for_spans = 5
+    if len(text.strip()) < min_chars_for_spans:
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
+      return round(conf, 4), label, []
+
+    enc = tokenizer(
+      text,
+      padding="max_length",
+      truncation=True,
+      max_length=512,
+      return_tensors="pt",
+      return_offsets_mapping=True,
+    )
+    offset_mapping = enc.get("offset_mapping")
+    if offset_mapping is None:
+      conf, label = self.calculate_confidence(
+        text, clean=False, human_max=human_max, ai_min=ai_min, comment_texts=comment_texts,
+      )
+      return round(conf, 4), label, []
+
+    input_ids = cast(torch.Tensor, enc["input_ids"]).to(self.device)
+    attention_mask = cast(torch.Tensor, enc["attention_mask"]).to(self.device)
+    offset_mapping = offset_mapping[0]
+
+    baseline_prob = self._get_raw_prob(text, input_ids, attention_mask)
+
+    emb_layer = self._get_input_embedding_layer()
+    pad_id = tokenizer.pad_token_id
+    cls_id = tokenizer.cls_token_id
+    sep_id = tokenizer.sep_token_id
+
+    with torch.enable_grad():
+      raw_embed = emb_layer(input_ids)
+      inputs_embeds = raw_embed.detach().clone().requires_grad_(True)
+      self._require_model().zero_grad(set_to_none=True)
+      logits = self._logits_from_inputs_embeds(inputs_embeds, attention_mask)
+      if self.use_binary_logit:
+        target = torch.sigmoid(logits.squeeze(-1))
+      else:
+        target = torch.softmax(logits, dim=1)[0, 1]
+      target.backward()
+
+    grad = inputs_embeds.grad
+    if grad is None:
+      contributions: list[tuple[int, int, float]] = []
+    else:
+      token_scores = grad[0].abs().sum(dim=-1)
+      contributions = []
+      seq_len = int(input_ids.shape[1])
+      for i in range(seq_len):
+        o = offset_mapping[i]
+        start, end = (o.tolist() if hasattr(o, "tolist") else [int(o[0]), int(o[1])])
+        if start == 0 and end == 0:
+          continue
+        tid = int(input_ids[0, i].item())
+        if pad_id is not None and tid == pad_id:
+          continue
+        if cls_id is not None and tid == cls_id:
+          continue
+        if sep_id is not None and tid == sep_id:
+          continue
+        if end <= start:
+          continue
+        sc = float(token_scores[i].item())
+        if sc > 0:
+          contributions.append((start, end, sc))
+
+    if contributions:
+      max_s = max(c[2] for c in contributions)
+      if max_s <= 0:
+        top: list[tuple[int, int, float]] = []
+      else:
+        norm = [(s, e, round(v / max_s, 4)) for s, e, v in contributions]
+        norm.sort(key=lambda x: x[2], reverse=True)
+        top = norm[:top_k_spans]
+    else:
+      top = []
+
+    prob = baseline_prob
+    if has_llm_metadata(text):
+      if prob <= 0.1:
+        prob = prob + 0.7
+      elif prob <= 0.2:
+        prob = prob + 0.6
+      elif prob <= 0.3:
+        prob = prob + 0.5
+      elif prob <= 0.4:
+        prob = prob + 0.4
+      elif prob <= 0.5:
+        prob = prob + 0.3
+      elif prob <= 0.6:
+        prob = prob + 0.2
+
+    prob, label = self._apply_all_satire_adjustments(text, prob, human_max, ai_min, comment_texts)
+    confidence = round(prob, 4)
+    return confidence, label, top
 
   # score the text with spans
   def score_text_with_spans(

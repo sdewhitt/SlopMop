@@ -238,6 +238,45 @@ describe('Reddit extraction pipeline', () => {
     expect(overlay?.textContent).toBe('likely_ai (86%)');
   });
 
+  it('applies badge size setting and preserves readability in accessibility mode', () => {
+    const postSmall = document.createElement('article');
+    const postLarge = document.createElement('article');
+    const postA11y = document.createElement('article');
+    document.body.append(postSmall, postLarge, postA11y);
+
+    const rendererSmall = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'small',
+      accessibilityMode: false,
+    });
+    const rendererLarge = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'large',
+      accessibilityMode: false,
+    });
+    const rendererA11y = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'small',
+      accessibilityMode: true,
+    });
+
+    rendererSmall.renderPending('t3_size_small', postSmall, 'small');
+    rendererLarge.renderPending('t3_size_large', postLarge, 'large');
+    rendererA11y.renderPending('t3_size_a11y', postA11y, 'a11y');
+
+    const smallBadge = postSmall.lastElementChild as HTMLElement;
+    const largeBadge = postLarge.lastElementChild as HTMLElement;
+    const a11yBadge = postA11y.lastElementChild as HTMLElement;
+
+    expect(parseFloat(largeBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
+    expect(parseFloat(largeBadge.style.paddingLeft)).toBeGreaterThan(parseFloat(smallBadge.style.paddingLeft));
+    // Accessibility mode should not allow unreadably small badges.
+    expect(parseFloat(a11yBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
+  });
+
   it('renders dual text + image results on the badge for mixed posts', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);

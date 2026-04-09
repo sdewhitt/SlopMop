@@ -21,6 +21,12 @@ const SCAN_COMMENTS_LABELS: Record<Settings['scanComments'], string> = {
   auto_top_n: 'Auto',
 };
 
+const BADGE_SIZE_LABELS: Record<Settings['badgeSize'], string> = {
+  small: 'Small',
+  medium: 'Medium',
+  large: 'Large',
+};
+
 export default function DetectionSettings({ settings, onUpdateSetting }: DetectionSettingsProps) {
   return (
     <section>
@@ -97,6 +103,27 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
                 }`}
               >
                 {SCAN_COMMENTS_LABELS[mode]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="py-2.5">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Badge Size</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Controls the in-page indicator size across supported platforms.
+          </p>
+          <div className="flex gap-1.5">
+            {(['small', 'medium', 'large'] as const).map((size) => (
+              <button
+                key={size}
+                onClick={() => onUpdateSetting('badgeSize', size)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  settings.badgeSize === size
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
+                }`}
+              >
+                {BADGE_SIZE_LABELS[size]}
               </button>
             ))}
           </div>

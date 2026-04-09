@@ -24,6 +24,7 @@ export interface Settings {
   scanImages: boolean;
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
+  badgeSize: 'small' | 'medium' | 'large';
   accessibilityMode: boolean;
   highlightSegments: boolean;
   /** Show Fact check on posts (ClaimReview search via backend). */
@@ -42,6 +43,7 @@ export const defaultSettings: Settings = {
   scanImages: false,
   scanComments: 'auto_top_n',
   uiMode: 'simple',
+  badgeSize: 'medium',
   accessibilityMode: false,
   highlightSegments: true,
   factCheck: true,

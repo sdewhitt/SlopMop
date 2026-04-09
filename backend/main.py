@@ -120,6 +120,20 @@ print(
 )
 
 
+def _span_attribution_method() -> str:
+    """mask = leave-one-token-out (slower); gradient = embedding saliency, one backward (faster)."""
+    raw = os.environ.get("SPAN_ATTRIBUTION_METHOD", "mask").strip().lower()
+    return raw if raw in ("mask", "gradient") else "mask"
+
+
+SPAN_ATTRIBUTION_METHOD = _span_attribution_method()
+print(
+    f"[SlopMop] Span attribution method: {SPAN_ATTRIBUTION_METHOD} "
+    "(env SPAN_ATTRIBUTION_METHOD=mask|gradient)",
+    flush=True,
+)
+
+
 class DetectRequest(BaseModel):
     text: str
     # optional visible comment bodies (same post) for satire keyword / consensus heuristics on the main post score.
@@ -195,12 +209,19 @@ def _normalize_comment_texts(raw: Optional[List[str]]) -> Optional[List[str]]:
 def score_text_with_spans(
     text: str, comment_texts: Optional[List[str]] = None
 ) -> tuple[float, str, List[HighlightSpan]]:
-    confidence, label, spans = text_detector.score_text_with_spans(
-        text,
-        clean=True,
-        max_tokens_to_evaluate=SPAN_MASK_EVAL_CAP,
-        comment_texts=comment_texts,
-    )
+    if SPAN_ATTRIBUTION_METHOD == "gradient":
+        confidence, label, spans = text_detector.score_text_with_gradient_spans(
+            text,
+            clean=True,
+            comment_texts=comment_texts,
+        )
+    else:
+        confidence, label, spans = text_detector.score_text_with_spans(
+            text,
+            clean=True,
+            max_tokens_to_evaluate=SPAN_MASK_EVAL_CAP,
+            comment_texts=comment_texts,
+        )
     if label == "mixed":
         label = "ai" if confidence >= 0.5 else "human"
     highlights = [HighlightSpan(start=s, end=e, score=sc) for s, e, sc in spans]
@@ -231,7 +252,7 @@ def generate_explanation(confidence: float, label: str, text_char_len: int = 0) 
     if label == "ai":
         return (
             f"SlopMop text classifier: {pct}% estimated AI-like (transformer + optional satire nudge).{short_note} "
-            "Highlight segments show token-level influence (leave-one-token-out), not keyword mock rules."
+            "Highlight segments show which tokens most affect the model score (attribution), not keyword rules."
         )
     return (
         f"SlopMop text classifier: {pct}% estimated AI-like; labeled human/mixed (below likely-AI band).{short_note}"
