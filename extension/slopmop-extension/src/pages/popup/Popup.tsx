@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import browser from 'webextension-polyfill';
 import 'react/jsx-runtime';
 import { normalizeConfidence, resolveExplanation } from '@src/utils/generateExplanation';
@@ -122,6 +122,30 @@ export default function Popup() {
       });
   }, [mergeSettings]);
 
+  // ── Clear session data on logout / account switch ────────────────
+  // Tracks the previous UID so we can detect a switch between accounts.
+  const prevUidRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prevUid = prevUidRef.current;
+    prevUidRef.current = user?.uid ?? null;
+
+    // Nothing to clear on very first render.
+    if (prevUid === undefined) return;
+
+    // Clear if logging out OR switching to a different account.
+    const isSwitch = prevUid !== null && user?.uid !== prevUid;
+    const isLogout = prevUid !== null && user === null;
+    if (!isLogout && !isSwitch) return;
+
+    setSettings(defaultSettings);
+    setEnabled(defaultSettings.enabled);
+    setDetectResponse(null);
+    setLanguageUnsupported(null);
+    setFactCheckItems(null);
+    setFactCheckError(null);
+    setView('home');
+    setSaved(false);
+  }, [user]);
 
   // Per-account onboarding: show only once for each signed-in user (uid).
   useEffect(() => {
