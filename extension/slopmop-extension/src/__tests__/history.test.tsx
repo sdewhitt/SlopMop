@@ -63,6 +63,7 @@ import {
 import HistoryPage from '@src/pages/options/HistoryPage';
 
 const HOUR_MS = 60 * 60 * 1000;
+const TEST_UID = 'test-user-123';
 
 /** Minimal valid HistoryEntry with optional overrides. */
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -98,9 +99,9 @@ describe('History Storage', () => {
       0.87,
       'likely_ai',
     );
-    await saveHistoryEntry(entry);
+    await saveHistoryEntry(TEST_UID, entry);
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     const saved = history.find((e) => e.postId === 'post-abc');
 
     expect(saved).toBeDefined();
@@ -122,10 +123,10 @@ describe('History Storage', () => {
   });
 
   it('duplicate detection updates existing entry rather than creating a new one', async () => {
-    await saveHistoryEntry(makeEntry({ postId: 'dup-post', confidence: 0.5,  verdict: 'unknown'   }));
-    await saveHistoryEntry(makeEntry({ postId: 'dup-post', confidence: 0.92, verdict: 'likely_ai' }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'dup-post', confidence: 0.5,  verdict: 'unknown'   }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'dup-post', confidence: 0.92, verdict: 'likely_ai' }));
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     const entries = history.filter((e) => e.postId === 'dup-post');
 
     expect(entries).toHaveLength(1);
@@ -258,20 +259,20 @@ describe('Privacy Compliance', () => {
     // Replicate the maybeSaveToHistory guard from the background script
     const tab = await browser.tabs.get(1);
     if (!tab.incognito) {
-      await saveHistoryEntry(makeEntry({ postId: 'incognito-post' }));
+      await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'incognito-post' }));
     }
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     expect(history.find((e) => e.postId === 'incognito-post')).toBeUndefined();
   });
 
   it('"Clear History" removes all entries from storage', async () => {
-    await saveHistoryEntry(makeEntry({ postId: 'post-a', pinned: false }));
-    await saveHistoryEntry(makeEntry({ postId: 'post-b', pinned: false }));
-    await saveHistoryEntry(makeEntry({ postId: 'post-c', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-a', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-b', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-c', pinned: false }));
 
-    await clearHistory();
-    const history = await getHistory();
+    await clearHistory(TEST_UID);
+    const history = await getHistory(TEST_UID);
 
     expect(history).toHaveLength(0);
   });

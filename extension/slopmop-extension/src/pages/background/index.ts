@@ -71,12 +71,20 @@ console.log('background script loaded');
 const IMAGE_FETCH_CONCURRENCY = 3;
 // hardcoded developer toggle. keep true for offline fake responses.
 const USE_FAKE_DETECTION = false;
-const STATS_STORAGE_KEYS = ['postsScanned', 'aiDetected', 'postsProcessing'];
 type StoredStats = {
   postsScanned: number;
   aiDetected: number;
   postsProcessing: number;
 };
+
+/** Returns the namespaced storage keys for a user's stats. */
+function statsKeys(uid: string) {
+  return {
+    postsScanned: `postsScanned:${uid}`,
+    aiDetected: `aiDetected:${uid}`,
+    postsProcessing: `postsProcessing:${uid}`,
+  };
+}
 
 let statsWriteChain: Promise<void> = Promise.resolve();
 
@@ -94,24 +102,23 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
   };
 }
 
-function normalizeStoredStats(stored: Record<string, unknown>): StoredStats {
+async function readStoredStats(uid: string): Promise<StoredStats> {
+  const keys = statsKeys(uid);
+  const stored = await browser.storage.local.get(Object.values(keys));
   return {
-    postsScanned: typeof stored.postsScanned === 'number' ? stored.postsScanned : 0,
-    aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
-    postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
+    postsScanned: typeof stored[keys.postsScanned] === 'number' ? (stored[keys.postsScanned] as number) : 0,
+    aiDetected: typeof stored[keys.aiDetected] === 'number' ? (stored[keys.aiDetected] as number) : 0,
+    postsProcessing: typeof stored[keys.postsProcessing] === 'number' ? (stored[keys.postsProcessing] as number) : 0,
   };
 }
 
-async function readStoredStats(): Promise<StoredStats> {
-  const stored = await browser.storage.local.get(STATS_STORAGE_KEYS);
-  return normalizeStoredStats(stored);
-}
-
-async function persistStats(stats: StoredStats): Promise<void> {
-  await browser.storage.local.set(stats);
-  const uid = auth?.currentUser?.uid;
-  if (!uid) return;
-
+async function persistStats(uid: string, stats: StoredStats): Promise<void> {
+  const keys = statsKeys(uid);
+  await browser.storage.local.set({
+    [keys.postsScanned]: stats.postsScanned,
+    [keys.aiDetected]: stats.aiDetected,
+    [keys.postsProcessing]: stats.postsProcessing,
+  });
   try {
     await updateDetectionStats(uid, stats);
   } catch (error) {
@@ -121,9 +128,11 @@ async function persistStats(stats: StoredStats): Promise<void> {
 
 function queueStatsUpdate(mutator: (stats: StoredStats) => StoredStats): Promise<void> {
   const next = statsWriteChain.then(async () => {
-    const current = await readStoredStats();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return; // no user — don't touch any stats
+    const current = await readStoredStats(uid);
     const updated = mutator(current);
-    await persistStats(updated);
+    await persistStats(uid, updated);
   });
 
   statsWriteChain = next.catch((error) => {
@@ -154,20 +163,12 @@ async function markScanFinished(aiDetected: boolean): Promise<void> {
 }
 
 async function initializeLocalStats(): Promise<void> {
-  const current = await readStoredStats();
-  const next: StoredStats = {
-    postsScanned: current.postsScanned,
-    aiDetected: current.aiDetected,
-    // In-flight scans cannot survive a background-script restart.
-    postsProcessing: 0,
-  };
-
-  if (
-    current.postsScanned !== next.postsScanned ||
-    current.aiDetected !== next.aiDetected ||
-    current.postsProcessing !== next.postsProcessing
-  ) {
-    await persistStats(next);
+  const uid = auth?.currentUser?.uid;
+  if (!uid) return;
+  const current = await readStoredStats(uid);
+  // In-flight scans cannot survive a background-script restart — reset to 0.
+  if (current.postsProcessing !== 0) {
+    await persistStats(uid, { ...current, postsProcessing: 0 });
   }
 }
 
@@ -208,12 +209,29 @@ if (auth) {
       browser.storage.local.set({
         slopmopUser: { uid: firebaseUser.uid, email: firebaseUser.email },
       });
+
+      // Load this user's settings + stats from Firestore and write them into
+      // namespaced storage keys so the popup always sees this account's data.
       try {
-        const stats = await readStoredStats();
-        await updateDetectionStats(firebaseUser.uid, stats);
+        const userData = await getOrCreateUserSettings(firebaseUser.uid);
+        const keys = statsKeys(firebaseUser.uid);
+        await browser.storage.local.set({
+          settings: {
+            ...defaultUserSettings.settings,
+            ...userData.settings,
+            platforms: {
+              ...defaultUserSettings.settings.platforms,
+              ...(userData.settings.platforms ?? {}),
+            },
+          },
+          [keys.postsScanned]: userData.stats.postsScanned ?? 0,
+          [keys.aiDetected]: userData.stats.aiDetected ?? 0,
+          [keys.postsProcessing]: 0,
+        });
       } catch (e) {
-        console.error('[SlopMop] Failed to sync local stats to Firestore', e);
+        console.error('[SlopMop] Failed to load user settings/stats on login', e);
       }
+
       // Sync ignored sites from Firestore to local storage so the content
       // script can read them synchronously without a Firestore round-trip.
       try {
@@ -223,7 +241,20 @@ if (auth) {
         console.error('[SlopMop] Failed to sync ignoredSites from Firestore', e);
       }
     } else {
-      browser.storage.local.remove('slopmopUser');
+      // On logout: reset the shared settings key and clear transient results.
+      // Namespaced stats (postsScanned:<uid> etc.) are left intact in storage
+      // so they're still there if the user logs back in.
+      await browser.storage.local.set({
+        settings: defaultUserSettings.settings,
+      });
+      await browser.storage.local.remove([
+        'slopmopUser',
+        'detectResponse',
+        'lastDetectResponse',
+        'lastDetectLanguageUnsupported',
+        'lastFactCheckResult',
+        'lastFactCheckError',
+      ]);
     }
   });
 }
@@ -235,14 +266,9 @@ initializeLocalStats().catch((error) => {
 
 // Initialize default settings on install
 browser.runtime.onInstalled.addListener(async () => {
-  const result = await browser.storage.local.get(['settings', ...STATS_STORAGE_KEYS]);
+  const result = await browser.storage.local.get('settings');
   if (!result.settings) {
-    await browser.storage.local.set({
-      postsScanned: typeof result.postsScanned === 'number' ? result.postsScanned : 0,
-      aiDetected: typeof result.aiDetected === 'number' ? result.aiDetected : 0,
-      postsProcessing: typeof result.postsProcessing === 'number' ? result.postsProcessing : 0,
-      settings: defaultUserSettings.settings,
-    });
+    await browser.storage.local.set({ settings: defaultUserSettings.settings });
   }
 });
 
@@ -512,7 +538,9 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 
 async function handleGetHistory(): Promise<MessageResponse> {
   try {
-    const entries = await getHistory();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return { success: true, data: [] };
+    const entries = await getHistory(uid);
     return { success: true, data: entries };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -521,7 +549,9 @@ async function handleGetHistory(): Promise<MessageResponse> {
 
 async function handleClearHistory(): Promise<MessageResponse> {
   try {
-    await clearHistory();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return { success: true };
+    await clearHistory(uid);
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -530,7 +560,9 @@ async function handleClearHistory(): Promise<MessageResponse> {
 
 async function handleTogglePin(postId: string): Promise<MessageResponse> {
   try {
-    await togglePin(postId);
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return { success: false, error: 'Not signed in' };
+    await togglePin(uid, postId);
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -602,6 +634,7 @@ async function handleFactCheck(
 
 /**
  * Saves a successful detection result to history, guarded by incognito check.
+ * History is namespaced by the logged-in user's UID — skipped if not signed in.
  * Failures are swallowed — history is best-effort and must never affect detection.
  */
 async function maybeSaveToHistory(
@@ -610,6 +643,8 @@ async function maybeSaveToHistory(
   tabId: number,
 ): Promise<void> {
   try {
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return; // no user logged in — don't save history
     const tab = await browser.tabs.get(tabId);
     if (tab.incognito) return;
     const entry = buildHistoryEntry(
@@ -620,7 +655,7 @@ async function maybeSaveToHistory(
       response.confidence,
       response.verdict,
     );
-    await saveHistoryEntry(entry);
+    await saveHistoryEntry(uid, entry);
   } catch (err) {
     console.error('[SlopMop] Failed to save history entry', err);
   }
@@ -1166,6 +1201,11 @@ function mapToImageDetectionResult(
   };
 }
 
+/**
+ * When the extension icon is clicked, send a toggle message to the content
+ * script in the active tab. If the content script isn't available (e.g. on
+ * chrome:// or about: pages), fall back to opening the popup in a new tab.
+ */
 browser.action.onClicked.addListener(async (tab) => {
   if (!tab.id) return;
 

@@ -68,21 +68,16 @@ export default function Popup() {
   }), []);
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
 
-  const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
-    setStats({
-      postsScanned: typeof stored.postsScanned === 'number' ? stored.postsScanned : 0,
-      aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
-      postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
-    });
-  }, [mergeSettings]);
-
+  /** Returns the namespaced storage keys for a given user's stats. */
+  const statsKeys = useCallback((uid: string) => ({
+    postsScanned: `postsScanned:${uid}`,
+    aiDetected: `aiDetected:${uid}`,
+    postsProcessing: `postsProcessing:${uid}`,
+  }), []);
 
   useEffect(() => {
     browser.storage.local
       .get([
-        'postsScanned',
-        'aiDetected',
-        'postsProcessing',
         'settings',
         'simpleMode',
         'detectResponse',
@@ -94,7 +89,6 @@ export default function Popup() {
         'lastFactCheckError',
       ])
       .then((result) => {
-        syncStatsFromStorage(result);
         if (result.settings) {
           const merged = mergeSettings(result.settings as Partial<Settings>);
           setSettings(merged);
@@ -126,7 +120,8 @@ export default function Popup() {
           setFactCheckError(null);
         }
       });
-  }, [mergeSettings, syncStatsFromStorage]);
+  }, [mergeSettings]);
+
 
   // Per-account onboarding: show only once for each signed-in user (uid).
   useEffect(() => {
@@ -144,22 +139,13 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
-      const local = await browser.storage.local.get([
-        'settings',
-        'postsScanned',
-        'aiDetected',
-        'postsProcessing',
-      ]);
+      const local = await browser.storage.local.get(['settings']);
       const localSettings = local.settings as Partial<Settings> | undefined;
-      const localStats = {
-        postsScanned: typeof local.postsScanned === 'number' ? local.postsScanned : 0,
-        aiDetected: typeof local.aiDetected === 'number' ? local.aiDetected : 0,
-        postsProcessing: typeof local.postsProcessing === 'number' ? local.postsProcessing : 0,
-      };
+      // Stats are namespaced by UID — always use Firestore as source of truth.
       const mergedStats = {
-        postsScanned: Math.max(remote.stats.postsScanned, localStats.postsScanned),
-        aiDetected: Math.max(remote.stats.aiDetected, localStats.aiDetected),
-        postsProcessing: localStats.postsProcessing,
+        postsScanned: remote.stats.postsScanned ?? 0,
+        aiDetected: remote.stats.aiDetected ?? 0,
+        postsProcessing: 0,
       };
       const merged: Settings = {
         sensitivity: remote.settings.sensitivity,
@@ -183,21 +169,32 @@ export default function Popup() {
       setSettings(merged);
       setEnabled(merged.enabled);
       setStats(mergedStats);
+      const keys = statsKeys(user.uid);
       browser.storage.local.set({ settings: merged });
-      browser.storage.local.set(mergedStats);
+      browser.storage.local.set({
+        [keys.postsScanned]: mergedStats.postsScanned,
+        [keys.aiDetected]: mergedStats.aiDetected,
+        [keys.postsProcessing]: 0,
+      });
     } catch (err) {
       console.error('[Popup] Failed to load Firestore settings:', err);
+      // On failure, read from this user's namespaced stat keys.
+      const keys = statsKeys(user.uid);
       const result = await browser.storage.local.get([
-        'postsScanned', 'aiDetected', 'postsProcessing', 'settings',
+        keys.postsScanned, keys.aiDetected, keys.postsProcessing, 'settings',
       ]);
-      syncStatsFromStorage(result);
+      setStats({
+        postsScanned: typeof result[keys.postsScanned] === 'number' ? (result[keys.postsScanned] as number) : 0,
+        aiDetected: typeof result[keys.aiDetected] === 'number' ? (result[keys.aiDetected] as number) : 0,
+        postsProcessing: 0,
+      });
       if (result.settings) {
         const merged = mergeSettings(result.settings as Partial<Settings>);
         setSettings(merged);
         setEnabled(merged.enabled);
       }
     }
-  }, [mergeSettings, syncStatsFromStorage, user]);
+  }, [mergeSettings, statsKeys, user]);
 
   useEffect(() => {
     loadSettings();
@@ -250,30 +247,37 @@ export default function Popup() {
     return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
+  // Listen for stat increments from the background. Re-registers whenever the
+  // logged-in user changes so it always tracks the right namespaced keys.
   useEffect(() => {
+    if (!user) {
+      setStats({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
+      return;
+    }
+    const keys = statsKeys(user.uid);
     const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local') return;
-      if (!changes.postsScanned && !changes.aiDetected && !changes.postsProcessing) return;
+      if (!changes[keys.postsScanned] && !changes[keys.aiDetected] && !changes[keys.postsProcessing]) return;
 
       setStats((prev) => ({
         postsScanned:
-          typeof changes.postsScanned?.newValue === 'number'
-            ? changes.postsScanned.newValue
+          typeof changes[keys.postsScanned]?.newValue === 'number'
+            ? (changes[keys.postsScanned].newValue as number)
             : prev.postsScanned,
         aiDetected:
-          typeof changes.aiDetected?.newValue === 'number'
-            ? changes.aiDetected.newValue
+          typeof changes[keys.aiDetected]?.newValue === 'number'
+            ? (changes[keys.aiDetected].newValue as number)
             : prev.aiDetected,
         postsProcessing:
-          typeof changes.postsProcessing?.newValue === 'number'
-            ? changes.postsProcessing.newValue
+          typeof changes[keys.postsProcessing]?.newValue === 'number'
+            ? (changes[keys.postsProcessing].newValue as number)
             : prev.postsProcessing,
       }));
     };
 
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
-  }, []);
+  }, [user, statsKeys]);
 
   // Sync settings and simple mode when Options page or another tab updates storage.
   useEffect(() => {

@@ -7,7 +7,7 @@ import {
   applyKeywordFilter,
   isDefaultPrefs,
   DEFAULT_FILTER_PREFS,
-  FILTER_PREFS_KEY,
+  filterPrefsKey,
   PLATFORM_OPTIONS,
   type HistoryFilterPrefs,
   type SortOption,
@@ -299,7 +299,16 @@ export default function HistoryPage() {
   const [filterPrefs, setFilterPrefs] = useState<HistoryFilterPrefs>(DEFAULT_FILTER_PREFS);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [uid, setUid] = useState<string | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Resolve the logged-in user's UID from storage once on mount
+  useEffect(() => {
+    browser.storage.local.get('slopmopUser').then((result) => {
+      const user = result.slopmopUser as { uid: string } | undefined;
+      if (user?.uid) setUid(user.uid);
+    });
+  }, []);
 
   // Load history entries
   const loadHistory = useCallback(async () => {
@@ -319,13 +328,15 @@ export default function HistoryPage() {
     }
   }, []);
 
-  // Load saved filter prefs from storage on mount
+  // Load saved filter prefs from storage — namespaced by UID
   useEffect(() => {
-    browser.storage.local.get(FILTER_PREFS_KEY).then((result) => {
-      const saved = result[FILTER_PREFS_KEY] as Partial<HistoryFilterPrefs> | undefined;
+    if (!uid) return;
+    const key = filterPrefsKey(uid);
+    browser.storage.local.get(key).then((result) => {
+      const saved = result[key] as Partial<HistoryFilterPrefs> | undefined;
       if (saved) setFilterPrefs({ ...DEFAULT_FILTER_PREFS, ...saved });
     });
-  }, []);
+  }, [uid]);
 
   useEffect(() => {
     loadHistory();
@@ -333,7 +344,7 @@ export default function HistoryPage() {
 
   const handleFilterChange = (prefs: HistoryFilterPrefs) => {
     setFilterPrefs(prefs);
-    browser.storage.local.set({ [FILTER_PREFS_KEY]: prefs });
+    if (uid) browser.storage.local.set({ [filterPrefsKey(uid)]: prefs });
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
