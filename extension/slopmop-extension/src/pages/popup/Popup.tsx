@@ -175,6 +175,7 @@ export default function Popup() {
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
         scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
+        badgeSize: remote.settings.badgeSize ?? defaultSettings.badgeSize,
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
         factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
@@ -395,6 +396,7 @@ export default function Popup() {
       scanImages: defaultUserSettings.settings.scanImages,
       scanComments: defaultUserSettings.settings.scanComments,
       uiMode: defaultUserSettings.settings.uiMode,
+      badgeSize: defaultUserSettings.settings.badgeSize,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
       factCheck: defaultUserSettings.settings.factCheck,
@@ -477,6 +479,26 @@ export default function Popup() {
 
               <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
             </>
+          )}
+
+          {simpleMode && (
+            <section
+              className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-700/60 dark:bg-amber-500/10 dark:text-amber-100"
+              aria-live="polite"
+            >
+              <p className="font-semibold mb-1">Simple mode is on</p>
+              <p className="text-amber-900/90 dark:text-amber-200/90 mb-2 leading-snug">
+                Badge size, platforms, sensitivity, and other details are on the full options page. Turn off Simple
+                mode there to show them here too.
+              </p>
+              <button
+                type="button"
+                onClick={() => void browser.runtime.openOptionsPage()}
+                className="w-full py-2 rounded-lg text-xs font-medium bg-amber-600 text-white hover:bg-amber-700 transition-colors cursor-pointer"
+              >
+                Open extension options
+              </button>
+            </section>
           )}
 
           {/* Sign-out button */}
