@@ -323,3 +323,13 @@ function setupNavigationListener(): void {
   };
 }
 setupNavigationListener();
+
+// Pause the feed observer when the tab is hidden to save CPU / network;
+// resume with a catch-up scan when the user returns.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    activeObserver?.pause();
+  } else {
+    activeObserver?.resume();
+  }
+});

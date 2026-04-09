@@ -55,6 +55,10 @@ export class FeedObserver {
     /** x.com virtualizes tweet cells; scroll often mounts nodes without a mutation burst we observe. */
     private xScrollHandler: (() => void) | null = null;
     private xScrollRescanTimer: ReturnType<typeof setTimeout> | null = null;
+    /** True while the tab is hidden — observation is suspended but session state is preserved. */
+    private paused = false;
+    /** Timer handles from schedulePostNavigationScans so they can be cancelled on pause/stop. */
+    private navScanTimers: ReturnType<typeof setTimeout>[] = [];
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -139,8 +143,67 @@ export class FeedObserver {
             this.xScrollRescanTimer = null;
         }
 
+        for (const t of this.navScanTimers) clearTimeout(t);
+        this.navScanTimers = [];
+        this.paused = false;
+
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
+        }
+    }
+
+    /**
+     * Lightweight suspend: disconnect the MutationObserver and scroll listener
+     * without clearing session state. Use when the tab becomes hidden.
+     */
+    pause(): void {
+        if (this.paused || !this.observer) return;
+        this.paused = true;
+
+        this.observer.disconnect();
+
+        if (this.debounceTimer !== null) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+
+        if (this.xScrollHandler) {
+            window.removeEventListener("scroll", this.xScrollHandler, { capture: true });
+        }
+        if (this.xScrollRescanTimer !== null) {
+            clearTimeout(this.xScrollRescanTimer);
+            this.xScrollRescanTimer = null;
+        }
+
+        for (const t of this.navScanTimers) clearTimeout(t);
+        this.navScanTimers = [];
+
+        if (DEBUG_EXTRACTION) {
+            console.log(`[FeedObserver] paused (tab hidden)`);
+        }
+    }
+
+    /**
+     * Resume after a pause: reconnect the MutationObserver, re-add the scroll
+     * listener, and run a catch-up scan for DOM changes that occurred while hidden.
+     */
+    resume(): void {
+        if (!this.paused || !this.observer) return;
+        this.paused = false;
+
+        this.observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+        });
+
+        if (this.xScrollHandler) {
+            window.addEventListener("scroll", this.xScrollHandler, { passive: true, capture: true });
+        }
+
+        this.scanAndProcess();
+
+        if (DEBUG_EXTRACTION) {
+            console.log(`[FeedObserver] resumed (tab visible), catch-up scan complete`);
         }
     }
 
@@ -151,6 +214,8 @@ export class FeedObserver {
     }
 
     private onDomMutated(): void {
+        if (this.paused) return;
+
         // debounce: Reddit fires many mutations in rapid succession
         // (e.g. 30 mutations in 50ms when loading a batch of posts).
         // without debouncing, scanAndProcess would run 30 times.
@@ -204,13 +269,17 @@ export class FeedObserver {
     schedulePostNavigationScans(): void {
         const delaysMs = [80, 250, 700, 1600, 3200];
         for (const ms of delaysMs) {
-            setTimeout(() => {
+            const id = setTimeout(() => {
+                this.navScanTimers = this.navScanTimers.filter((t) => t !== id);
                 this.scanAndProcess();
             }, ms);
+            this.navScanTimers.push(id);
         }
     }
 
     private scanAndProcess(forceAnalyze = false): void {
+        if (this.paused) return;
+
         // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
         // each node is one post container on the page
@@ -418,10 +487,9 @@ export class FeedObserver {
         );
     }
 
-    // send extracted post to background and start timeout tracking.
     private dispatchAnalyze(post: NormalizedPostContent): void {
-        // start timeout window before sending message.
-        // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
+        if (this.paused) return;
+
         this.inFlightAnalyzePostIds.add(post.postId);
         this.startAnalyzeTimeout(post.postId);
         this.bus.sendAnalyze(post);
