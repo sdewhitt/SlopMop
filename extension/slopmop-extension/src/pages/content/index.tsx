@@ -327,9 +327,11 @@ setupNavigationListener();
 // Pause the feed observer when the tab is hidden to save CPU / network;
 // resume with a catch-up scan when the user returns.
 document.addEventListener('visibilitychange', () => {
+  console.log('[SlopMop] visibilitychange fired, hidden =', document.hidden);
   if (document.hidden) {
     activeObserver?.pause();
   } else {
     activeObserver?.resume();
   }
 });
+console.log('[SlopMop] visibility listener registered');
