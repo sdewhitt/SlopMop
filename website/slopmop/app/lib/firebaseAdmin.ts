@@ -5,27 +5,67 @@
  * custom auth tokens for the browser extension.
  */
 
-import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
+import {
+  initializeApp,
+  getApps,
+  cert,
+  type App,
+  type ServiceAccount,
+} from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
 let app: App | undefined;
 let adminAuth: Auth | undefined;
+let adminDb: Firestore | undefined;
 
-export function initAdmin(): Auth {
-  if (adminAuth) return adminAuth;
+function serviceAccountFromEnv(): ServiceAccount | null {
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+
+  if (serviceAccountJson) {
+    try {
+      return JSON.parse(serviceAccountJson) as ServiceAccount;
+    } catch (error) {
+      throw new Error(
+        `FIREBASE_SERVICE_ACCOUNT_KEY is not valid JSON: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+  if (projectId && clientEmail && privateKey) {
+    return {
+      projectId,
+      clientEmail,
+      privateKey,
+    };
+  }
+
+  return null;
+}
+
+function getOrInitApp(): App {
+  if (app) return app;
 
   if (getApps().length === 0) {
-    // Expects a service account JSON string in FIREBASE_SERVICE_ACCOUNT_KEY env var,
-    // or individual env vars for credentials.
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    // Supports either:
+    // 1) FIREBASE_SERVICE_ACCOUNT_KEY JSON
+    // 2) FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
+    const serviceAccount = serviceAccountFromEnv();
 
     if (serviceAccount) {
-      const parsed = JSON.parse(serviceAccount);
       app = initializeApp({
-        credential: cert(parsed),
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.projectId ?? process.env.FIREBASE_PROJECT_ID,
       });
     } else {
-      // Fallback: initialise with project ID only (works in some hosted environments)
+      // Fallback to Application Default Credentials (ADC) in hosted environments.
+      // This requires GOOGLE_APPLICATION_CREDENTIALS locally unless running on GCP.
       app = initializeApp({
         projectId: process.env.FIREBASE_PROJECT_ID,
       });
@@ -34,6 +74,18 @@ export function initAdmin(): Auth {
     app = getApps()[0];
   }
 
-  adminAuth = getAuth(app);
+  return app;
+}
+
+export function initAdmin(): Auth {
+  if (adminAuth) return adminAuth;
+
+  adminAuth = getAuth(getOrInitApp());
   return adminAuth;
+}
+
+export function initAdminDb(): Firestore {
+  if (adminDb) return adminDb;
+  adminDb = getFirestore(getOrInitApp());
+  return adminDb;
 }
