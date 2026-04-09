@@ -228,10 +228,7 @@ if (auth) {
   });
 }
 
-// Disable the default popup so that action.onClicked fires.
-// The popup page is kept in the manifest only so CRXJS bundles it;
-// it's actually rendered by the content script directly in the page DOM.
-browser.action.setPopup({ popup: '' });
+// No default_popup in the manifest — action.onClicked fires on every click.
 initializeLocalStats().catch((error) => {
   console.error('[SlopMop] Failed to initialize detection stats', error);
 });
@@ -1169,19 +1166,32 @@ function mapToImageDetectionResult(
   };
 }
 
-/**
- * When the extension icon is clicked, send a toggle message to the content
- * script in the active tab. If the content script isn't available (e.g. on
- * chrome:// or about: pages), fall back to opening the popup in a new tab.
- */
 browser.action.onClicked.addListener(async (tab) => {
   if (!tab.id) return;
 
+  // Try to send the toggle message to the already-loaded content script.
+  // This works for normal navigation where the content script is injected
+  // on page load. It also handles the case where the extension was reloaded
+  // mid-session (e.g. during development) without the user refreshing the tab.
   try {
     await browser.tabs.sendMessage(tab.id, { type: 'SLOPMOP_TOGGLE_PANEL' });
+    return;
   } catch {
-    // Content script not available on this page — open as a standalone tab
-    const popupUrl = browser.runtime.getURL('src/pages/popup/index.html');
-    await browser.tabs.create({ url: popupUrl });
+    // Content script not present — inject it now, then toggle.
+  }
+
+  // Programmatically inject the content script into the active tab.
+  // This recovers from: extension reloads, service worker restarts,
+  // and any tab that was open before the extension was installed.
+  // Read the file list from the built manifest so we never hardcode a hash.
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const files = manifest.content_scripts?.[0]?.js ?? [];
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+    // Small delay so the content script can register its message listener.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await browser.tabs.sendMessage(tab.id, { type: 'SLOPMOP_TOGGLE_PANEL' });
+  } catch (err) {
+    console.warn('[SlopMop] Could not inject content script on this page:', err);
   }
 });
