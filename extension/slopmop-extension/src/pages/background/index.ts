@@ -47,6 +47,7 @@ import type {
 } from '@src/types/domain';
 import {
   defaultUserSettings,
+  mergeDetectionSettingsFromStored,
   normalizeDetectionLanguages,
   type DetectionSettings,
 } from '@src/utils/userSettings';
@@ -57,12 +58,18 @@ import {
   validateHost,
 } from '@src/utils/disabledWebsites';
 import {
+  applyBatteryThrottleToSettings,
+  applyLowBatteryModeToSettings,
+  BATTERY_THROTTLE_ACTIVE_KEY,
+} from '@src/utils/batteryThrottle';
+import {
   buildHistoryEntry,
   saveHistoryEntry,
   getHistory,
   clearHistory,
   togglePin,
 } from '@src/utils/detectionHistory';
+import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
 
 console.log('background script loaded');
 
@@ -81,17 +88,11 @@ type StoredStats = {
 let statsWriteChain: Promise<void> = Promise.resolve();
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
-  const stored = await browser.storage.local.get('settings');
-  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
-  return {
-    ...defaultUserSettings.settings,
-    ...saved,
-    platforms: {
-      ...defaultUserSettings.settings.platforms,
-      ...(saved.platforms ?? {}),
-    },
-    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
-  };
+  const stored = await browser.storage.local.get(['settings', BATTERY_THROTTLE_ACTIVE_KEY]);
+  const base = mergeDetectionSettingsFromStored(stored.settings);
+  const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode);
+  return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
 }
 
 function normalizeStoredStats(stored: Record<string, unknown>): StoredStats {
@@ -200,6 +201,10 @@ async function drainAnalysisQueue(): Promise<void> {
 
 initFirebase();
 
+void initBatteryThrottleController().catch((err) => {
+  console.error('[SlopMop] Battery throttle controller failed to start', err);
+});
+
 // Sync the current Firebase user to browser.storage.local so the
 // content-script React tree can read auth state reactively.
 if (auth) {
@@ -228,10 +233,6 @@ if (auth) {
   });
 }
 
-// Disable the default popup so that action.onClicked fires.
-// The popup page is kept in the manifest only so CRXJS bundles it;
-// it's actually rendered by the content script directly in the page DOM.
-browser.action.setPopup({ popup: '' });
 initializeLocalStats().catch((error) => {
   console.error('[SlopMop] Failed to initialize detection stats', error);
 });
@@ -1169,19 +1170,3 @@ function mapToImageDetectionResult(
   };
 }
 
-/**
- * When the extension icon is clicked, send a toggle message to the content
- * script in the active tab. If the content script isn't available (e.g. on
- * chrome:// or about: pages), fall back to opening the popup in a new tab.
- */
-browser.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
-
-  try {
-    await browser.tabs.sendMessage(tab.id, { type: 'SLOPMOP_TOGGLE_PANEL' });
-  } catch {
-    // Content script not available on this page — open as a standalone tab
-    const popupUrl = browser.runtime.getURL('src/pages/popup/index.html');
-    await browser.tabs.create({ url: popupUrl });
-  }
-});

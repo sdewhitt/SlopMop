@@ -3,8 +3,7 @@
  * inside a Shadow DOM container. React + the Popup component are mounted
  * in the shadow root, fully isolated from the host page's styles.
  *
- * The background service worker sends a SLOPMOP_TOGGLE_PANEL message
- * whenever the extension icon is clicked.
+ * The background can send SLOPMOP_TOGGLE_PANEL to toggle the in-page panel (e.g. from messages).
  */
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -26,9 +25,14 @@ import { XOverlayRenderer } from '@src/core/XOverlayRenderer';
 import { ExtensionMessageBus } from '@src/core/ExtensionMessageBus';
 import {
   defaultUserSettings,
-  normalizeDetectionLanguages,
+  mergeDetectionSettingsFromStored,
   type DetectionSettings,
 } from '@src/utils/userSettings';
+import {
+  applyBatteryThrottleToSettings,
+  applyLowBatteryModeToSettings,
+  BATTERY_THROTTLE_ACTIVE_KEY,
+} from '@src/utils/batteryThrottle';
 import { renderDebugBadge } from './debug';
 import { isHostIgnored } from '@src/utils/disabledWebsites';
 // Inline CSS — processed by Tailwind at build time, injected into the shadow DOM
@@ -167,16 +171,10 @@ function getCurrentHost(): string {
 }
 
 function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
-  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
-  return {
-    ...defaultUserSettings.settings,
-    ...saved,
-    platforms: {
-      ...defaultUserSettings.settings.platforms,
-      ...(saved.platforms ?? {}),
-    },
-    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
-  };
+  const base = mergeDetectionSettingsFromStored(stored.settings);
+  const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode);
+  return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
 }
 
 function shouldRunOnCurrentSite(
@@ -262,7 +260,7 @@ function startObserver(settings: DetectionSettings): void {
 async function initFeedObserver(): Promise<void> {
   // renderDebugBadge();
 
-  const stored = await browser.storage.local.get(['settings', 'ignoredSites']);
+  const stored = await browser.storage.local.get(['settings', 'ignoredSites', BATTERY_THROTTLE_ACTIVE_KEY]);
   const settings = resolveDetectionSettings(stored);
   const ignoredSites = (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
 
@@ -280,40 +278,48 @@ browser.storage.onChanged.addListener((changes, areaName) => {
     applyThemeToPanel(resolveThemeMode(pref, undefined));
   }
 
-  if (!changes.settings && !changes.ignoredSites) return;
+  if (
+    !changes.settings &&
+    !changes.ignoredSites &&
+    changes.batteryThrottleActive === undefined
+  ) {
+    return;
+  }
 
-  void browser.storage.local.get(['settings', 'ignoredSites']).then((stored) => {
-    const currentHost = getCurrentHost();
-    const newSettings = resolveDetectionSettings(stored);
-    const newIgnoredSites =
-      (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
-    const shouldRun = shouldRunOnCurrentSite(newSettings, newIgnoredSites);
+  void browser.storage.local
+    .get(['settings', 'ignoredSites', BATTERY_THROTTLE_ACTIVE_KEY])
+    .then((stored) => {
+      const currentHost = getCurrentHost();
+      const newSettings = resolveDetectionSettings(stored);
+      const newIgnoredSites =
+        (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
+      const shouldRun = shouldRunOnCurrentSite(newSettings, newIgnoredSites);
 
-    if (!newSettings.enabled && activeObserver) {
-      activeObserver.stop();
-      activeObserver = null;
-      console.log('[SlopMop] FeedObserver stopped (extension disabled)');
-      return;
-    }
+      if (!newSettings.enabled && activeObserver) {
+        activeObserver.stop();
+        activeObserver = null;
+        console.log('[SlopMop] FeedObserver stopped (extension disabled)');
+        return;
+      }
 
-    if (!shouldRun && activeObserver) {
-      activeObserver.stop();
-      activeObserver = null;
-      console.log('[SlopMop] FeedObserver stopped for', currentHost);
-      return;
-    }
+      if (!shouldRun && activeObserver) {
+        activeObserver.stop();
+        activeObserver = null;
+        console.log('[SlopMop] FeedObserver stopped for', currentHost);
+        return;
+      }
 
-    if (shouldRun && newSettings.enabled && activeObserver) {
-      activeObserver.updateSettings(newSettings);
-      return;
-    }
+      if (shouldRun && newSettings.enabled && activeObserver) {
+        activeObserver.updateSettings(newSettings);
+        return;
+      }
 
-    if (shouldRun && newSettings.enabled && !activeObserver) {
-      initFeedObserver().catch((e) => {
-        console.error('[SlopMop] observer re-init error', e);
-      });
-    }
-  });
+      if (shouldRun && newSettings.enabled && !activeObserver) {
+        initFeedObserver().catch((e) => {
+          console.error('[SlopMop] observer re-init error', e);
+        });
+      }
+    });
 });
 
 initFeedObserver().catch((e) => {

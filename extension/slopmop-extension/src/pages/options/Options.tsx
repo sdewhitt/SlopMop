@@ -2,28 +2,35 @@ import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
 import { normalizeDetectionLanguages } from '../../utils/userSettings';
+import { BATTERY_THROTTLE_ACTIVE_KEY } from '../../utils/batteryThrottle';
 import DisabledWebsitesManager from './DisabledWebsitesManager';
 import HistoryPage from './HistoryPage';
 
-function Toggle({ checked, onChange, label, description }: {
+function Toggle({ checked, onChange, label, description, disabled = false }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   description?: string;
+  disabled?: boolean;
 }) {
   return (
-    <label className="flex items-center justify-between py-3 cursor-pointer group">
+    <label className={`flex items-center justify-between py-3 group ${disabled ? 'opacity-60 cursor-default' : 'cursor-pointer'}`}>
       <div>
-        <p className="text-sm font-medium text-gray-200 group-hover:text-white transition-colors">{label}</p>
+        <p className={`text-sm font-medium text-gray-200 ${disabled ? '' : 'group-hover:text-white'} transition-colors`}>{label}</p>
         {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
       </div>
       <button
+        type="button"
         role="switch"
         aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
-          checked ? 'bg-blue-600' : 'bg-gray-600'
-        }`}
+        aria-disabled={disabled}
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) onChange(!checked);
+        }}
+        className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+          disabled ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
+        } ${checked ? 'bg-blue-600' : 'bg-gray-600'}`}
       >
         <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition-transform duration-200 translate-y-0.5 ${
           checked ? 'translate-x-5.5' : 'translate-x-0.5'
@@ -40,6 +47,7 @@ export default function Options() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
+  const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
 
   const mergeSettings = (raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -54,14 +62,27 @@ export default function Options() {
   });
 
   useEffect(() => {
-    browser.storage.local.get(['settings', 'simpleMode']).then((result) => {
+    browser.storage.local.get(['settings', 'simpleMode', BATTERY_THROTTLE_ACTIVE_KEY]).then((result) => {
       if (result.settings) {
         setSettings(mergeSettings(result.settings as Partial<Settings>));
       }
       if (typeof result.simpleMode === 'boolean') {
         setSimpleMode(result.simpleMode);
       }
+      setBatteryThrottleActive(result[BATTERY_THROTTLE_ACTIVE_KEY] === true);
     });
+  }, []);
+
+  useEffect(() => {
+    const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      const t = changes[BATTERY_THROTTLE_ACTIVE_KEY];
+      if (typeof t?.newValue === 'boolean') {
+        setBatteryThrottleActive(t.newValue);
+      }
+    };
+    browser.storage.onChanged.addListener(handler);
+    return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -193,11 +214,24 @@ export default function Options() {
               description="Analyze images in posts (coming soon)"
             />
             <Toggle
-              checked={settings.automaticScanning}
+              checked={settings.lowBatteryMode}
+              onChange={(v) => update('lowBatteryMode', v)}
+              label="Low battery mode"
+              description="Manual power saving: locks Automatic Scanning off until you turn this off. Separate from automatic pause when the battery is low (message below)."
+            />
+            <Toggle
+              checked={settings.lowBatteryMode ? false : settings.automaticScanning}
+              disabled={settings.lowBatteryMode}
               onChange={(v) => update('automaticScanning', v)}
               label="Automatic Scanning"
               description="When off, posts require clicking Detect Now"
             />
+            {batteryThrottleActive && settings.automaticScanning && !settings.lowBatteryMode && (
+              <p className="text-xs text-amber-400/95 px-0 pb-2 -mt-1 leading-snug" role="status">
+                Automatic scanning is paused while the battery is low and unplugged. Plug in or charge above the
+                threshold to resume.
+              </p>
+            )}
             <Toggle
               checked={settings.accessibilityMode}
               onChange={(v) => update('accessibilityMode', v)}

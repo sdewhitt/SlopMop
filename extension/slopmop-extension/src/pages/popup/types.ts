@@ -29,6 +29,8 @@ export interface Settings {
   highlightSegments: boolean;
   /** Show Fact check on posts (ClaimReview search via backend). */
   factCheck: boolean;
+  /** When on, automatic scanning is off and its toggle is locked until this is turned off. */
+  lowBatteryMode: boolean;
   detectionLanguages: DetectionLanguageCode[];
 }
 
@@ -47,5 +49,6 @@ export const defaultSettings: Settings = {
   accessibilityMode: false,
   highlightSegments: true,
   factCheck: true,
+  lowBatteryMode: false,
   detectionLanguages: ['eng', 'spa', 'fra'],
 };
