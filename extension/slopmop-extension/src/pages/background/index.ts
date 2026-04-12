@@ -69,8 +69,11 @@ import {
   getHistory,
   clearHistory,
   togglePin,
+  findMatchingHistoryEntry,
+  type HistoryEntry,
 } from '@src/utils/detectionHistory';
 import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
+import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
 
 console.log('background script loaded');
 
@@ -629,6 +632,7 @@ async function maybeSaveToHistory(
       post.text?.plain ?? '',
       response.confidence,
       response.verdict,
+      post.domContext?.authorHandle ?? '',
     );
     await saveHistoryEntry(entry);
   } catch (err) {
@@ -636,7 +640,59 @@ async function maybeSaveToHistory(
   }
 }
 
+/**
+ * If history has the same platform, author handle, and text snippet as a prior detection,
+ * resend that verdict without calling the API (no stats / queue impact).
+ */
+async function tryReplayFromHistory(post: NormalizedPostContent, tabId: number): Promise<boolean> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return false;
+
+    const plainText = post.text?.plain ?? '';
+    if (post.contentType === 'IMAGE' && !plainText.trim()) return false;
+
+    const entries = await getHistory();
+    const match = findMatchingHistoryEntry(
+      entries,
+      post.site,
+      post.domContext?.authorHandle ?? '',
+      plainText,
+    );
+    if (!match) return false;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId);
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildDetectionResponseFromHistory(entry: HistoryEntry, currentPostId: string): DetectionResponse {
+  return {
+    requestId: `history-replay-${entry.savedAtMs}-${currentPostId}`,
+    postId: currentPostId,
+    verdict: entry.verdict,
+    confidence: entry.confidence,
+    detectionSource: 'text',
+    explanation: {
+      summary:
+        'Same author and text as a recent detection in your history — showing the saved result.',
+      model: { name: 'history', version: '1' },
+      cache: { hit: true, ttlRemainingMs: 0 },
+      timing: { totalMs: 0, inferenceMs: 0 },
+    },
+  };
+}
+
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  const replayed = await tryReplayFromHistory(post, tabId);
+  if (replayed) return;
+
   await markScanStarted();
   let statsFinalized = false;
   const finalizeStats = async (aiDetected: boolean) => {
@@ -752,8 +808,16 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
         await finalizeStats(mapped.verdict === 'likely_ai');
         return;
-      } catch {
-        // No text fallback for image-only posts
+      } catch (imgErr) {
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_ERROR',
+          payload: {
+            postId: enrichedPost.postId,
+            message: formatDetectionFetchError(imgErr),
+          },
+        });
+        await finalizeStats(false);
+        return;
       }
     }
     await browser.tabs.sendMessage(tabId, {
@@ -881,10 +945,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'network error';
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
-      payload: { postId: enrichedPost.postId, message },
+      payload: { postId: enrichedPost.postId, message: formatDetectionFetchError(err) },
     });
     await finalizeStats(false);
   }

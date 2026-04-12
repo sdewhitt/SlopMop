@@ -23,6 +23,9 @@ const MAX_HISTORY_ENTRIES = 1000;
 /** 24 hours in milliseconds. */
 const TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Must match {@link buildHistoryEntry} truncation (first N chars of trimmed text). */
+export const HISTORY_SNIPPET_MAX_CHARS = 200;
+
 // ── Schema ────────────────────────────────────────────────────────
 
 export interface HistoryEntry {
@@ -32,8 +35,10 @@ export interface HistoryEntry {
   url: string;
   /** Platform hostname e.g. "reddit.com", "instagram.com". */
   platform: SiteId;
-  /** First 200 characters of the post's plain text. */
+  /** First {@link HISTORY_SNIPPET_MAX_CHARS} characters of the post's plain text. */
   snippet: string;
+  /** Poster handle for deduplication (e.g. Reddit username, X handle). Omitted on older entries. */
+  authorHandle?: string;
   /** AI probability score 0–1 returned by the backend. */
   confidence: number;
   /** Model verdict. */
@@ -111,6 +116,9 @@ export async function saveHistoryEntry(
       verdict: normalizedEntry.verdict,
       url: normalizedEntry.url,
       savedAtMs: normalizedEntry.savedAtMs,
+      ...(normalizedEntry.authorHandle !== undefined && {
+        authorHandle: normalizedEntry.authorHandle,
+      }),
     };
   } else {
     current.push(normalizedEntry);
@@ -159,14 +167,54 @@ export function buildHistoryEntry(
   text: string,
   confidence: number,
   verdict: Verdict,
+  authorHandle: string,
 ): Omit<HistoryEntry, 'pinned'> {
   return {
     postId,
     url,
     platform,
-    snippet: text.trim().slice(0, 200),
+    snippet: normalizeContentSnippet(text),
     confidence,
     verdict,
     savedAtMs: Date.now(),
+    authorHandle: authorHandle.trim(),
   };
+}
+
+/** Normalize handle for comparison across sites (u/, @, case). */
+export function normalizeAuthorHandle(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  if (s.startsWith('u/')) s = s.slice(2);
+  if (s.startsWith('@')) s = s.slice(1);
+  return s;
+}
+
+/** Same truncation as stored history snippets. */
+export function normalizeContentSnippet(text: string): string {
+  return text.trim().slice(0, HISTORY_SNIPPET_MAX_CHARS);
+}
+
+/**
+ * Finds the most recent history entry with the same platform, normalized author, and snippet.
+ * Entries without `authorHandle` (legacy) never match.
+ */
+export function findMatchingHistoryEntry(
+  entries: HistoryEntry[],
+  platform: SiteId,
+  authorHandleRaw: string,
+  plainText: string,
+): HistoryEntry | null {
+  const h = normalizeAuthorHandle(authorHandleRaw);
+  const snippet = normalizeContentSnippet(plainText);
+  if (!h || !snippet) return null;
+
+  let best: HistoryEntry | null = null;
+  for (const e of entries) {
+    if (e.platform !== platform) continue;
+    const eh = normalizeAuthorHandle(e.authorHandle ?? '');
+    if (!eh || eh !== h) continue;
+    if (e.snippet !== snippet) continue;
+    if (!best || e.savedAtMs > best.savedAtMs) best = e;
+  }
+  return best;
 }

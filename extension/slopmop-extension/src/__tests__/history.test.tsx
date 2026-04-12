@@ -57,6 +57,8 @@ import {
   saveHistoryEntry,
   clearHistory,
   buildHistoryEntry,
+  findMatchingHistoryEntry,
+  normalizeAuthorHandle,
   HISTORY_KEY,
   type HistoryEntry,
 } from '@src/utils/detectionHistory';
@@ -71,6 +73,7 @@ function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     url: 'https://reddit.com/r/test/comments/abc123',
     platform: 'reddit.com',
     snippet: "In today's fast-paced world, AI is everywhere.",
+    authorHandle: 'someuser',
     confidence: 0.91,
     verdict: 'likely_ai',
     savedAtMs: Date.now(),
@@ -97,6 +100,7 @@ describe('History Storage', () => {
       'This is a long post with lots of content to save.',
       0.87,
       'likely_ai',
+      'coolauthor',
     );
     await saveHistoryEntry(entry);
 
@@ -110,6 +114,7 @@ describe('History Storage', () => {
     expect(saved!.snippet).toBeTruthy();                   // snippet
     expect(saved!.confidence).toBe(0.87);                  // confidence
     expect(saved!.verdict).toBe('likely_ai');              // verdict
+    expect(saved!.authorHandle).toBe('coolauthor');
   });
 
   it('auto-deletes entries older than 24 hours', () => {
@@ -238,6 +243,55 @@ describe('History Page UI', () => {
     await waitFor(() => {
       expect(screen.getByText('No History Found')).toBeInTheDocument();
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// History replay matching (author + snippet)
+// ─────────────────────────────────────────────────────────────────
+
+describe('History match for replay', () => {
+  it('normalizeAuthorHandle strips u/ and @ and lowercases', () => {
+    expect(normalizeAuthorHandle('u/Hello')).toBe('hello');
+    expect(normalizeAuthorHandle('@World')).toBe('world');
+    expect(normalizeAuthorHandle('  MixEd  ')).toBe('mixed');
+  });
+
+  it('findMatchingHistoryEntry returns the latest matching entry', () => {
+    const text = 'Hello world same content';
+    const snippet = text.trim().slice(0, 200);
+    const entries: HistoryEntry[] = [
+      makeEntry({
+        postId: 'older',
+        snippet,
+        authorHandle: 'user1',
+        savedAtMs: 100,
+        platform: 'reddit.com',
+      }),
+      makeEntry({
+        postId: 'newer',
+        snippet,
+        authorHandle: 'user1',
+        savedAtMs: 200,
+        platform: 'reddit.com',
+      }),
+    ];
+    const m = findMatchingHistoryEntry(entries, 'reddit.com', 'u/user1', text);
+    expect(m?.postId).toBe('newer');
+  });
+
+  it('findMatchingHistoryEntry returns null when platform differs', () => {
+    const text = 'Hello';
+    const entries: HistoryEntry[] = [makeEntry({ snippet: text, authorHandle: 'u1', platform: 'reddit.com' })];
+    expect(findMatchingHistoryEntry(entries, 'x.com', 'u1', text)).toBeNull();
+  });
+
+  it('findMatchingHistoryEntry returns null for legacy entries without authorHandle', () => {
+    const text = 'Hello';
+    const entries: HistoryEntry[] = [
+      { ...makeEntry(), authorHandle: undefined, snippet: text, postId: 'legacy' },
+    ];
+    expect(findMatchingHistoryEntry(entries, 'reddit.com', 'someuser', text)).toBeNull();
   });
 });
 
