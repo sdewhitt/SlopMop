@@ -55,6 +55,12 @@ export interface DetectionSettings {
    */
   lowBatteryMode: boolean;
   /**
+   * When on, low-battery mode behavior applies automatically while unplugged and below the low
+   * battery threshold; clears when charging or above the resume threshold. Saved scanning prefs
+   * are not overwritten (same pattern as automatic low-battery pause).
+   */
+  lowBatteryModeAutoWhenBatteryLow: boolean;
+  /**
    * Text detection runs only when franc's top guess is among these (plus Scots when English is on).
    * Default all three. Empty disables all text detection.
    */
@@ -108,6 +114,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     highlightSegments: true,
     factCheck: true,
     lowBatteryMode: false,
+    lowBatteryModeAutoWhenBatteryLow: false,
     detectionLanguages: ['eng', 'spa', 'fra'],
   },
   stats: {

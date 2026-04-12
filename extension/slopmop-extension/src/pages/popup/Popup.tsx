@@ -27,7 +27,7 @@ import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 import HistoryPage from '../options/HistoryPage';
 import ThemeToggle from './components/ThemeToggle';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
-import { BATTERY_THROTTLE_ACTIVE_KEY } from '@src/utils/batteryThrottle';
+import { BATTERY_THROTTLE_ACTIVE_KEY, BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY } from '@src/utils/batteryThrottle';
 import type { FactCheckItem } from '@src/types/domain';
 
 type DetectResponse = {
@@ -69,6 +69,7 @@ export default function Popup() {
   }), []);
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
   const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
+  const [batteryAutoLowBatteryActive, setBatteryAutoLowBatteryActive] = useState(false);
 
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
@@ -95,9 +96,11 @@ export default function Popup() {
         'lastFactCheckResult',
         'lastFactCheckError',
         BATTERY_THROTTLE_ACTIVE_KEY,
+        BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
       ])
       .then((result) => {
         setBatteryThrottleActive(result[BATTERY_THROTTLE_ACTIVE_KEY] === true);
+        setBatteryAutoLowBatteryActive(result[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true);
         syncStatsFromStorage(result);
         if (result.settings) {
           const merged = mergeSettings(result.settings as Partial<Settings>);
@@ -184,6 +187,10 @@ export default function Popup() {
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
         factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
         lowBatteryMode: remote.settings.lowBatteryMode ?? localSettings?.lowBatteryMode ?? defaultSettings.lowBatteryMode,
+        lowBatteryModeAutoWhenBatteryLow:
+          remote.settings.lowBatteryModeAutoWhenBatteryLow ??
+          localSettings?.lowBatteryModeAutoWhenBatteryLow ??
+          defaultSettings.lowBatteryModeAutoWhenBatteryLow,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
       };
       setSettings(merged);
@@ -300,6 +307,11 @@ export default function Popup() {
       if (typeof throttleChange?.newValue === 'boolean') {
         setBatteryThrottleActive(throttleChange.newValue);
       }
+
+      const autoLowChange = changes[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY];
+      if (typeof autoLowChange?.newValue === 'boolean') {
+        setBatteryAutoLowBatteryActive(autoLowChange.newValue);
+      }
     };
 
     browser.storage.onChanged.addListener(handler);
@@ -411,6 +423,7 @@ export default function Popup() {
       highlightSegments: defaultUserSettings.settings.highlightSegments,
       factCheck: defaultUserSettings.settings.factCheck,
       lowBatteryMode: defaultUserSettings.settings.lowBatteryMode,
+      lowBatteryModeAutoWhenBatteryLow: defaultUserSettings.settings.lowBatteryModeAutoWhenBatteryLow,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);
@@ -486,6 +499,7 @@ export default function Popup() {
                 settings={settings}
                 onUpdateSetting={updateSetting}
                 batteryThrottleActive={batteryThrottleActive}
+                batteryAutoLowBatteryActive={batteryAutoLowBatteryActive}
               />
 
               <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />

@@ -32,6 +32,7 @@ import {
   applyBatteryThrottleToSettings,
   applyLowBatteryModeToSettings,
   BATTERY_THROTTLE_ACTIVE_KEY,
+  BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
 } from '@src/utils/batteryThrottle';
 import { renderDebugBadge } from './debug';
 import { isHostIgnored } from '@src/utils/disabledWebsites';
@@ -173,7 +174,8 @@ function getCurrentHost(): string {
 function resolveDetectionSettings(stored: Record<string, unknown>): DetectionSettings {
   const base = mergeDetectionSettingsFromStored(stored.settings);
   const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
-  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode);
+  const autoLowBatteryOn = stored[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode || autoLowBatteryOn);
   return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
 }
 
@@ -260,7 +262,12 @@ function startObserver(settings: DetectionSettings): void {
 async function initFeedObserver(): Promise<void> {
   // renderDebugBadge();
 
-  const stored = await browser.storage.local.get(['settings', 'ignoredSites', BATTERY_THROTTLE_ACTIVE_KEY]);
+  const stored = await browser.storage.local.get([
+    'settings',
+    'ignoredSites',
+    BATTERY_THROTTLE_ACTIVE_KEY,
+    BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+  ]);
   const settings = resolveDetectionSettings(stored);
   const ignoredSites = (stored.ignoredSites as string[] | undefined) ?? defaultUserSettings.ignoredSites;
 
@@ -281,13 +288,19 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   if (
     !changes.settings &&
     !changes.ignoredSites &&
-    changes.batteryThrottleActive === undefined
+    changes.batteryThrottleActive === undefined &&
+    changes.batteryAutoLowBatteryActive === undefined
   ) {
     return;
   }
 
   void browser.storage.local
-    .get(['settings', 'ignoredSites', BATTERY_THROTTLE_ACTIVE_KEY])
+    .get([
+      'settings',
+      'ignoredSites',
+      BATTERY_THROTTLE_ACTIVE_KEY,
+      BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+    ])
     .then((stored) => {
       const currentHost = getCurrentHost();
       const newSettings = resolveDetectionSettings(stored);

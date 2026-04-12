@@ -61,6 +61,7 @@ import {
   applyBatteryThrottleToSettings,
   applyLowBatteryModeToSettings,
   BATTERY_THROTTLE_ACTIVE_KEY,
+  BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
 } from '@src/utils/batteryThrottle';
 import {
   buildHistoryEntry,
@@ -88,10 +89,15 @@ type StoredStats = {
 let statsWriteChain: Promise<void> = Promise.resolve();
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
-  const stored = await browser.storage.local.get(['settings', BATTERY_THROTTLE_ACTIVE_KEY]);
+  const stored = await browser.storage.local.get([
+    'settings',
+    BATTERY_THROTTLE_ACTIVE_KEY,
+    BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+  ]);
   const base = mergeDetectionSettingsFromStored(stored.settings);
   const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
-  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode);
+  const autoLowBatteryOn = stored[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode || autoLowBatteryOn);
   return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
 }
 

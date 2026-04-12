@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
 import { normalizeDetectionLanguages } from '../../utils/userSettings';
-import { BATTERY_THROTTLE_ACTIVE_KEY } from '../../utils/batteryThrottle';
+import { BATTERY_THROTTLE_ACTIVE_KEY, BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY } from '../../utils/batteryThrottle';
 import DisabledWebsitesManager from './DisabledWebsitesManager';
 import HistoryPage from './HistoryPage';
 
@@ -48,6 +48,7 @@ export default function Options() {
   const [saved, setSaved] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
   const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
+  const [batteryAutoLowBatteryActive, setBatteryAutoLowBatteryActive] = useState(false);
 
   const mergeSettings = (raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -61,16 +62,21 @@ export default function Options() {
     ),
   });
 
+  const effectiveLowBattery = settings.lowBatteryMode || batteryAutoLowBatteryActive;
+
   useEffect(() => {
-    browser.storage.local.get(['settings', 'simpleMode', BATTERY_THROTTLE_ACTIVE_KEY]).then((result) => {
-      if (result.settings) {
-        setSettings(mergeSettings(result.settings as Partial<Settings>));
-      }
-      if (typeof result.simpleMode === 'boolean') {
-        setSimpleMode(result.simpleMode);
-      }
-      setBatteryThrottleActive(result[BATTERY_THROTTLE_ACTIVE_KEY] === true);
-    });
+    browser.storage.local
+      .get(['settings', 'simpleMode', BATTERY_THROTTLE_ACTIVE_KEY, BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY])
+      .then((result) => {
+        if (result.settings) {
+          setSettings(mergeSettings(result.settings as Partial<Settings>));
+        }
+        if (typeof result.simpleMode === 'boolean') {
+          setSimpleMode(result.simpleMode);
+        }
+        setBatteryThrottleActive(result[BATTERY_THROTTLE_ACTIVE_KEY] === true);
+        setBatteryAutoLowBatteryActive(result[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true);
+      });
   }, []);
 
   useEffect(() => {
@@ -79,6 +85,10 @@ export default function Options() {
       const t = changes[BATTERY_THROTTLE_ACTIVE_KEY];
       if (typeof t?.newValue === 'boolean') {
         setBatteryThrottleActive(t.newValue);
+      }
+      const a = changes[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY];
+      if (typeof a?.newValue === 'boolean') {
+        setBatteryAutoLowBatteryActive(a.newValue);
       }
     };
     browser.storage.onChanged.addListener(handler);
@@ -214,19 +224,42 @@ export default function Options() {
               description="Analyze images in posts (coming soon)"
             />
             <Toggle
-              checked={settings.lowBatteryMode}
+              checked={effectiveLowBattery}
+              disabled={batteryAutoLowBatteryActive && !settings.lowBatteryMode}
               onChange={(v) => update('lowBatteryMode', v)}
               label="Low battery mode"
               description="Manual power saving: locks Automatic Scanning off until you turn this off. Separate from automatic pause when the battery is low (message below)."
             />
+            <div className="py-3 border-t border-gray-800">
+              <label className="flex items-start gap-2 cursor-pointer text-sm text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={settings.lowBatteryModeAutoWhenBatteryLow}
+                  onChange={(e) => update('lowBatteryModeAutoWhenBatteryLow', e.target.checked)}
+                  className="mt-0.5 rounded border-gray-600 bg-gray-800"
+                />
+                <span>
+                  <span className="font-medium text-gray-200">Turn on automatically when the battery is low</span>
+                  <span className="block text-xs text-gray-500 mt-0.5 leading-snug">
+                    Same thresholds as automatic pause below. Your saved Automatic Scanning preference is not changed;
+                    when charge is above the resume threshold or you plug in, behavior returns to your saved settings.
+                  </span>
+                </span>
+              </label>
+              {batteryAutoLowBatteryActive && !settings.lowBatteryMode && (
+                <p className="text-xs text-gray-500 mt-2 pl-6 leading-snug" role="status">
+                  Low battery mode is on automatically until the battery recovers or you turn off the option above.
+                </p>
+              )}
+            </div>
             <Toggle
-              checked={settings.lowBatteryMode ? false : settings.automaticScanning}
-              disabled={settings.lowBatteryMode}
+              checked={effectiveLowBattery ? false : settings.automaticScanning}
+              disabled={effectiveLowBattery}
               onChange={(v) => update('automaticScanning', v)}
               label="Automatic Scanning"
               description="When off, posts require clicking Detect Now"
             />
-            {batteryThrottleActive && settings.automaticScanning && !settings.lowBatteryMode && (
+            {batteryThrottleActive && settings.automaticScanning && !effectiveLowBattery && (
               <p className="text-xs text-amber-400/95 px-0 pb-2 -mt-1 leading-snug" role="status">
                 Automatic scanning is paused while the battery is low and unplugged. Plug in or charge above the
                 threshold to resume.
