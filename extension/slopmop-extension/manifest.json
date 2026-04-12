@@ -19,7 +19,8 @@
     "activeTab",
     "tabs",
     "storage",
-    "identity"
+    "identity",
+    "offscreen"
   ],
   "host_permissions": [
     "https://i.redd.it/*",

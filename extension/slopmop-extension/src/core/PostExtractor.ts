@@ -1,6 +1,7 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent, ContentType, MediaType } from "@src/types/domain";
 import { classify } from "./ContentTypeClassifier";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
 
 
 export class PostExtractor {
@@ -42,7 +43,7 @@ export class PostExtractor {
         const images = imageNodes.map((img) => {
             const srcUrl = img.currentSrc || img.src;
             return {
-                imageId: this.fnv1a(srcUrl),
+                imageId: fnv1a32Hex(srcUrl),
                 bytesBase64: "",            // background will fill bytes in
                 srcUrl,
                 mimeType: this.mimeTypeFromUrl(srcUrl),
@@ -146,14 +147,5 @@ export class PostExtractor {
         return "image";
     }
 
-    // hash function for unique postId
-    private fnv1a(input: string): string {
-        let hash = 0x811c9dc5;
-        for (let i = 0; i < input.length; i++) {
-          hash ^= input.charCodeAt(i);
-          hash = Math.imul(hash, 0x01000193);
-        }
-        return (hash >>> 0).toString(16);
-      }
 }
 
