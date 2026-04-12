@@ -70,8 +70,12 @@ import {
   clearHistory,
   togglePin,
   findMatchingHistoryEntry,
+  findMatchingHistoryByFingerprint,
+  explanationHighlightsFromSpans,
   type HistoryEntry,
 } from '@src/utils/detectionHistory';
+import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
+import { fnv1a32Hex } from '@src/utils/fnv1aHash';
 import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
 import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
 
@@ -625,6 +629,7 @@ async function maybeSaveToHistory(
   try {
     const tab = await browser.tabs.get(tabId);
     if (tab.incognito) return;
+    const contentFingerprint = computePostContentFingerprint(post);
     const entry = buildHistoryEntry(
       post.postId,
       post.url,
@@ -633,6 +638,13 @@ async function maybeSaveToHistory(
       response.confidence,
       response.verdict,
       post.domContext?.authorHandle ?? '',
+      contentFingerprint,
+      {
+        textExplanationSummary: response.explanation.summary,
+        textHighlightedSpans: response.explanation.highlightedSpans,
+        imageResult: response.imageResult,
+        detectionSource: response.detectionSource,
+      },
     );
     await saveHistoryEntry(entry);
   } catch (err) {
@@ -661,7 +673,7 @@ async function tryReplayFromHistory(post: NormalizedPostContent, tabId: number):
     );
     if (!match) return false;
 
-    const payload = buildDetectionResponseFromHistory(match, post.postId);
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: false });
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_RESULT',
       payload,
@@ -672,20 +684,62 @@ async function tryReplayFromHistory(post: NormalizedPostContent, tabId: number):
   }
 }
 
-function buildDetectionResponseFromHistory(entry: HistoryEntry, currentPostId: string): DetectionResponse {
+/**
+ * After media is resolved: replay if content fingerprint matches a prior run (reposts / stolen posts).
+ */
+async function tryReplayFromHistoryByFingerprint(
+  post: NormalizedPostContent,
+  tabId: number,
+): Promise<HistoryEntry | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return null;
+
+    const fp = computePostContentFingerprint(post);
+    const entries = await getHistory();
+    const match = findMatchingHistoryByFingerprint(entries, post.site, fp);
+    if (!match) return null;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: true });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return match;
+  } catch {
+    return null;
+  }
+}
+
+function buildDetectionResponseFromHistory(
+  entry: HistoryEntry,
+  currentPostId: string,
+  opts?: { fingerprint?: boolean },
+): DetectionResponse {
+  const viaFingerprint = opts?.fingerprint === true;
+  const summaryFallback = viaFingerprint
+    ? 'Same content fingerprint as a recent detection in your history — showing the saved result.'
+    : 'Same author and text as a recent detection in your history — showing the saved result.';
+  const hasStoredSummary = Boolean(entry.textExplanationSummary?.trim());
+  const spans = entry.textHighlightedSpans ?? [];
+  const highlights =
+    spans.length > 0 ? explanationHighlightsFromSpans(spans) : undefined;
+
   return {
     requestId: `history-replay-${entry.savedAtMs}-${currentPostId}`,
     postId: currentPostId,
     verdict: entry.verdict,
     confidence: entry.confidence,
-    detectionSource: 'text',
+    detectionSource: entry.detectionSource ?? 'text',
     explanation: {
-      summary:
-        'Same author and text as a recent detection in your history — showing the saved result.',
+      summary: hasStoredSummary ? entry.textExplanationSummary! : summaryFallback,
+      ...(highlights ? { highlights } : {}),
+      ...(spans.length > 0 ? { highlightedSpans: spans } : {}),
       model: { name: 'history', version: '1' },
       cache: { hit: true, ttlRemainingMs: 0 },
       timing: { totalMs: 0, inferenceMs: 0 },
     },
+    ...(entry.imageResult ? { imageResult: entry.imageResult } : {}),
   };
 }
 
@@ -745,6 +799,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
+
+  const fingerprintReplay = await tryReplayFromHistoryByFingerprint(enrichedPost, tabId);
+  if (fingerprintReplay) {
+    await finalizeStats(fingerprintReplay.verdict === 'likely_ai');
+    return;
+  }
 
   const earlyLangUnsupported = tryAnalyzePostLanguageUnsupported(
     enrichedPost.postId,
@@ -978,7 +1038,7 @@ async function fetchInstagramPreviewImageCandidate(
 
     const mediaType: MediaType = url.pathname.includes('/reel/') ? 'video' : 'image';
     return {
-      imageId: `ig-og-${hashString(previewUrl)}`,
+      imageId: `ig-og-${fnv1a32Hex(previewUrl)}`,
       bytesBase64: '',
       srcUrl: previewUrl,
       mimeType: mimeTypeFromImageUrl(previewUrl),
@@ -1018,14 +1078,6 @@ function mimeTypeFromImageUrl(url: string): string {
   return 'image/jpeg';
 }
 
-function hashString(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
-}
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
 async function fetchImagesThrottled(

@@ -13,7 +13,14 @@
  */
 
 import browser from 'webextension-polyfill';
-import type { PostId, SiteId, Verdict } from '@src/types/domain';
+import type {
+  HighlightSpan,
+  ImageDetectionResult,
+  MediaType,
+  PostId,
+  SiteId,
+  Verdict,
+} from '@src/types/domain';
 
 export const HISTORY_KEY = 'detectionHistory';
 
@@ -39,6 +46,16 @@ export interface HistoryEntry {
   snippet: string;
   /** Poster handle for deduplication (e.g. Reddit username, X handle). Omitted on older entries. */
   authorHandle?: string;
+  /** Fingerprint from `computePostContentFingerprint` — reposts / same media under another id. */
+  contentFingerprint?: string;
+  /** Text model explanation summary (mixed and text-only). */
+  textExplanationSummary?: string;
+  /** Text model span highlights for tooltip replay. */
+  textHighlightedSpans?: HighlightSpan[];
+  /** Image sub-result for mixed posts (text primary + image panel). */
+  imageResult?: ImageDetectionResult;
+  /** Primary source when replaying (e.g. image-only runs). */
+  detectionSource?: 'text' | MediaType;
   /** AI probability score 0–1 returned by the backend. */
   confidence: number;
   /** Model verdict. */
@@ -119,6 +136,21 @@ export async function saveHistoryEntry(
       ...(normalizedEntry.authorHandle !== undefined && {
         authorHandle: normalizedEntry.authorHandle,
       }),
+      ...(normalizedEntry.contentFingerprint !== undefined && {
+        contentFingerprint: normalizedEntry.contentFingerprint,
+      }),
+      ...(normalizedEntry.textExplanationSummary !== undefined && {
+        textExplanationSummary: normalizedEntry.textExplanationSummary,
+      }),
+      ...(normalizedEntry.textHighlightedSpans !== undefined && {
+        textHighlightedSpans: normalizedEntry.textHighlightedSpans,
+      }),
+      ...(normalizedEntry.imageResult !== undefined && {
+        imageResult: normalizedEntry.imageResult,
+      }),
+      ...(normalizedEntry.detectionSource !== undefined && {
+        detectionSource: normalizedEntry.detectionSource,
+      }),
     };
   } else {
     current.push(normalizedEntry);
@@ -159,6 +191,7 @@ export async function togglePin(postId: PostId): Promise<void> {
  * @param text     - Full plain text of the post. Snippet is truncated to 200 chars.
  * @param confidence - AI probability 0–1.
  * @param verdict  - Model verdict string.
+ * @param replay   - Optional text/image payloads so history replay matches full mixed results.
  */
 export function buildHistoryEntry(
   postId: PostId,
@@ -168,6 +201,8 @@ export function buildHistoryEntry(
   confidence: number,
   verdict: Verdict,
   authorHandle: string,
+  contentFingerprint: string,
+  replay?: HistoryReplayExtras,
 ): Omit<HistoryEntry, 'pinned'> {
   return {
     postId,
@@ -178,7 +213,37 @@ export function buildHistoryEntry(
     verdict,
     savedAtMs: Date.now(),
     authorHandle: authorHandle.trim(),
+    contentFingerprint,
+    ...(replay?.textExplanationSummary !== undefined && {
+      textExplanationSummary: replay.textExplanationSummary,
+    }),
+    ...(replay?.textHighlightedSpans !== undefined && {
+      textHighlightedSpans: replay.textHighlightedSpans,
+    }),
+    ...(replay?.imageResult !== undefined && { imageResult: replay.imageResult }),
+    ...(replay?.detectionSource !== undefined && { detectionSource: replay.detectionSource }),
   };
+}
+
+/** Optional fields for replaying the same UI as a live `DetectionResponse`. */
+export type HistoryReplayExtras = {
+  textExplanationSummary?: string;
+  textHighlightedSpans?: HighlightSpan[];
+  imageResult?: ImageDetectionResult;
+  detectionSource?: 'text' | MediaType;
+};
+
+/** Same highlight rows as `mapToDetectionResponse` uses for `highlightedSpans`. */
+export function explanationHighlightsFromSpans(
+  spans: HighlightSpan[],
+): Array<{ start: number; end: number; reason: string }> {
+  return spans.map((s) => ({
+    start: s.start,
+    end: s.end,
+    reason:
+      'Segment influence (model attribution): ' +
+      `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
+  }));
 }
 
 /** Normalize handle for comparison across sites (u/, @, case). */
@@ -214,6 +279,25 @@ export function findMatchingHistoryEntry(
     const eh = normalizeAuthorHandle(e.authorHandle ?? '');
     if (!eh || eh !== h) continue;
     if (e.snippet !== snippet) continue;
+    if (!best || e.savedAtMs > best.savedAtMs) best = e;
+  }
+  return best;
+}
+
+/**
+ * Most recent entry with the same platform and content fingerprint.
+ * Legacy entries without `contentFingerprint` never match.
+ */
+export function findMatchingHistoryByFingerprint(
+  entries: HistoryEntry[],
+  platform: SiteId,
+  fingerprint: string,
+): HistoryEntry | null {
+  if (!fingerprint) return null;
+  let best: HistoryEntry | null = null;
+  for (const e of entries) {
+    if (e.platform !== platform) continue;
+    if (!e.contentFingerprint || e.contentFingerprint !== fingerprint) continue;
     if (!best || e.savedAtMs > best.savedAtMs) best = e;
   }
   return best;

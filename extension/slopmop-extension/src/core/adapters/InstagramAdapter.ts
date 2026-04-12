@@ -1,4 +1,5 @@
 import type { SiteAdapter } from "./SiteAdapter";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
 
 export class InstagramAdapter implements SiteAdapter {
   getSiteId(): string {
@@ -85,7 +86,7 @@ export class InstagramAdapter implements SiteAdapter {
       ? (mediaEl.currentSrc || mediaEl.src || "")
       : (mediaEl?.currentSrc || mediaEl?.getAttribute("src") || "");
     const base = `${permalink ?? ""}|${author}|${timestamp}|${text}|${mediaSrc}`;
-    return base ? `ig-fallback-${this.fnv1a(base)}` : null;
+    return base ? `ig-fallback-${fnv1a32Hex(base)}` : null;
   }
 
   getPermalink(postNode: Element): string | null {
@@ -276,7 +277,7 @@ export class InstagramAdapter implements SiteAdapter {
       commentNode.querySelector<HTMLAnchorElement>('a[href^="/"]')?.getAttribute("href") ?? "";
     const localIndex = this.getSiblingIndex(commentNode);
 
-    return `ig-comment-${this.fnv1a(`${postPermalink}|${authorHref}|${text}|${mediaSrc}|${localIndex}`)}`;
+    return `ig-comment-${fnv1a32Hex(`${postPermalink}|${authorHref}|${text}|${mediaSrc}|${localIndex}`)}`;
   }
 
   getCommentTextNode(commentNode: Element): HTMLElement | null {
@@ -570,12 +571,4 @@ export class InstagramAdapter implements SiteAdapter {
     );
   }
 
-  private fnv1a(input: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16);
-  }
 }

@@ -58,10 +58,12 @@ import {
   clearHistory,
   buildHistoryEntry,
   findMatchingHistoryEntry,
+  findMatchingHistoryByFingerprint,
   normalizeAuthorHandle,
   HISTORY_KEY,
   type HistoryEntry,
 } from '@src/utils/detectionHistory';
+import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
 import HistoryPage from '@src/pages/options/HistoryPage';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -74,6 +76,7 @@ function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     platform: 'reddit.com',
     snippet: "In today's fast-paced world, AI is everywhere.",
     authorHandle: 'someuser',
+    contentFingerprint: 'fp-default',
     confidence: 0.91,
     verdict: 'likely_ai',
     savedAtMs: Date.now(),
@@ -101,6 +104,7 @@ describe('History Storage', () => {
       0.87,
       'likely_ai',
       'coolauthor',
+      'fp-cool',
     );
     await saveHistoryEntry(entry);
 
@@ -115,6 +119,7 @@ describe('History Storage', () => {
     expect(saved!.confidence).toBe(0.87);                  // confidence
     expect(saved!.verdict).toBe('likely_ai');              // verdict
     expect(saved!.authorHandle).toBe('coolauthor');
+    expect(saved!.contentFingerprint).toBe('fp-cool');
   });
 
   it('auto-deletes entries older than 24 hours', () => {
@@ -292,6 +297,27 @@ describe('History match for replay', () => {
       { ...makeEntry(), authorHandle: undefined, snippet: text, postId: 'legacy' },
     ];
     expect(findMatchingHistoryEntry(entries, 'reddit.com', 'someuser', text)).toBeNull();
+  });
+
+  it('findMatchingHistoryByFingerprint returns the newest matching entry', () => {
+    const fp = 'same-fp';
+    const entries: HistoryEntry[] = [
+      makeEntry({ postId: 'a', contentFingerprint: fp, savedAtMs: 10 }),
+      makeEntry({ postId: 'b', contentFingerprint: fp, savedAtMs: 99 }),
+    ];
+    expect(findMatchingHistoryByFingerprint(entries, 'reddit.com', fp)?.postId).toBe('b');
+  });
+
+  it('computePostContentFingerprint is stable for same post shape', () => {
+    const post = {
+      site: 'reddit.com' as const,
+      text: { plain: '  hello world  ', languageHint: 'eng' },
+      images: [{ srcUrl: 'https://x/img.jpg', bytesBase64: '', mimeType: 'image/jpeg', imageId: '1' }],
+    };
+    const a = computePostContentFingerprint(post);
+    const b = computePostContentFingerprint(post);
+    expect(a).toBe(b);
+    expect(a.length).toBeGreaterThan(0);
   });
 });
 
