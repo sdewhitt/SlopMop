@@ -29,6 +29,8 @@ export interface Settings {
   /** Show Fact check on posts (ClaimReview search via backend). */
   factCheck: boolean;
   detectionLanguages: DetectionLanguageCode[];
+  /** Cache recent detection results for up to 24 hours. */
+  cacheRecentResults: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -46,4 +48,5 @@ export const defaultSettings: Settings = {
   highlightSegments: true,
   factCheck: true,
   detectionLanguages: ['eng', 'spa', 'fra'],
+  cacheRecentResults: true,
 };

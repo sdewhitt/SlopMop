@@ -51,6 +51,8 @@ export interface DetectionSettings {
    * Default all three. Empty disables all text detection.
    */
   detectionLanguages: DetectionLanguageCode[];
+  /** Cache recent detection results for up to 24 hours to avoid redundant /detect calls. */
+  cacheRecentResults: boolean;
 }
 
 /** Aggregate stats the extension reports back. */
@@ -98,6 +100,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     highlightSegments: true,
     factCheck: true,
     detectionLanguages: ['eng', 'spa', 'fra'],
+    cacheRecentResults: true,
   },
   stats: {
     postsScanned: 0,

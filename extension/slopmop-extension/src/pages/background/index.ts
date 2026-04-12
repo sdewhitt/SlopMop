@@ -63,6 +63,10 @@ import {
   clearHistory,
   togglePin,
 } from '@src/utils/detectionHistory';
+import {
+  getCachedDetection,
+  saveCachedDetection,
+} from '@src/utils/detectionCache';
 
 console.log('background script loaded');
 
@@ -629,6 +633,24 @@ async function maybeSaveToHistory(
   }
 }
 
+/**
+ * Saves a successful detection result to the 24-hour cache, guarded by incognito check.
+ * Failures are swallowed — cache is best-effort and must never affect detection.
+ */
+async function maybeSaveToCache(
+  postId: string,
+  response: DetectionResponse,
+  tabId: number,
+): Promise<void> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return;
+    await saveCachedDetection(postId, response);
+  } catch (err) {
+    console.error('[SlopMop] Failed to save cache entry', err);
+  }
+}
+
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
   await markScanStarted();
   let statsFinalized = false;
@@ -639,6 +661,30 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   };
 
   const settings = await getDetectionSettings();
+
+  if (settings.cacheRecentResults) {
+    try {
+      const cached = await getCachedDetection(post.postId);
+      if (cached) {
+        const cachedResponse: DetectionResponse = {
+          ...cached,
+          explanation: {
+            ...cached.explanation,
+            cache: { hit: true, ttlRemainingMs: 0 },
+          },
+        };
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: cachedResponse,
+        });
+        await finalizeStats(cachedResponse.verdict === 'likely_ai');
+        return;
+      }
+    } catch {
+      // Cache read failure — proceed with normal detection
+    }
+  }
+
   const enabledIso = expandUserDetectionLanguages(settings.detectionLanguages);
   const enabledLabel = formatDetectionLanguagesForUi(settings.detectionLanguages);
   let enrichedImages = post.images;
@@ -712,6 +758,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         payload: fakeResponse,
       });
       maybeSaveToHistory(enrichedPost, fakeResponse, tabId).catch(() => {});
+      maybeSaveToCache(enrichedPost.postId, fakeResponse, tabId).catch(() => {});
       await finalizeStats(fakeResponse.verdict === 'likely_ai');
     } else {
       await browser.tabs.sendMessage(tabId, {
@@ -743,6 +790,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
           payload: mapped,
         });
         maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
+        maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
         await finalizeStats(mapped.verdict === 'likely_ai');
         return;
       } catch {
@@ -833,6 +881,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         payload: imgResponse,
       });
       maybeSaveToHistory(enrichedPost, imgResponse, tabId).catch(() => {});
+      maybeSaveToCache(enrichedPost.postId, imgResponse, tabId).catch(() => {});
       await finalizeStats(imgResponse.verdict === 'likely_ai');
       return;
     }
@@ -872,6 +921,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       payload: mapped,
     });
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
+    maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
     const message = err instanceof Error ? err.message : 'network error';

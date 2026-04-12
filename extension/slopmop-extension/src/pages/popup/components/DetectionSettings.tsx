@@ -83,6 +83,12 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           label="Show Fact check"
           description="When on, Fact check appears beside Detect Now on posts (uses your API)"
         />
+        <Toggle
+          checked={settings.cacheRecentResults}
+          onChange={(v) => onUpdateSetting('cacheRecentResults', v)}
+          label="Cache recent results"
+          description="Reuse detection results for 24 hours instead of re-analyzing"
+        />
         <div className="py-2.5">
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Comment Scanning</p>
           <div className="flex gap-1.5">
