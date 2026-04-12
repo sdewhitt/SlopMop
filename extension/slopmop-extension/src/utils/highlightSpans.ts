@@ -50,9 +50,70 @@ export function sanitizeHighlightSpans(spans: HighlightSpan[], textLen: number):
     return merged;
 }
 
+const WORD_CHAR_RE = /^[\p{L}\p{N}\p{M}_]$/u;
+const HAS_ALNUM_RE = /[\p{L}\p{N}]/u;
+
+function isWordChar(ch: string): boolean {
+    return ch.length === 1 && WORD_CHAR_RE.test(ch);
+}
+
+function spanContainsLetterOrNumber(plain: string, start: number, end: number): boolean {
+    return HAS_ALNUM_RE.test(plain.slice(start, end));
+}
+
+/** Expand [start, end) to include full words (Unicode letters / numbers / marks / _). */
+function expandSpanToWordBounds(plain: string, start: number, end: number): { start: number; end: number } {
+    const textLen = plain.length;
+    let s = Math.max(0, Math.min(start, textLen));
+    let e = Math.max(0, Math.min(end, textLen));
+    if (s >= e) return { start: s, end: e };
+    while (s > 0 && isWordChar(plain[s - 1]!)) s--;
+    while (e < textLen && isWordChar(plain[e]!)) e++;
+    return { start: s, end: e };
+}
+
+/** Merge regions separated by exactly one ASCII space so the gap is highlighted too. */
+function bridgeSingleAsciiSpaceGaps(plain: string, spans: HighlightSpan[]): HighlightSpan[] {
+    if (spans.length <= 1) return spans;
+    const out: HighlightSpan[] = [];
+    let cur = { ...spans[0]! };
+    for (let i = 1; i < spans.length; i++) {
+        const next = spans[i]!;
+        const gapLen = next.start - cur.end;
+        if (gapLen === 1 && plain[cur.end] === ' ') {
+            cur.end = next.end;
+            cur.score = Math.max(cur.score, next.score);
+        } else {
+            out.push(cur);
+            cur = { ...next };
+        }
+    }
+    out.push(cur);
+    return out;
+}
+
+/**
+ * Single pipeline for on-page highlights: validate/merge API spans, snap to whole words,
+ * drop punctuation-only noise, re-merge, then bridge single-space gaps between words.
+ */
+export function prepareHighlightSpans(plainText: string, spans: HighlightSpan[]): HighlightSpan[] {
+    const base = sanitizeHighlightSpans(spans, plainText.length);
+    if (base.length === 0) return [];
+
+    const expanded: HighlightSpan[] = [];
+    for (const sp of base) {
+        const { start, end } = expandSpanToWordBounds(plainText, sp.start, sp.end);
+        if (start >= end || !spanContainsLetterOrNumber(plainText, start, end)) continue;
+        expanded.push({ start, end, score: sp.score });
+    }
+
+    const merged = sanitizeHighlightSpans(expanded, plainText.length);
+    return bridgeSingleAsciiSpaceGaps(plainText, merged);
+}
+
 export function buildHighlightedHtml(plainText: string, spans: HighlightSpan[]): string {
     if (plainText.length === 0) return '';
-    const merged = sanitizeHighlightSpans(spans, plainText.length);
+    const merged = prepareHighlightSpans(plainText, spans);
     if (merged.length === 0) return escapeHtml(plainText);
 
     let html = '';
@@ -178,7 +239,7 @@ function buildWrapOpsForRawRange(
  * Use when `canApplyInnerHtmlHighlights` is false (e.g. LinkedIn hashtags / mentions as `<a>`).
  */
 export function applyRichDomHighlightSpans(root: HTMLElement, plain: string, spans: HighlightSpan[]): boolean {
-    const merged = sanitizeHighlightSpans(spans, plain.length);
+    const merged = prepareHighlightSpans(plain, spans);
     if (merged.length === 0) return true;
 
     if (normalizePlainText(root.innerText ?? '') !== plain) return false;

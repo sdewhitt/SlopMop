@@ -10,7 +10,7 @@ import {
     buildHighlightedHtml,
     canApplyInnerHtmlHighlights,
     normalizePlainText,
-    sanitizeHighlightSpans,
+    prepareHighlightSpans,
 } from "@src/utils/highlightSpans";
  
 
@@ -766,7 +766,7 @@ export class OverlayRenderer {
         if (!plain || !el) return;
         if (normalizePlainText(el.innerText ?? "") !== plain) return;
 
-        const usable = sanitizeHighlightSpans(spans, plain.length);
+        const usable = prepareHighlightSpans(plain, spans);
         if (usable.length === 0) return;
 
         if (canApplyInnerHtmlHighlights(el)) {
