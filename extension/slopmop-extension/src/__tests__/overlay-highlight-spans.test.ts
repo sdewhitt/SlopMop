@@ -57,6 +57,7 @@ function setupPendingHighlightCase(
   return { renderer, detectSurface };
 }
 
+/** In-post highlights run through prepareHighlightSpans (word snap + single-space bridge) before innerHTML or rich DOM. */
 describe('OverlayRenderer + highlightedSpans', () => {
   const postId = 'post-highlight-1';
 
@@ -68,7 +69,7 @@ describe('OverlayRenderer + highlightedSpans', () => {
     document.body.innerHTML = '';
   });
 
-  it('innerHTML path: wraps exact range in post body and keeps verdict text on detect badge', () => {
+  it('innerHTML path: full-word range unchanged; verdict text on detect badge', () => {
     const plain = 'Hello world today.';
     const host = document.createElement('div');
     const textBody = document.createElement('div');
@@ -88,7 +89,7 @@ describe('OverlayRenderer + highlightedSpans', () => {
     expect(detectSurface.textContent).not.toContain('Detect Now');
   });
 
-  it('rich DOM path (<a> in body): highlight targets correct range; verdict badge unchanged', () => {
+  it('rich DOM path (<a> in body): full-word span wraps link text; verdict badge unchanged', () => {
     const plain = 'Hello world today.';
     const host = document.createElement('div');
     const textBody = document.createElement('div');
