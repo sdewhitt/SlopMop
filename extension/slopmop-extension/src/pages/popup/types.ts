@@ -29,6 +29,13 @@ export interface Settings {
   highlightSegments: boolean;
   /** Show Fact check on posts (ClaimReview search via backend). */
   factCheck: boolean;
+  /** When on, automatic scanning is off and its toggle is locked until this is turned off. */
+  lowBatteryMode: boolean;
+  /**
+   * When on, low-battery mode applies automatically while unplugged and below the low threshold;
+   * clears when charging or above the resume threshold (saved scanning prefs unchanged).
+   */
+  lowBatteryModeAutoWhenBatteryLow: boolean;
   detectionLanguages: DetectionLanguageCode[];
 }
 
@@ -47,5 +54,7 @@ export const defaultSettings: Settings = {
   accessibilityMode: false,
   highlightSegments: true,
   factCheck: true,
+  lowBatteryMode: false,
+  lowBatteryModeAutoWhenBatteryLow: false,
   detectionLanguages: ['eng', 'spa', 'fra'],
 };

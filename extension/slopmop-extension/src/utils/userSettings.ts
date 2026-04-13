@@ -49,6 +49,18 @@ export interface DetectionSettings {
   /** Show Fact check next to Detect Now on posts (manual / eligible feeds). */
   factCheck: boolean;
   /**
+   * Manual power-saving: when on, automatic scanning is forced off and the Automatic Scanning
+   * toggle is disabled until you turn this off. The extension does not overwrite this when it
+   * automatically pauses scanning for low battery while unplugged.
+   */
+  lowBatteryMode: boolean;
+  /**
+   * When on, low-battery mode behavior applies automatically while unplugged and below the low
+   * battery threshold; clears when charging or above the resume threshold. Saved scanning prefs
+   * are not overwritten (same pattern as automatic low-battery pause).
+   */
+  lowBatteryModeAutoWhenBatteryLow: boolean;
+  /**
    * Text detection runs only when franc's top guess is among these (plus Scots when English is on).
    * Default all three. Empty disables all text detection.
    */
@@ -101,6 +113,8 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     accessibilityMode: false,
     highlightSegments: true,
     factCheck: true,
+    lowBatteryMode: false,
+    lowBatteryModeAutoWhenBatteryLow: false,
     detectionLanguages: ['eng', 'spa', 'fra'],
   },
   stats: {
@@ -109,3 +123,17 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     postsProcessing: 0,
   },
 };
+
+/** Merge partial stored settings with defaults (used by background, content, battery sync). */
+export function mergeDetectionSettingsFromStored(raw: unknown): DetectionSettings {
+  const saved = (raw ?? {}) as Partial<DetectionSettings>;
+  return {
+    ...defaultUserSettings.settings,
+    ...saved,
+    platforms: {
+      ...defaultUserSettings.settings.platforms,
+      ...(saved.platforms ?? {}),
+    },
+    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
+  };
+}

@@ -13,6 +13,10 @@ const TEXT_LANG_OPTIONS: { code: DetectionLanguageCode; label: string }[] = [
 interface DetectionSettingsProps {
   settings: Settings;
   onUpdateSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+  /** When true, automatic scanning is paused by low battery (saved toggle may still be on). */
+  batteryThrottleActive?: boolean;
+  /** Local-only: auto low-battery mode is active (same thresholds as automatic pause). */
+  batteryAutoLowBatteryActive?: boolean;
 }
 
 const SCAN_COMMENTS_LABELS: Record<Settings['scanComments'], string> = {
@@ -27,7 +31,14 @@ const BADGE_SIZE_LABELS: Record<Settings['badgeSize'], string> = {
   large: 'Large',
 };
 
-export default function DetectionSettings({ settings, onUpdateSetting }: DetectionSettingsProps) {
+export default function DetectionSettings({
+  settings,
+  onUpdateSetting,
+  batteryThrottleActive = false,
+  batteryAutoLowBatteryActive = false,
+}: DetectionSettingsProps) {
+  const effectiveLowBattery = settings.lowBatteryMode || batteryAutoLowBatteryActive;
+
   return (
     <section>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detection</p>
@@ -78,11 +89,65 @@ export default function DetectionSettings({ settings, onUpdateSetting }: Detecti
           description="Analyze images in posts (coming soon)"
         />
         <Toggle
-          checked={settings.automaticScanning}
+          checked={effectiveLowBattery}
+          disabled={batteryAutoLowBatteryActive && !settings.lowBatteryMode}
+          onChange={(v) => onUpdateSetting('lowBatteryMode', v)}
+          label="Low battery mode"
+          description="Manual power saving: turns off automatic scanning until you turn this off. Separate from automatic pause when the battery is low (see banner below)."
+        />
+        <div className="px-3 py-2 -mt-1 border-b border-gray-200 dark:border-gray-700">
+          <label className="flex items-start gap-2 cursor-pointer text-sm text-gray-800 dark:text-gray-200">
+            <input
+              type="checkbox"
+              checked={settings.lowBatteryModeAutoWhenBatteryLow}
+              onChange={(e) => onUpdateSetting('lowBatteryModeAutoWhenBatteryLow', e.target.checked)}
+              className="mt-0.5 rounded border-gray-300 dark:border-gray-600"
+            />
+            <span>
+              <span className="font-medium">Turn on automatically when the battery is low</span>
+              <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                Uses the same thresholds as automatic pause below. Your saved Automatic Scanning preference is not
+                changed; when charge is above the resume threshold (or you plug in), behavior returns to your saved
+                settings.
+              </span>
+            </span>
+          </label>
+          {batteryAutoLowBatteryActive && !settings.lowBatteryMode && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 pl-6 leading-snug" role="status">
+              Low battery mode is on automatically until the battery recovers or you turn off the option above.
+            </p>
+          )}
+        </div>
+        <Toggle
+          checked={effectiveLowBattery ? false : settings.automaticScanning}
+          disabled={effectiveLowBattery}
           onChange={(v) => onUpdateSetting('automaticScanning', v)}
           label="Automatic Scanning"
           description="When off, posts show a Detect Now button"
         />
+        {batteryThrottleActive && settings.automaticScanning && !effectiveLowBattery && (
+          <div
+            className="px-3 py-2.5 bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200/80 dark:border-amber-600/40"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-start gap-2">
+              <span
+                className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                aria-hidden
+              />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-amber-950 dark:text-amber-100">
+                  Power saving mode
+                </p>
+                <p className="mt-1 text-[11px] leading-snug text-amber-900/90 dark:text-amber-100/85">
+                  Automatic detection is paused because the battery is low and the device is not charging. Posts
+                  will show Detect Now until you plug in or the battery level rises above the resume threshold.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
         <Toggle
           checked={settings.factCheck}
           onChange={(v) => onUpdateSetting('factCheck', v)}

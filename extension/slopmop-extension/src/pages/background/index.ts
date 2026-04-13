@@ -47,6 +47,7 @@ import type {
 } from '@src/types/domain';
 import {
   defaultUserSettings,
+  mergeDetectionSettingsFromStored,
   normalizeDetectionLanguages,
   type DetectionSettings,
 } from '@src/utils/userSettings';
@@ -57,12 +58,26 @@ import {
   validateHost,
 } from '@src/utils/disabledWebsites';
 import {
+  applyBatteryThrottleToSettings,
+  applyLowBatteryModeToSettings,
+  BATTERY_THROTTLE_ACTIVE_KEY,
+  BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+} from '@src/utils/batteryThrottle';
+import {
   buildHistoryEntry,
   saveHistoryEntry,
   getHistory,
   clearHistory,
   togglePin,
+  findMatchingHistoryEntry,
+  findMatchingHistoryByFingerprint,
+  explanationHighlightsFromSpans,
+  type HistoryEntry,
 } from '@src/utils/detectionHistory';
+import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
+import { fnv1a32Hex } from '@src/utils/fnv1aHash';
+import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
+import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
 
 console.log('background script loaded');
 
@@ -81,17 +96,16 @@ type StoredStats = {
 let statsWriteChain: Promise<void> = Promise.resolve();
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
-  const stored = await browser.storage.local.get('settings');
-  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
-  return {
-    ...defaultUserSettings.settings,
-    ...saved,
-    platforms: {
-      ...defaultUserSettings.settings.platforms,
-      ...(saved.platforms ?? {}),
-    },
-    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
-  };
+  const stored = await browser.storage.local.get([
+    'settings',
+    BATTERY_THROTTLE_ACTIVE_KEY,
+    BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+  ]);
+  const base = mergeDetectionSettingsFromStored(stored.settings);
+  const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
+  const autoLowBatteryOn = stored[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode || autoLowBatteryOn);
+  return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
 }
 
 function normalizeStoredStats(stored: Record<string, unknown>): StoredStats {
@@ -200,6 +214,10 @@ async function drainAnalysisQueue(): Promise<void> {
 
 initFirebase();
 
+void initBatteryThrottleController().catch((err) => {
+  console.error('[SlopMop] Battery throttle controller failed to start', err);
+});
+
 // Sync the current Firebase user to browser.storage.local so the
 // content-script React tree can read auth state reactively.
 if (auth) {
@@ -228,10 +246,6 @@ if (auth) {
   });
 }
 
-// Disable the default popup so that action.onClicked fires.
-// The popup page is kept in the manifest only so CRXJS bundles it;
-// it's actually rendered by the content script directly in the page DOM.
-browser.action.setPopup({ popup: '' });
 initializeLocalStats().catch((error) => {
   console.error('[SlopMop] Failed to initialize detection stats', error);
 });
@@ -615,6 +629,7 @@ async function maybeSaveToHistory(
   try {
     const tab = await browser.tabs.get(tabId);
     if (tab.incognito) return;
+    const contentFingerprint = computePostContentFingerprint(post);
     const entry = buildHistoryEntry(
       post.postId,
       post.url,
@@ -622,6 +637,14 @@ async function maybeSaveToHistory(
       post.text?.plain ?? '',
       response.confidence,
       response.verdict,
+      post.domContext?.authorHandle ?? '',
+      contentFingerprint,
+      {
+        textExplanationSummary: response.explanation.summary,
+        textHighlightedSpans: response.explanation.highlightedSpans,
+        imageResult: response.imageResult,
+        detectionSource: response.detectionSource,
+      },
     );
     await saveHistoryEntry(entry);
   } catch (err) {
@@ -629,7 +652,101 @@ async function maybeSaveToHistory(
   }
 }
 
+/**
+ * If history has the same platform, author handle, and text snippet as a prior detection,
+ * resend that verdict without calling the API (no stats / queue impact).
+ */
+async function tryReplayFromHistory(post: NormalizedPostContent, tabId: number): Promise<boolean> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return false;
+
+    const plainText = post.text?.plain ?? '';
+    if (post.contentType === 'IMAGE' && !plainText.trim()) return false;
+
+    const entries = await getHistory();
+    const match = findMatchingHistoryEntry(
+      entries,
+      post.site,
+      post.domContext?.authorHandle ?? '',
+      plainText,
+    );
+    if (!match) return false;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: false });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After media is resolved: replay if content fingerprint matches a prior run (reposts / stolen posts).
+ */
+async function tryReplayFromHistoryByFingerprint(
+  post: NormalizedPostContent,
+  tabId: number,
+): Promise<HistoryEntry | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return null;
+
+    const fp = computePostContentFingerprint(post);
+    const entries = await getHistory();
+    const match = findMatchingHistoryByFingerprint(entries, post.site, fp);
+    if (!match) return null;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: true });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return match;
+  } catch {
+    return null;
+  }
+}
+
+function buildDetectionResponseFromHistory(
+  entry: HistoryEntry,
+  currentPostId: string,
+  opts?: { fingerprint?: boolean },
+): DetectionResponse {
+  const viaFingerprint = opts?.fingerprint === true;
+  const summaryFallback = viaFingerprint
+    ? 'Same content fingerprint as a recent detection in your history — showing the saved result.'
+    : 'Same author and text as a recent detection in your history — showing the saved result.';
+  const hasStoredSummary = Boolean(entry.textExplanationSummary?.trim());
+  const spans = entry.textHighlightedSpans ?? [];
+  const highlights =
+    spans.length > 0 ? explanationHighlightsFromSpans(spans) : undefined;
+
+  return {
+    requestId: `history-replay-${entry.savedAtMs}-${currentPostId}`,
+    postId: currentPostId,
+    verdict: entry.verdict,
+    confidence: entry.confidence,
+    detectionSource: entry.detectionSource ?? 'text',
+    explanation: {
+      summary: hasStoredSummary ? entry.textExplanationSummary! : summaryFallback,
+      ...(highlights ? { highlights } : {}),
+      ...(spans.length > 0 ? { highlightedSpans: spans } : {}),
+      model: { name: 'history', version: '1' },
+      cache: { hit: true, ttlRemainingMs: 0 },
+      timing: { totalMs: 0, inferenceMs: 0 },
+    },
+    ...(entry.imageResult ? { imageResult: entry.imageResult } : {}),
+  };
+}
+
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  const replayed = await tryReplayFromHistory(post, tabId);
+  if (replayed) return;
+
   await markScanStarted();
   let statsFinalized = false;
   const finalizeStats = async (aiDetected: boolean) => {
@@ -682,6 +799,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
+
+  const fingerprintReplay = await tryReplayFromHistoryByFingerprint(enrichedPost, tabId);
+  if (fingerprintReplay) {
+    await finalizeStats(fingerprintReplay.verdict === 'likely_ai');
+    return;
+  }
 
   const earlyLangUnsupported = tryAnalyzePostLanguageUnsupported(
     enrichedPost.postId,
@@ -745,8 +868,16 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
         await finalizeStats(mapped.verdict === 'likely_ai');
         return;
-      } catch {
-        // No text fallback for image-only posts
+      } catch (imgErr) {
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_ERROR',
+          payload: {
+            postId: enrichedPost.postId,
+            message: formatDetectionFetchError(imgErr),
+          },
+        });
+        await finalizeStats(false);
+        return;
       }
     }
     await browser.tabs.sendMessage(tabId, {
@@ -874,10 +1005,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'network error';
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
-      payload: { postId: enrichedPost.postId, message },
+      payload: { postId: enrichedPost.postId, message: formatDetectionFetchError(err) },
     });
     await finalizeStats(false);
   }
@@ -908,7 +1038,7 @@ async function fetchInstagramPreviewImageCandidate(
 
     const mediaType: MediaType = url.pathname.includes('/reel/') ? 'video' : 'image';
     return {
-      imageId: `ig-og-${hashString(previewUrl)}`,
+      imageId: `ig-og-${fnv1a32Hex(previewUrl)}`,
       bytesBase64: '',
       srcUrl: previewUrl,
       mimeType: mimeTypeFromImageUrl(previewUrl),
@@ -948,14 +1078,6 @@ function mimeTypeFromImageUrl(url: string): string {
   return 'image/jpeg';
 }
 
-function hashString(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
-}
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
 async function fetchImagesThrottled(
@@ -1169,19 +1291,3 @@ function mapToImageDetectionResult(
   };
 }
 
-/**
- * When the extension icon is clicked, send a toggle message to the content
- * script in the active tab. If the content script isn't available (e.g. on
- * chrome:// or about: pages), fall back to opening the popup in a new tab.
- */
-browser.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
-
-  try {
-    await browser.tabs.sendMessage(tab.id, { type: 'SLOPMOP_TOGGLE_PANEL' });
-  } catch {
-    // Content script not available on this page — open as a standalone tab
-    const popupUrl = browser.runtime.getURL('src/pages/popup/index.html');
-    await browser.tabs.create({ url: popupUrl });
-  }
-});

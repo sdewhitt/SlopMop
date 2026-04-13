@@ -25,7 +25,12 @@ export default mergeConfig(
     ],
     build: {
       ...baseBuildOptions,
-      outDir
+      outDir,
+      rollupOptions: {
+        input: {
+          offscreenBattery: resolve(__dirname, 'src/pages/offscreen/battery.html'),
+        },
+      },
     },
   })
 )
