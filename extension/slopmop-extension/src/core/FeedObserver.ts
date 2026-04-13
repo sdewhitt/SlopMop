@@ -470,6 +470,13 @@ export class FeedObserver {
         this.pendingAnalyzeTimers.delete(postId);
     }
 
+    // Keep the post in-flight but refresh timeout after a preliminary update.
+    noteAnalyzeProgress(postId: string): void {
+        if (!this.inFlightAnalyzePostIds.has(postId)) return;
+        if (this.timedOutPostIds.has(postId)) return;
+        this.startAnalyzeTimeout(postId);
+    }
+
     // returns true when the caller should render result/error for this post.
     // returns false for stale errors (no active request) or for timed out posts.
     markAnalyzeCompleted(postId: string, outcome: "result" | "error" = "result"): boolean {

@@ -119,16 +119,21 @@ export interface DetectImageResponse {
     confidence: number;
     label: string;
     explanation: string;
+    model_variant?: ImageModelVariant;
 }
+
+export type ImageModelVariant = 'mini' | 'full';
 
 async function detectImageOnce(
     baseUrl: string,
     imageBase64: string,
     mimeType: string,
+    modelVariant: ImageModelVariant,
 ): Promise<DetectImageResponse> {
     const requestBody = {
         image_base64: imageBase64,
         mime_type: mimeType,
+        model_variant: modelVariant,
     };
 
     const response = await fetch(baseUrl + "/detect-image", {
@@ -209,15 +214,22 @@ export async function factCheckText(text: string): Promise<FactCheckResponse> {
 export async function detectImage(
     imageBase64: string,
     mimeType: string = "image/jpeg",
+    modelVariant: ImageModelVariant = 'mini',
 ): Promise<DetectImageResponse> {
     const baseUrl: string = getBaseUrl();
     let lastError: unknown;
     const maxAttempts = 1 + DETECTION_MAX_RETRIES;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            return await detectImageOnce(baseUrl, imageBase64, mimeType);
+            return await detectImageOnce(baseUrl, imageBase64, mimeType, modelVariant);
         } catch (e) {
             lastError = e;
+            if (
+                e instanceof Error
+                && /full image model is not available/i.test(e.message)
+            ) {
+                break;
+            }
             if (attempt < maxAttempts) {
                 await sleep(RETRY_DELAY_MS);
             }

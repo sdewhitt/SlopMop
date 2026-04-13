@@ -70,8 +70,18 @@ def test_detect_image_success():
     assert "confidence" in data
     assert "label" in data
     assert "explanation" in data
+    assert data["model_variant"] == "mini"
     assert data["label"] in ["ai", "human"]
     assert 0.0 <= data["confidence"] <= 1.0
+
+
+def test_detect_image_rejects_invalid_model_variant():
+    b64 = _make_test_image_base64()
+    response = client.post(
+        "/detect-image",
+        json={"image_base64": b64, "model_variant": "largest"},
+    )
+    assert response.status_code == 422
 
 
 def test_detect_image_rejects_empty_base64():
