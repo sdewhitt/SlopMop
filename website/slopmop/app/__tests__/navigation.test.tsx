@@ -21,11 +21,13 @@ describe('Home', () => {
         const navbar = screen.getByRole('navigation')
 
         const installLink = within(navbar).getByRole('link', { name: /Install/i })
+        const reportLink = within(navbar).getByRole('link', { name: /Report/i })
         const faqLink = within(navbar).getByRole('link', { name: /FAQ/i })
         const signupLink = within(navbar).getByRole('link', { name: /Sign Up/i })
         const homeLink = within(navbar).getByRole('link', { name: /SlopMop/i })
 
         expect(installLink).toHaveAttribute('href', '/install')
+        expect(reportLink).toHaveAttribute('href', '/report')
         expect(faqLink).toHaveAttribute('href', '/#faq')
         expect(signupLink).toHaveAttribute('href', '/signup')
         expect(homeLink).toHaveAttribute('href', '/')
