@@ -21,4 +21,20 @@ describe('ExtensionMessageBus fact-check', () => {
       text: 'Hello world. Second sentence.',
     });
   });
+
+  it('sendFactCheck includes optional site + contentFingerprint', async () => {
+    const send = vi.mocked(chrome.runtime.sendMessage);
+    const bus = new ExtensionMessageBus();
+    await bus.sendFactCheck('post-1', 'Hello', {
+      site: 'reddit.com',
+      contentFingerprint: 'fp-text-only-1',
+    });
+    expect(send).toHaveBeenCalledWith({
+      type: 'SLOPMOP_FACT_CHECK',
+      postId: 'post-1',
+      text: 'Hello',
+      site: 'reddit.com',
+      contentFingerprint: 'fp-text-only-1',
+    });
+  });
 });
