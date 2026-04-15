@@ -40,6 +40,7 @@ export default function Options() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
+  const [currentUid, setCurrentUid] = useState<string | null>(null);
 
   const mergeSettings = (raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -54,14 +55,33 @@ export default function Options() {
   });
 
   useEffect(() => {
-    browser.storage.local.get(['settings', 'simpleMode']).then((result) => {
+    browser.storage.local.get(['settings', 'simpleMode', 'slopmopUser']).then((result) => {
       if (result.settings) {
         setSettings(mergeSettings(result.settings as Partial<Settings>));
       }
       if (typeof result.simpleMode === 'boolean') {
         setSimpleMode(result.simpleMode);
       }
+      const userObj = result.slopmopUser as { uid?: string } | null;
+      if (userObj?.uid) setCurrentUid(userObj.uid);
     });
+  }, []);
+
+  // Keep currentUid in sync with auth state changes pushed by the background.
+  useEffect(() => {
+    const handler = (changes: Record<string, browser.Storage.StorageChange>) => {
+      if (!('slopmopUser' in changes)) return;
+      const u = changes.slopmopUser.newValue as { uid?: string } | null;
+      setCurrentUid(u?.uid ?? null);
+
+      // Sync simpleMode when a new account loads (background already wrote flat key).
+      const smChange = changes.simpleMode;
+      if (smChange !== undefined && typeof smChange.newValue === 'boolean') {
+        setSimpleMode(smChange.newValue);
+      }
+    };
+    browser.storage.onChanged.addListener(handler);
+    return () => browser.storage.onChanged.removeListener(handler);
   }, []);
 
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -69,6 +89,11 @@ export default function Options() {
       const next = { ...prev, [key]: value };
       browser.storage.local.set({ settings: next });
       if (key === 'enabled') browser.storage.local.set({ enabled: value });
+      // Persist accessibilityMode under a per-account namespaced key so it
+      // is restored correctly when this account logs back in.
+      if (key === 'accessibilityMode' && currentUid) {
+        browser.storage.local.set({ [`accessibilityMode:${currentUid}`]: value });
+      }
       flashSaved();
       return next;
     });
@@ -96,7 +121,12 @@ export default function Options() {
   const resetSettings = () => {
     setSettings(defaultSettings);
     setSimpleMode(false);
-    browser.storage.local.set({ settings: defaultSettings, simpleMode: false });
+    const toSet: Record<string, unknown> = { settings: defaultSettings, simpleMode: false };
+    if (currentUid) {
+      toSet[`simpleMode:${currentUid}`] = false;
+      toSet[`accessibilityMode:${currentUid}`] = false;
+    }
+    browser.storage.local.set(toSet);
     flashSaved();
   };
 
@@ -208,7 +238,10 @@ export default function Options() {
               checked={simpleMode}
               onChange={(v) => {
                 setSimpleMode(v);
-                browser.storage.local.set({ simpleMode: v });
+                // Write to flat key (live) + namespaced key (persisted per-account).
+                const toSet: Record<string, unknown> = { simpleMode: v };
+                if (currentUid) toSet[`simpleMode:${currentUid}`] = v;
+                browser.storage.local.set(toSet);
                 flashSaved();
               }}
               label="Simple Mode"
