@@ -58,6 +58,8 @@ export interface DetectionStats {
   postsScanned: number;
   aiDetected: number;
   postsProcessing: number;
+  /** Detection count keyed by platform hostname, e.g. { "reddit.com": 12 }. */
+  platformCounts: Record<string, number>;
 }
 
 /** Root document shape stored at `users/{uid}` in Firestore. */
@@ -103,5 +105,6 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     postsScanned: 0,
     aiDetected: 0,
     postsProcessing: 0,
+    platformCounts: {},
   },
 };
