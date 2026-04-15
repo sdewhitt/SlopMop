@@ -75,15 +75,22 @@ type StoredStats = {
   postsScanned: number;
   aiDetected: number;
   postsProcessing: number;
+  /** Detection count keyed by platform hostname, e.g. { "reddit.com": 12 }. */
+  platformCounts: Record<string, number>;
 };
 
-/** Returns the namespaced storage keys for a user's stats. */
+/** Returns the namespaced storage keys for a user's scalar stats. */
 function statsKeys(uid: string) {
   return {
     postsScanned: `postsScanned:${uid}`,
     aiDetected: `aiDetected:${uid}`,
     postsProcessing: `postsProcessing:${uid}`,
   };
+}
+
+/** Returns the namespaced storage key for a user's per-platform counts JSON blob. */
+function platformCountsKey(uid: string): string {
+  return `platformCounts:${uid}`;
 }
 
 let statsWriteChain: Promise<void> = Promise.resolve();
@@ -104,11 +111,13 @@ async function getDetectionSettings(): Promise<DetectionSettings> {
 
 async function readStoredStats(uid: string): Promise<StoredStats> {
   const keys = statsKeys(uid);
-  const stored = await browser.storage.local.get(Object.values(keys));
+  const pcKey = platformCountsKey(uid);
+  const stored = await browser.storage.local.get([...Object.values(keys), pcKey]);
   return {
     postsScanned: typeof stored[keys.postsScanned] === 'number' ? (stored[keys.postsScanned] as number) : 0,
     aiDetected: typeof stored[keys.aiDetected] === 'number' ? (stored[keys.aiDetected] as number) : 0,
     postsProcessing: typeof stored[keys.postsProcessing] === 'number' ? (stored[keys.postsProcessing] as number) : 0,
+    platformCounts: (stored[pcKey] as Record<string, number> | undefined) ?? {},
   };
 }
 
@@ -118,9 +127,15 @@ async function persistStats(uid: string, stats: StoredStats): Promise<void> {
     [keys.postsScanned]: stats.postsScanned,
     [keys.aiDetected]: stats.aiDetected,
     [keys.postsProcessing]: stats.postsProcessing,
+    [platformCountsKey(uid)]: stats.platformCounts,
   });
   try {
-    await updateDetectionStats(uid, stats);
+    await updateDetectionStats(uid, {
+      postsScanned: stats.postsScanned,
+      aiDetected: stats.aiDetected,
+      postsProcessing: stats.postsProcessing,
+      platformCounts: stats.platformCounts,
+    });
   } catch (error) {
     console.error('[SlopMop] Failed to sync detection stats', error);
   }
@@ -144,20 +159,32 @@ function queueStatsUpdate(mutator: (stats: StoredStats) => StoredStats): Promise
 
 async function markScanStarted(): Promise<void> {
   await queueStatsUpdate((stats) => ({
+    ...stats,
     postsScanned: stats.postsScanned + 1,
-    aiDetected: stats.aiDetected,
     postsProcessing: stats.postsProcessing + 1,
   })).catch((error) => {
     console.error('[SlopMop] Failed to mark scan started', error);
   });
 }
 
-async function markScanFinished(aiDetected: boolean): Promise<void> {
-  await queueStatsUpdate((stats) => ({
-    postsScanned: stats.postsScanned,
-    aiDetected: stats.aiDetected + (aiDetected ? 1 : 0),
-    postsProcessing: Math.max(0, stats.postsProcessing - 1),
-  })).catch((error) => {
+/**
+ * Called when a detection finishes. Increments aiDetected on a positive verdict,
+ * decrements postsProcessing, and bumps the per-platform count.
+ *
+ * @param aiDetected - true when the verdict is 'likely_ai'
+ * @param site       - platform hostname e.g. "reddit.com"
+ */
+async function markScanFinished(aiDetected: boolean, site: string): Promise<void> {
+  await queueStatsUpdate((stats) => {
+    const platformCounts = { ...stats.platformCounts };
+    platformCounts[site] = (platformCounts[site] ?? 0) + 1;
+    return {
+      ...stats,
+      aiDetected: stats.aiDetected + (aiDetected ? 1 : 0),
+      postsProcessing: Math.max(0, stats.postsProcessing - 1),
+      platformCounts,
+    };
+  }).catch((error) => {
     console.error('[SlopMop] Failed to mark scan finished', error);
   });
 }
@@ -169,6 +196,17 @@ async function initializeLocalStats(): Promise<void> {
   // In-flight scans cannot survive a background-script restart — reset to 0.
   if (current.postsProcessing !== 0) {
     await persistStats(uid, { ...current, postsProcessing: 0 });
+  }
+}
+
+/** Returns true when the given tab is an incognito/private-browsing tab. */
+async function isTabIncognito(tabId: number): Promise<boolean> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    return tab.incognito;
+  } catch {
+    // Tab may already be closed; treat as non-incognito so errors don't silently suppress stats.
+    return false;
   }
 }
 
@@ -215,6 +253,23 @@ if (auth) {
       try {
         const userData = await getOrCreateUserSettings(firebaseUser.uid);
         const keys = statsKeys(firebaseUser.uid);
+
+        // Load per-account UI preferences (simpleMode, accessibilityMode) that are
+        // stored locally under namespaced keys so they don't bleed across accounts.
+        const uiPrefKeys = [
+          `simpleMode:${firebaseUser.uid}`,
+          `accessibilityMode:${firebaseUser.uid}`,
+        ];
+        const uiPrefs = await browser.storage.local.get(uiPrefKeys);
+        const simpleMode =
+          typeof uiPrefs[`simpleMode:${firebaseUser.uid}`] === 'boolean'
+            ? (uiPrefs[`simpleMode:${firebaseUser.uid}`] as boolean)
+            : false;
+        const accessibilityMode =
+          typeof uiPrefs[`accessibilityMode:${firebaseUser.uid}`] === 'boolean'
+            ? (uiPrefs[`accessibilityMode:${firebaseUser.uid}`] as boolean)
+            : false;
+
         await browser.storage.local.set({
           settings: {
             ...defaultUserSettings.settings,
@@ -223,10 +278,13 @@ if (auth) {
               ...defaultUserSettings.settings.platforms,
               ...(userData.settings.platforms ?? {}),
             },
+            accessibilityMode,
           },
+          simpleMode,
           [keys.postsScanned]: userData.stats.postsScanned ?? 0,
           [keys.aiDetected]: userData.stats.aiDetected ?? 0,
           [keys.postsProcessing]: 0,
+          [platformCountsKey(firebaseUser.uid)]: userData.stats.platformCounts ?? {},
         });
       } catch (e) {
         console.error('[SlopMop] Failed to load user settings/stats on login', e);
@@ -244,8 +302,10 @@ if (auth) {
       // On logout: reset the shared settings key and clear transient results.
       // Namespaced stats (postsScanned:<uid> etc.) are left intact in storage
       // so they're still there if the user logs back in.
+      // Reset flat UI-preference keys so the next account starts clean.
       await browser.storage.local.set({
         settings: defaultUserSettings.settings,
+        simpleMode: false,
       });
       await browser.storage.local.remove([
         'slopmopUser',
@@ -468,7 +528,16 @@ async function handleUpdateDetectionSettings(
 
 async function handleResetStats(uid: string): Promise<MessageResponse> {
   try {
+    // Reset Firestore first — if this fails, don't touch local storage.
     await resetStats(uid);
+    // Clear local namespaced stat keys so the popup sees zeroed values immediately.
+    const keys = statsKeys(uid);
+    await browser.storage.local.set({
+      [keys.postsScanned]: 0,
+      [keys.aiDetected]: 0,
+      [keys.postsProcessing]: 0,
+      [platformCountsKey(uid)]: {},
+    });
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -662,12 +731,29 @@ async function maybeSaveToHistory(
 }
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  // Kick off the incognito check in parallel so it never blocks detection from starting.
+  // browser.tabs.get can stall in a freshly-awakened MV3 service worker context; by
+  // the time finalizeStats is called the promise will have long since resolved.
+  const incognitoPromise = isTabIncognito(tabId);
+
   await markScanStarted();
+
   let statsFinalized = false;
   const finalizeStats = async (aiDetected: boolean) => {
     if (statsFinalized) return;
     statsFinalized = true;
-    await markScanFinished(aiDetected);
+    const incognito = await incognitoPromise;
+    if (incognito) {
+      // Undo the postsScanned / postsProcessing increments from markScanStarted — incognito
+      // scans must leave no trace in stats.
+      await queueStatsUpdate((s) => ({
+        ...s,
+        postsScanned: Math.max(0, s.postsScanned - 1),
+        postsProcessing: Math.max(0, s.postsProcessing - 1),
+      })).catch(() => {});
+    } else {
+      await markScanFinished(aiDetected, post.site);
+    }
   };
 
   const settings = await getDetectionSettings();

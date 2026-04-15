@@ -139,6 +139,7 @@ export default function Popup() {
 
     setSettings(defaultSettings);
     setEnabled(defaultSettings.enabled);
+    setSimpleMode(false);
     setDetectResponse(null);
     setLanguageUnsupported(null);
     setFactCheckItems(null);
@@ -163,8 +164,21 @@ export default function Popup() {
     if (!user) return;
     try {
       const remote = await getOrCreateUserSettings(user.uid);
-      const local = await browser.storage.local.get(['settings']);
-      const localSettings = local.settings as Partial<Settings> | undefined;
+      const local = await browser.storage.local.get([
+        'settings',
+        `simpleMode:${user.uid}`,
+        `accessibilityMode:${user.uid}`,
+      ]);
+      // Restore per-account UI preferences from their namespaced keys.
+      const savedSimpleMode = local[`simpleMode:${user.uid}`];
+      if (typeof savedSimpleMode === 'boolean') {
+        setSimpleMode(savedSimpleMode);
+      }
+      const savedAccessibilityMode = local[`accessibilityMode:${user.uid}`];
+      const accessibilityMode =
+        typeof savedAccessibilityMode === 'boolean'
+          ? savedAccessibilityMode
+          : defaultSettings.accessibilityMode;
       // Stats are namespaced by UID — always use Firestore as source of truth.
       const mergedStats = {
         postsScanned: remote.stats.postsScanned ?? 0,
@@ -185,7 +199,7 @@ export default function Popup() {
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
         scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
-        accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
+        accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
         factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
@@ -199,6 +213,7 @@ export default function Popup() {
         [keys.postsScanned]: mergedStats.postsScanned,
         [keys.aiDetected]: mergedStats.aiDetected,
         [keys.postsProcessing]: 0,
+        [`platformCounts:${user.uid}`]: remote.stats.platformCounts ?? {},
       });
     } catch (err) {
       console.error('[Popup] Failed to load Firestore settings:', err);
@@ -377,6 +392,10 @@ export default function Popup() {
     setSettings((prev) => {
       const next = { ...prev, [key]: value };
       browser.storage.local.set({ settings: next });
+      // Persist accessibilityMode under a namespaced key for per-account restoration.
+      if (key === 'accessibilityMode' && user) {
+        browser.storage.local.set({ [`accessibilityMode:${user.uid}`]: value });
+      }
       flashSaved();
       // Persist to Firestore
       if (user) {
@@ -402,13 +421,20 @@ export default function Popup() {
   };
 
   const handleResetStats = () => {
-    const zeroed = { postsScanned: 0, aiDetected: 0, postsProcessing: 0 };
-    setStats(zeroed);
-    browser.storage.local.set(zeroed);
-    flashSaved();
+    setStats({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
     if (user) {
+      // Zero the namespaced keys immediately so the storage listener confirms the reset.
+      const keys = statsKeys(user.uid);
+      browser.storage.local.set({
+        [keys.postsScanned]: 0,
+        [keys.aiDetected]: 0,
+        [keys.postsProcessing]: 0,
+        [`platformCounts:${user.uid}`]: {},
+      });
+      // Background handles Firestore + namespaced local keys authoritatively.
       firestoreResetStats(user.uid).catch(console.error);
     }
+    flashSaved();
   };
 
   const handleResetSettings = () => {
@@ -431,13 +457,24 @@ export default function Popup() {
     setSettings(defaults);
     setEnabled(defaults.enabled);
     setSimpleMode(false);
-    browser.storage.local.set({ settings: defaults, simpleMode: false });
+    const toSet: Record<string, unknown> = { settings: defaults, simpleMode: false };
+    if (user) {
+      toSet[`simpleMode:${user.uid}`] = false;
+      toSet[`accessibilityMode:${user.uid}`] = false;
+    }
+    browser.storage.local.set(toSet);
     flashSaved();
     if (user) {
       firestoreResetSettings(user.uid).catch(console.error);
     }
   };
 
+  // Just hide the modal for this session — user will see it again next time.
+  const closeOnboardingThisSession = () => {
+    setShowOnboarding(false);
+  };
+
+  // Hide and persist — the user has acknowledged the onboarding for this account.
   const dismissOnboarding = () => {
     setShowOnboarding(false);
     if (!user) return;
@@ -450,7 +487,7 @@ export default function Popup() {
 
   const onboardingModal = showOnboarding ? (
     <OnboardingModal
-      onClose={dismissOnboarding}
+      onClose={closeOnboardingThisSession}
       onDontShowAgain={dismissOnboarding}
       simpleMode={simpleMode}
       accessibilityMode={settings.accessibilityMode}
