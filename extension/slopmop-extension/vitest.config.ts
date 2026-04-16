@@ -7,6 +7,7 @@ export default defineConfig({
   /** So `getBaseUrl()` in api tests runs without a local `.env`. */
   define: {
     'import.meta.env.VITE_API_BASE_URL': JSON.stringify('http://127.0.0.1:8000'),
+    'import.meta.env.VITE_WEBSITE_BASE_URL': JSON.stringify('http://127.0.0.1:3000'),
   },
   test: {
     globals: true,

@@ -84,6 +84,8 @@ export interface DetectionResponse {
     postId: PostId;
     verdict: Verdict;
     confidence: number;
+    // false for preliminary updates that should not stop timeout/finalization handling.
+    isFinal?: boolean;
   detectionSource?: "text" | MediaType;
     explanation: {
         summary: string;

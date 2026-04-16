@@ -29,6 +29,7 @@ import ThemeToggle from './components/ThemeToggle';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 import { BATTERY_THROTTLE_ACTIVE_KEY, BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY } from '@src/utils/batteryThrottle';
 import type { FactCheckItem } from '@src/types/domain';
+import type { SubmitExtensionReportPayload } from '@src/lib/api';
 
 type DetectResponse = {
   confidence?: number;
@@ -41,10 +42,19 @@ type DetectResponse = {
   confidence_score?: number;
 } & Record<string, unknown>;
 
+const REPORT_TYPE_OPTIONS: Array<{
+  value: SubmitExtensionReportPayload['type'];
+  label: string;
+}> = [
+  { value: 'incorrect_detection', label: 'Incorrect detection' },
+  { value: 'bug', label: 'Bug or crash' },
+  { value: 'other', label: 'Other feedback' },
+];
+
 export default function Popup() {
   const { user, loading: authLoading, logOut } = useAuth();
 
-  const [view, setView] = useState<'home' | 'settings' | 'history'>('home');
+  const [view, setView] = useState<'home' | 'settings' | 'history' | 'report'>('home');
   const [enabled, setEnabled] = useState(true);
   const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
   const [settings, setSettings] = useState<Settings>(defaultSettings);
@@ -70,6 +80,13 @@ export default function Popup() {
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
   const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
   const [batteryAutoLowBatteryActive, setBatteryAutoLowBatteryActive] = useState(false);
+  const [reportType, setReportType] = useState<SubmitExtensionReportPayload['type']>('incorrect_detection');
+  const [reportMessage, setReportMessage] = useState('');
+  const [reportPageUrl, setReportPageUrl] = useState('');
+  const [reporterEmail, setReporterEmail] = useState('');
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSuccess, setReportSuccess] = useState<string | null>(null);
 
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
@@ -349,6 +366,97 @@ export default function Popup() {
     browser.runtime.sendMessage({ type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {});
   };
 
+  const openReportView = () => {
+    setView('report');
+    setReportError(null);
+    setReportSuccess(null);
+    if (user?.email && reporterEmail.trim() === '') {
+      setReporterEmail(user.email);
+    }
+  };
+
+  const prefillReportPageUrl = useCallback(async () => {
+    try {
+      const tabsApi = browser.tabs;
+      if (tabsApi?.query) {
+        const tabs = await tabsApi.query({ active: true, lastFocusedWindow: true });
+        const activeUrl = tabs[0]?.url;
+        if (typeof activeUrl === 'string' && activeUrl.trim() !== '') {
+          setReportPageUrl(activeUrl);
+          return;
+        }
+      }
+    } catch {
+      // ignore tab-query failures and fall back to window location when possible
+    }
+
+    if (typeof window !== 'undefined' && window.location?.href) {
+      setReportPageUrl(window.location.href);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    if (reporterEmail.trim() !== '') return;
+    setReporterEmail(user.email);
+  }, [reporterEmail, user?.email]);
+
+  useEffect(() => {
+    if (view !== 'report') return;
+    if (reportPageUrl.trim() !== '') return;
+    void prefillReportPageUrl();
+  }, [prefillReportPageUrl, reportPageUrl, view]);
+
+  const submitReport = async () => {
+    const message = reportMessage.trim();
+    if (message.length === 0) {
+      setReportError('Please describe the issue before submitting.');
+      setReportSuccess(null);
+      return;
+    }
+
+    setReportSubmitting(true);
+    setReportError(null);
+    setReportSuccess(null);
+
+    try {
+      const payload: SubmitExtensionReportPayload = {
+        type: reportType,
+        message,
+        pageUrl: reportPageUrl.trim() || undefined,
+        reporterEmail: reporterEmail.trim() || undefined,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      };
+
+      const response = (await browser.runtime.sendMessage({
+        type: 'SLOPMOP_SUBMIT_REPORT',
+        reportPayload: payload,
+      })) as { success: boolean; error?: string; data?: { reportId?: string } };
+
+      if (!response.success) {
+        throw new Error(response.error ?? 'Failed to submit report.');
+      }
+
+      const reportId =
+        response.data && typeof response.data.reportId === 'string'
+          ? response.data.reportId
+          : null;
+
+      setReportSuccess(
+        reportId
+          ? `Report submitted. Ticket ID: ${reportId}`
+          : 'Report submitted successfully.',
+      );
+      setReportMessage('');
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : 'Failed to submit report.';
+      setReportError(messageText);
+    } finally {
+      setReportSubmitting(false);
+    }
+  };
+
   const toggleEnabled = () => {
     const next = !enabled;
     setEnabled(next);
@@ -537,12 +645,124 @@ export default function Popup() {
             </p>
             <p className="text-[11px] text-gray-600 dark:text-gray-400 mb-2 truncate">{user.email}</p>
             <button
+              onClick={openReportView}
+              className="w-full py-2 mb-2 rounded-lg text-xs font-medium bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500 transition-colors cursor-pointer"
+            >
+              Report an issue
+            </button>
+            <button
               onClick={() => logOut()}
               className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
             >
               Sign Out
             </button>
           </section>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Report view ──────────────────────────────────────────────
+  if (view === 'report') {
+    return (
+      <div
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
+          simpleMode ? 'simple-mode' : ''
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+      >
+        {onboardingModal}
+        <SettingsHeader title="Report an Issue" onBack={() => setView('settings')} />
+
+        <div className="px-4 py-3 space-y-3 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
+          <p className="text-xs text-gray-600 dark:text-gray-400 leading-snug">
+            Submit bugs, incorrect detections, or other feedback directly to the SlopMop team.
+            Notification timing is managed by SlopMop developers.
+          </p>
+
+          <div>
+            <label htmlFor="report-type" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              Report type
+            </label>
+            <select
+              id="report-type"
+              value={reportType}
+              onChange={(event) => setReportType(event.target.value as SubmitExtensionReportPayload['type'])}
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm"
+            >
+              {REPORT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="report-message" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              What happened?
+            </label>
+            <textarea
+              id="report-message"
+              value={reportMessage}
+              onChange={(event) => setReportMessage(event.target.value)}
+              maxLength={2000}
+              rows={5}
+              placeholder="Describe the issue you ran into"
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm resize-y"
+            />
+            <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+              {reportMessage.length}/2000
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="report-page-url" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              Page URL (optional)
+            </label>
+            <input
+              id="report-page-url"
+              type="url"
+              value={reportPageUrl}
+              onChange={(event) => setReportPageUrl(event.target.value)}
+              placeholder="https://example.com/post"
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="report-contact-email" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              Contact email (optional)
+            </label>
+            <input
+              id="report-contact-email"
+              type="email"
+              value={reporterEmail}
+              onChange={(event) => setReporterEmail(event.target.value)}
+              placeholder="you@example.com"
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm"
+            />
+          </div>
+
+          {reportError && (
+            <div className="rounded-lg px-3 py-2 text-sm bg-red-100 text-red-800 border border-red-300 dark:bg-red-500/20 dark:text-red-200 dark:border-red-500/40">
+              {reportError}
+            </div>
+          )}
+
+          {reportSuccess && (
+            <div className="rounded-lg px-3 py-2 text-sm bg-green-100 text-green-800 border border-green-300 dark:bg-green-500/20 dark:text-green-200 dark:border-green-500/40">
+              {reportSuccess}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void submitReport()}
+            disabled={reportSubmitting}
+            className="w-full py-2 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          >
+            {reportSubmitting ? 'Submitting…' : 'Submit report'}
+          </button>
         </div>
       </div>
     );

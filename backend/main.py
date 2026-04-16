@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
@@ -42,29 +42,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Load image detection model once at startup ─────────────────
-IMAGE_MODEL_FILENAME = os.environ.get("HF_IMAGE_MODEL_FILENAME", "nonescape-mini-v0.safetensors").strip() or "nonescape-mini-v0.safetensors"
+# ── Load image detection models once at startup ────────────────
+IMAGE_MODEL_MINI_FILENAME = (
+    os.environ.get("HF_IMAGE_MODEL_FILENAME", "nonescape-mini-v0.safetensors").strip()
+    or "nonescape-mini-v0.safetensors"
+)
+IMAGE_MODEL_FULL_FILENAME = (
+    os.environ.get("HF_IMAGE_MODEL_FULL_FILENAME", "nonescape-v0.safetensors").strip()
+    or "nonescape-v0.safetensors"
+)
 HF_IMAGE_MODEL_REPO = os.environ.get("HF_IMAGE_MODEL_REPO", "").strip()
+HF_IMAGE_MODEL_FULL_REPO = (
+    os.environ.get("HF_IMAGE_MODEL_FULL_REPO", "").strip() or HF_IMAGE_MODEL_REPO
+)
 
-if HF_IMAGE_MODEL_REPO:
-    from huggingface_hub import hf_hub_download
-    print(f"[SlopMop] Downloading image model from Hugging Face ({HF_IMAGE_MODEL_REPO})...", flush=True)
-    MODEL_PATH = hf_hub_download(
-        repo_id=HF_IMAGE_MODEL_REPO,
-        filename=IMAGE_MODEL_FILENAME,
-        local_dir=os.path.join(_THIS_DIR, "nonescape"),
-    )
-    print(f"[SlopMop] Image model downloaded: {MODEL_PATH}", flush=True)
-else:
-    MODEL_PATH = os.path.join(
-        _THIS_DIR,
-        "nonescape",
-        IMAGE_MODEL_FILENAME,
-    )
 
-image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
-image_model.eval()
-print(f"[SlopMop] Loaded image model: {IMAGE_MODEL_FILENAME} ({MODEL_PATH})", flush=True)
+def _resolve_image_model_path(filename: str, repo_id: str) -> str:
+    if repo_id:
+        from huggingface_hub import hf_hub_download
+
+        print(
+            f"[SlopMop] Downloading image model from Hugging Face ({repo_id})...",
+            flush=True,
+        )
+        model_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            local_dir=os.path.join(_THIS_DIR, "nonescape"),
+        )
+        print(f"[SlopMop] Image model downloaded: {model_path}", flush=True)
+        return model_path
+
+    return os.path.join(_THIS_DIR, "nonescape", filename)
+
+
+MINI_MODEL_PATH = _resolve_image_model_path(IMAGE_MODEL_MINI_FILENAME, HF_IMAGE_MODEL_REPO)
+image_model_mini = NonescapeClassifierMini.from_pretrained(MINI_MODEL_PATH)
+image_model_mini.eval()
+print(
+    f"[SlopMop] Loaded image model (mini): {IMAGE_MODEL_MINI_FILENAME} ({MINI_MODEL_PATH})",
+    flush=True,
+)
+
+image_model_full: Optional[NonescapeClassifier] = None
+FULL_MODEL_PATH = ""
+try:
+    FULL_MODEL_PATH = _resolve_image_model_path(IMAGE_MODEL_FULL_FILENAME, HF_IMAGE_MODEL_FULL_REPO)
+    full_model = NonescapeClassifier.from_pretrained(FULL_MODEL_PATH)
+    full_model.eval()
+    image_model_full = full_model
+    print(
+        f"[SlopMop] Loaded image model (full): {IMAGE_MODEL_FULL_FILENAME} ({FULL_MODEL_PATH})",
+        flush=True,
+    )
+except Exception as exc:
+    print(
+        f"[SlopMop] WARNING: Full image model unavailable ({IMAGE_MODEL_FULL_FILENAME}): {exc}",
+        flush=True,
+    )
 
 # ── Load text detection model once at startup ──────────────────
 TEXT_MODEL_FILENAME = "best_text_detector_smaller.pt"
@@ -157,12 +192,14 @@ class DetectResponse(BaseModel):
 class DetectImageRequest(BaseModel):
     image_base64: str          # raw base64-encoded image bytes
     mime_type: str = "image/jpeg"
+    model_variant: Literal["mini", "full"] = "mini"
 
 
 class DetectImageResponse(BaseModel):
     confidence: float          # 0.0 = authentic, 1.0 = AI-generated
     label: str                 # "ai" or "human"
     explanation: str
+    model_variant: Literal["mini", "full"]
 
 
 class FactCheckRequest(BaseModel):
@@ -306,19 +343,41 @@ def detect_image(request: DetectImageRequest):
 
     tensor = preprocess_image(image).unsqueeze(0)  # add batch dim
 
+    selected_variant = request.model_variant
+    if selected_variant == "full":
+        if image_model_full is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Full image model is not available on this backend instance. "
+                    "Retry with model_variant='mini' or configure "
+                    "HF_IMAGE_MODEL_FULL_FILENAME/HF_IMAGE_MODEL_FULL_REPO."
+                ),
+            )
+        selected_model = image_model_full
+        model_name = "Nonescape"
+    else:
+        selected_model = image_model_mini
+        model_name = "Nonescape-mini"
+
     with torch.no_grad():
-        probs = image_model(tensor)
+        probs = selected_model(tensor)
         authentic_prob = probs[0][0].item()
         ai_prob = probs[0][1].item()
 
     label = "ai" if ai_prob > 0.5 else "human"
     confidence = round(ai_prob, 4)
     explanation = (
-        f"Nonescape-mini classified this image as {'AI-generated' if label == 'ai' else 'authentic'} "
+        f"{model_name} classified this image as {'AI-generated' if label == 'ai' else 'authentic'} "
         f"with {confidence:.1%} confidence."
     )
 
-    return DetectImageResponse(confidence=confidence, label=label, explanation=explanation)
+    return DetectImageResponse(
+        confidence=confidence,
+        label=label,
+        explanation=explanation,
+        model_variant=selected_variant,
+    )
 
 
 def _fact_check_http_error(err: str) -> HTTPException:

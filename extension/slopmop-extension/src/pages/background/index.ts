@@ -22,8 +22,11 @@ import {
   detectText,
   factCheckText,
   FactCheckApiError,
+  submitExtensionReport,
   type DetectImageResponse,
+  type ImageModelVariant,
   type DetectResponse,
+  type SubmitExtensionReportPayload,
 } from '@src/lib/api';
 import {
   isTextLanguageSupported,
@@ -276,6 +279,7 @@ interface BackgroundMessage {
   url?: string;
   payload?: NormalizedPostContent;
   postId?: string;
+  reportPayload?: SubmitExtensionReportPayload;
 }
 
 interface MessageResponse {
@@ -316,6 +320,8 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_SUBMIT_REPORT':
+      return handleSubmitReport(msg.reportPayload);
     case 'SLOPMOP_FACT_CHECK': {
       const tabId = sender.tab?.id;
       if (!tabId) {
@@ -569,6 +575,60 @@ async function handleDetect(text: string): Promise<MessageResponse> {
       lastDetectResponse: result,
     });
     return { success: true, data: result };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleSubmitReport(
+  reportPayload: SubmitExtensionReportPayload | undefined,
+): Promise<MessageResponse> {
+  try {
+    if (!reportPayload || typeof reportPayload !== 'object') {
+      return { success: false, error: 'Invalid report payload.' };
+    }
+
+    const validTypes: SubmitExtensionReportPayload['type'][] = [
+      'incorrect_detection',
+      'bug',
+      'other',
+    ];
+
+    if (!validTypes.includes(reportPayload.type)) {
+      return { success: false, error: 'Invalid report type.' };
+    }
+
+    const message = reportPayload.message?.trim();
+    if (!message) {
+      return { success: false, error: 'Report message is required.' };
+    }
+
+    let authToken: string | undefined;
+    if (auth?.currentUser) {
+      try {
+        authToken = await auth.currentUser.getIdToken();
+      } catch {
+        authToken = undefined;
+      }
+    }
+
+    const reportData = await submitExtensionReport(
+      {
+        type: reportPayload.type,
+        message,
+        pageUrl: reportPayload.pageUrl?.trim() || undefined,
+        reporterEmail:
+          reportPayload.reporterEmail?.trim().toLowerCase() ||
+          auth?.currentUser?.email ||
+          undefined,
+        userAgent:
+          reportPayload.userAgent?.trim() ||
+          (typeof navigator !== 'undefined' ? navigator.userAgent : undefined),
+      },
+      authToken,
+    );
+
+    return { success: true, data: reportData };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
   }
@@ -850,35 +910,98 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   if (enrichedPost.contentType === 'IMAGE') {
     const firstImage = enrichedImages.find((img) => img.bytesBase64);
     if (firstImage) {
-      try {
-        const start = performance.now();
-        const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
-        const elapsedMs = Math.round(performance.now() - start);
-        const mapped = mapToDetectionResponse(
-          imgResult,
-          enrichedPost.postId,
-          elapsedMs,
-          firstImage.mediaType ?? 'image',
-        );
+      const mediaType = firstImage.mediaType ?? 'image';
+      const runImageDetect = async (
+        modelVariant: ImageModelVariant,
+      ): Promise<{ result: DetectImageResponse; elapsedMs: number } | null> => {
+        try {
+          const start = performance.now();
+          const result = await detectImage(
+            firstImage.bytesBase64,
+            firstImage.mimeType,
+            modelVariant,
+          );
+          return { result, elapsedMs: Math.round(performance.now() - start) };
+        } catch {
+          return null;
+        }
+      };
 
+      const miniPromise = runImageDetect('mini');
+      const fullPromise = runImageDetect('full');
+
+      const miniResult = await miniPromise;
+      if (miniResult) {
+        const preliminary = mapToDetectionResponse(
+          miniResult.result,
+          enrichedPost.postId,
+          miniResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: false,
+            modelVariant: miniResult.result.model_variant ?? 'mini',
+          },
+        );
+        preliminary.explanation.summary =
+          'Preliminary result (mini model): ' + preliminary.explanation.summary;
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
-          payload: mapped,
+          payload: preliminary,
         });
-        maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
-        await finalizeStats(mapped.verdict === 'likely_ai');
-        return;
-      } catch (imgErr) {
-        await browser.tabs.sendMessage(tabId, {
-          type: 'DETECTION_ERROR',
-          payload: {
-            postId: enrichedPost.postId,
-            message: formatDetectionFetchError(imgErr),
+      }
+
+      const fullResult = await fullPromise;
+      if (fullResult) {
+        const finalMapped = mapToDetectionResponse(
+          fullResult.result,
+          enrichedPost.postId,
+          fullResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: true,
+            modelVariant: fullResult.result.model_variant ?? 'full',
           },
+        );
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: finalMapped,
         });
-        await finalizeStats(false);
+        maybeSaveToHistory(enrichedPost, finalMapped, tabId).catch(() => {});
+        await finalizeStats(finalMapped.verdict === 'likely_ai');
         return;
       }
+
+      if (miniResult) {
+        const finalMini = mapToDetectionResponse(
+          miniResult.result,
+          enrichedPost.postId,
+          miniResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: true,
+            modelVariant: miniResult.result.model_variant ?? 'mini',
+          },
+        );
+        finalMini.explanation.summary +=
+          ' Full-model refinement is currently unavailable; keeping preliminary result.';
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: finalMini,
+        });
+        maybeSaveToHistory(enrichedPost, finalMini, tabId).catch(() => {});
+        await finalizeStats(finalMini.verdict === 'likely_ai');
+        return;
+      }
+
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_ERROR',
+        payload: {
+          postId: enrichedPost.postId,
+          message: 'image detection failed',
+        },
+      });
+      await finalizeStats(false);
+      return;
     }
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
@@ -995,6 +1118,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         imageResult.result,
         imageResult.elapsedMs,
         firstImage?.mediaType ?? 'image',
+        imageResult.result.model_variant,
       );
     }
 
@@ -1196,6 +1320,15 @@ function isTextDetectApiResult(
   return 'highlights' in result;
 }
 
+function resolveImageModelDescriptor(
+  modelVariant: ImageModelVariant | undefined,
+): { name: string; version: string } {
+  if (modelVariant === 'full') {
+    return { name: 'nonescape', version: 'v0' };
+  }
+  return { name: 'nonescape-mini', version: 'mini-v0' };
+}
+
 function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
   return raw.filter(
     (s) =>
@@ -1214,6 +1347,10 @@ function mapToDetectionResponse(
   postId: string,
   timingMs: number,
   detectionSource: DetectionResponse['detectionSource'] = 'text',
+  opts?: {
+    isFinal?: boolean;
+    modelVariant?: ImageModelVariant;
+  },
 ): DetectionResponse {
   //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
 
@@ -1249,17 +1386,26 @@ function mapToDetectionResponse(
         }))
       : [];
 
+  const inferredImageVariant = !isTextDetectApiResult(apiResult)
+    ? apiResult.model_variant
+    : undefined;
+  const imageModel = resolveImageModelDescriptor(opts?.modelVariant ?? inferredImageVariant);
+  const explanationModel = detectionSource === 'text'
+    ? { name: 'slopmop-api', version: '1.0' }
+    : imageModel;
+
   return {
     requestId: crypto.randomUUID(),
     postId,
     verdict,
     confidence: apiResult.confidence,
+    isFinal: opts?.isFinal ?? true,
     detectionSource,
     explanation: {
       summary: apiResult.explanation,
       highlights,
       ...(highlightedSpans.length > 0 ? { highlightedSpans } : {}),
-      model: { name: 'slopmop-api', version: '1.0' },
+      model: explanationModel,
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
     },
@@ -1270,6 +1416,7 @@ function mapToImageDetectionResult(
   apiResult: DetectImageResponse,
   timingMs: number,
   mediaType: MediaType = 'image',
+  modelVariant?: ImageModelVariant,
 ): ImageDetectionResult {
   const confidencePercent = apiResult.confidence <= 1
     ? apiResult.confidence * 100
@@ -1281,11 +1428,13 @@ function mapToImageDetectionResult(
       ? 'unknown'
       : 'likely_human';
 
+  const model = resolveImageModelDescriptor(modelVariant ?? apiResult.model_variant);
+
   return {
     verdict,
     confidence: apiResult.confidence,
     summary: apiResult.explanation,
-    model: { name: 'nonescape-mini', version: '0.1' },
+    model,
     timingMs,
     mediaType,
   };

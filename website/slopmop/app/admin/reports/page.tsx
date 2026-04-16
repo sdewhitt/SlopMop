@@ -19,6 +19,7 @@ export default function AdminReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -33,10 +34,16 @@ export default function AdminReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, statusFilter]);
 
-  async function loadReports(filter: FilterStatus) {
+  async function loadReports(filter: FilterStatus, options?: { background?: boolean }) {
     if (!user) return;
 
-    setLoading(true);
+    const isBackgroundRefresh = options?.background === true;
+
+    if (isBackgroundRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -61,7 +68,11 @@ export default function AdminReportsPage() {
       setError(err instanceof Error ? err.message : "Failed to load reports");
       setReports([]);
     } finally {
-      setLoading(false);
+      if (isBackgroundRefresh) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   }
 
@@ -192,6 +203,14 @@ export default function AdminReportsPage() {
           </div>
 
           <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={loading || refreshing}
+              onClick={() => void loadReports(statusFilter, { background: true })}
+              className="rounded-full border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
             {FILTER_OPTIONS.map((option) => (
               <button
                 key={option}

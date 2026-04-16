@@ -1,0 +1,25 @@
+/**
+ * Convert unknown fetch/runtime errors into concise, user-facing detection errors.
+ */
+export function formatDetectionFetchError(err: unknown): string {
+  if (err instanceof Error) {
+    const message = err.message?.trim();
+    if (!message) return 'detection request failed';
+
+    const lower = message.toLowerCase();
+    if (lower.includes('failed to fetch') || lower.includes('networkerror')) {
+      return 'network error while contacting detection API';
+    }
+    if (lower.includes('aborted')) {
+      return 'detection request timed out';
+    }
+
+    return message;
+  }
+
+  if (typeof err === 'string' && err.trim()) {
+    return err.trim();
+  }
+
+  return 'detection request failed';
+}

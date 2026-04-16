@@ -222,6 +222,11 @@ function startObserver(settings: DetectionSettings): void {
   activeObserver = new FeedObserver(adapter, extractor, overlay, bus, settings);
 
   bus.onDetectionResponse((res) => {
+    if (res.isFinal === false) {
+      activeObserver?.noteAnalyzeProgress(res.postId);
+      overlay.renderResult(res.postId, res);
+      return;
+    }
     if (!activeObserver?.markAnalyzeCompleted(res.postId, 'result')) return;
     overlay.renderResult(res.postId, res);
   });
