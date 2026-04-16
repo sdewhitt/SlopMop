@@ -20,6 +20,7 @@ import type {
   PostId,
   SiteId,
   Verdict,
+  FactCheckItem,
 } from '@src/types/domain';
 
 export const HISTORY_KEY = 'detectionHistory';
@@ -56,6 +57,10 @@ export interface HistoryEntry {
   imageResult?: ImageDetectionResult;
   /** Primary source when replaying (e.g. image-only runs). */
   detectionSource?: 'text' | MediaType;
+  /** Cached fact-check result items (if user ran fact check). */
+  factCheckItems?: FactCheckItem[];
+  /** Timestamp (ms) when fact check was last saved for this content. */
+  factCheckSavedAtMs?: number;
   /** AI probability score 0–1 returned by the backend. */
   confidence: number;
   /** Model verdict. */
@@ -133,12 +138,6 @@ export async function saveHistoryEntry(
       verdict: normalizedEntry.verdict,
       url: normalizedEntry.url,
       savedAtMs: normalizedEntry.savedAtMs,
-      ...(normalizedEntry.authorHandle !== undefined && {
-        authorHandle: normalizedEntry.authorHandle,
-      }),
-      ...(normalizedEntry.contentFingerprint !== undefined && {
-        contentFingerprint: normalizedEntry.contentFingerprint,
-      }),
       ...(normalizedEntry.textExplanationSummary !== undefined && {
         textExplanationSummary: normalizedEntry.textExplanationSummary,
       }),
@@ -150,6 +149,18 @@ export async function saveHistoryEntry(
       }),
       ...(normalizedEntry.detectionSource !== undefined && {
         detectionSource: normalizedEntry.detectionSource,
+      }),
+      ...(normalizedEntry.factCheckItems !== undefined && {
+        factCheckItems: normalizedEntry.factCheckItems,
+      }),
+      ...(normalizedEntry.factCheckSavedAtMs !== undefined && {
+        factCheckSavedAtMs: normalizedEntry.factCheckSavedAtMs,
+      }),
+      ...(normalizedEntry.authorHandle !== undefined && {
+        authorHandle: normalizedEntry.authorHandle,
+      }),
+      ...(normalizedEntry.contentFingerprint !== undefined && {
+        contentFingerprint: normalizedEntry.contentFingerprint,
       }),
     };
   } else {
@@ -191,7 +202,6 @@ export async function togglePin(postId: PostId): Promise<void> {
  * @param text     - Full plain text of the post. Snippet is truncated to 200 chars.
  * @param confidence - AI probability 0–1.
  * @param verdict  - Model verdict string.
- * @param replay   - Optional text/image payloads so history replay matches full mixed results.
  */
 export function buildHistoryEntry(
   postId: PostId,
@@ -202,7 +212,14 @@ export function buildHistoryEntry(
   verdict: Verdict,
   authorHandle: string,
   contentFingerprint: string,
-  replay?: HistoryReplayExtras,
+  extras?: {
+    textExplanationSummary?: string;
+    textHighlightedSpans?: HighlightSpan[];
+    imageResult?: ImageDetectionResult;
+    detectionSource?: 'text' | MediaType;
+    factCheckItems?: FactCheckItem[];
+    factCheckSavedAtMs?: number;
+  },
 ): Omit<HistoryEntry, 'pinned'> {
   return {
     postId,
@@ -214,36 +231,17 @@ export function buildHistoryEntry(
     savedAtMs: Date.now(),
     authorHandle: authorHandle.trim(),
     contentFingerprint,
-    ...(replay?.textExplanationSummary !== undefined && {
-      textExplanationSummary: replay.textExplanationSummary,
+    ...(extras?.textExplanationSummary !== undefined && {
+      textExplanationSummary: extras.textExplanationSummary,
     }),
-    ...(replay?.textHighlightedSpans !== undefined && {
-      textHighlightedSpans: replay.textHighlightedSpans,
+    ...(extras?.textHighlightedSpans !== undefined && {
+      textHighlightedSpans: extras.textHighlightedSpans,
     }),
-    ...(replay?.imageResult !== undefined && { imageResult: replay.imageResult }),
-    ...(replay?.detectionSource !== undefined && { detectionSource: replay.detectionSource }),
+    ...(extras?.imageResult !== undefined && { imageResult: extras.imageResult }),
+    ...(extras?.detectionSource !== undefined && { detectionSource: extras.detectionSource }),
+    ...(extras?.factCheckItems !== undefined && { factCheckItems: extras.factCheckItems }),
+    ...(extras?.factCheckSavedAtMs !== undefined && { factCheckSavedAtMs: extras.factCheckSavedAtMs }),
   };
-}
-
-/** Optional fields for replaying the same UI as a live `DetectionResponse`. */
-export type HistoryReplayExtras = {
-  textExplanationSummary?: string;
-  textHighlightedSpans?: HighlightSpan[];
-  imageResult?: ImageDetectionResult;
-  detectionSource?: 'text' | MediaType;
-};
-
-/** Same highlight rows as `mapToDetectionResponse` uses for `highlightedSpans`. */
-export function explanationHighlightsFromSpans(
-  spans: HighlightSpan[],
-): Array<{ start: number; end: number; reason: string }> {
-  return spans.map((s) => ({
-    start: s.start,
-    end: s.end,
-    reason:
-      'Segment influence (model attribution): ' +
-      `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
-  }));
 }
 
 /** Normalize handle for comparison across sites (u/, @, case). */

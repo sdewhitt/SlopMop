@@ -132,8 +132,32 @@ describe('History Storage', () => {
   });
 
   it('duplicate detection updates existing entry rather than creating a new one', async () => {
-    await saveHistoryEntry(makeEntry({ postId: 'dup-post', confidence: 0.5,  verdict: 'unknown'   }));
-    await saveHistoryEntry(makeEntry({ postId: 'dup-post', confidence: 0.92, verdict: 'likely_ai' }));
+    await saveHistoryEntry(
+      makeEntry({
+        postId: 'dup-post',
+        confidence: 0.5,
+        verdict: 'unknown',
+        detectionSource: 'image',
+        textExplanationSummary: undefined,
+        imageResult: {
+          verdict: 'likely_ai',
+          confidence: 0.99,
+          mediaType: 'image',
+          summary: 'image says AI',
+          model: { name: 'test', version: '1' },
+          timingMs: 12,
+        },
+      }),
+    );
+    await saveHistoryEntry(
+      makeEntry({
+        postId: 'dup-post',
+        confidence: 0.92,
+        verdict: 'likely_ai',
+        detectionSource: 'text',
+        textExplanationSummary: 'Saved summary',
+      }),
+    );
 
     const history = await getHistory();
     const entries = history.filter((e) => e.postId === 'dup-post');
@@ -141,6 +165,10 @@ describe('History Storage', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].confidence).toBe(0.92);
     expect(entries[0].verdict).toBe('likely_ai');
+    expect(entries[0].detectionSource).toBe('text');
+    expect(entries[0].textExplanationSummary).toBe('Saved summary');
+    // should preserve previously-saved image result when not overwritten
+    expect(entries[0].imageResult).toBeDefined();
   });
 });
 
