@@ -22,9 +22,11 @@ import {
   detectText,
   factCheckText,
   FactCheckApiError,
+  submitExtensionReport,
   type DetectImageResponse,
   type ImageModelVariant,
   type DetectResponse,
+  type SubmitExtensionReportPayload,
 } from '@src/lib/api';
 import {
   isTextLanguageSupported,
@@ -277,6 +279,7 @@ interface BackgroundMessage {
   url?: string;
   payload?: NormalizedPostContent;
   postId?: string;
+  reportPayload?: SubmitExtensionReportPayload;
 }
 
 interface MessageResponse {
@@ -317,6 +320,8 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_SUBMIT_REPORT':
+      return handleSubmitReport(msg.reportPayload);
     case 'SLOPMOP_FACT_CHECK': {
       const tabId = sender.tab?.id;
       if (!tabId) {
@@ -570,6 +575,60 @@ async function handleDetect(text: string): Promise<MessageResponse> {
       lastDetectResponse: result,
     });
     return { success: true, data: result };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+async function handleSubmitReport(
+  reportPayload: SubmitExtensionReportPayload | undefined,
+): Promise<MessageResponse> {
+  try {
+    if (!reportPayload || typeof reportPayload !== 'object') {
+      return { success: false, error: 'Invalid report payload.' };
+    }
+
+    const validTypes: SubmitExtensionReportPayload['type'][] = [
+      'incorrect_detection',
+      'bug',
+      'other',
+    ];
+
+    if (!validTypes.includes(reportPayload.type)) {
+      return { success: false, error: 'Invalid report type.' };
+    }
+
+    const message = reportPayload.message?.trim();
+    if (!message) {
+      return { success: false, error: 'Report message is required.' };
+    }
+
+    let authToken: string | undefined;
+    if (auth?.currentUser) {
+      try {
+        authToken = await auth.currentUser.getIdToken();
+      } catch {
+        authToken = undefined;
+      }
+    }
+
+    const reportData = await submitExtensionReport(
+      {
+        type: reportPayload.type,
+        message,
+        pageUrl: reportPayload.pageUrl?.trim() || undefined,
+        reporterEmail:
+          reportPayload.reporterEmail?.trim().toLowerCase() ||
+          auth?.currentUser?.email ||
+          undefined,
+        userAgent:
+          reportPayload.userAgent?.trim() ||
+          (typeof navigator !== 'undefined' ? navigator.userAgent : undefined),
+      },
+      authToken,
+    );
+
+    return { success: true, data: reportData };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
   }

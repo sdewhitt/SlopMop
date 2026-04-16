@@ -179,4 +179,90 @@ describe('Admin Reports Page', () => {
 
     expect(screen.getByRole('button', { name: /Reopen/i })).toBeInTheDocument()
   })
+
+  it('refetches reports when refresh is clicked', async () => {
+    const user = userEvent.setup()
+    const getIdToken = jest.fn().mockResolvedValue('admin-token')
+
+    setAuthUser({
+      uid: 'admin-uid',
+      email: 'admin@example.com',
+      getIdToken,
+    })
+
+    ;(global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          reports: [
+            {
+              id: 'report-1',
+              type: 'bug',
+              source: 'website',
+              status: 'open',
+              message: 'Initial payload',
+              pageUrl: null,
+              reporterEmail: null,
+              submitterUid: null,
+              submitterEmail: null,
+              notificationInterval: 'immediate',
+              userAgent: null,
+              resolutionNote: null,
+              addressedAt: null,
+              addressedByUid: null,
+              addressedByEmail: null,
+              lastNotifiedAt: null,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          reports: [
+            {
+              id: 'report-2',
+              type: 'other',
+              source: 'extension',
+              status: 'open',
+              message: 'Refreshed payload',
+              pageUrl: null,
+              reporterEmail: null,
+              submitterUid: null,
+              submitterEmail: null,
+              notificationInterval: 'immediate',
+              userAgent: null,
+              resolutionNote: null,
+              addressedAt: null,
+              addressedByUid: null,
+              addressedByEmail: null,
+              lastNotifiedAt: null,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      })
+
+    render(<AdminReportsPage />)
+
+    expect(await screen.findByText('Initial payload')).toBeInTheDocument()
+
+    const refreshButton = screen.getByRole('button', { name: /Refresh/i })
+    await user.click(refreshButton)
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        '/api/reports?status=open&limit=100',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer admin-token' },
+        })
+      )
+    })
+
+    expect(await screen.findByText('Refreshed payload')).toBeInTheDocument()
+  })
 })

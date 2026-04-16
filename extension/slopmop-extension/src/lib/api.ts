@@ -27,6 +27,93 @@ const getBaseUrl = (): string => {
     return url.replace(/\/$/, '');
 };
 
+const getWebsiteBaseUrl = (): string => {
+    const url = import.meta.env.VITE_WEBSITE_BASE_URL as string | undefined;
+
+    if (!url || url.trim() === '') {
+        throw new Error(
+            'Missing VITE_WEBSITE_BASE_URL in .env. Needs to be added in .env file'
+        );
+    }
+
+    return url.replace(/\/$/, '');
+};
+
+export type ExtensionReportType = 'incorrect_detection' | 'bug' | 'other';
+
+export interface SubmitExtensionReportPayload {
+    type: ExtensionReportType;
+    message: string;
+    pageUrl?: string;
+    reporterEmail?: string;
+    userAgent?: string;
+}
+
+export interface SubmitExtensionReportResponse {
+    ok: boolean;
+    reportId: string;
+    notificationScheduledFor: 'immediate' | 'daily' | 'weekly';
+}
+
+/**
+ * Sends an extension report to the website endpoint (`/api/reports`).
+ * Accepts an optional Firebase bearer token so signed-in users are linked to the report.
+ */
+export async function submitExtensionReport(
+    payload: SubmitExtensionReportPayload,
+    authToken?: string,
+): Promise<SubmitExtensionReportResponse> {
+    const websiteBaseUrl = getWebsiteBaseUrl();
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+    };
+
+    if (authToken && authToken.trim() !== '') {
+        headers.Authorization = `Bearer ${authToken}`;
+    }
+
+    const response = await fetch(websiteBaseUrl + '/api/reports', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+            type: payload.type,
+            source: 'extension',
+            message: payload.message,
+            pageUrl: payload.pageUrl,
+            reporterEmail: payload.reporterEmail,
+            userAgent: payload.userAgent,
+        }),
+    });
+
+    if (response.ok === false) {
+        let message = 'HTTP ' + response.status;
+
+        if (response.status === 404) {
+            message =
+                'Report API route not found at ' +
+                websiteBaseUrl +
+                '/api/reports. Set VITE_WEBSITE_BASE_URL to the Next.js website host (not the FastAPI backend).';
+        }
+
+        try {
+            const data = await response.json();
+            if (data !== null && data !== undefined) {
+                if (typeof data.error === 'string') {
+                    message = data.error;
+                } else if (typeof data.detail === 'string') {
+                    message = data.detail;
+                }
+            }
+        } catch {
+            // keep default HTTP message when non-JSON response is returned
+        }
+
+        throw new Error(message);
+    }
+
+    return response.json() as Promise<SubmitExtensionReportResponse>;
+}
+
 // expected response from POST /detect
 export interface DetectResponse {
     confidence: number;
