@@ -41,6 +41,7 @@ import {
   tryAnalyzePostLanguageUnsupported,
   tryPopupDetectLanguageBlock,
 } from '@src/pages/background/detectLanguageGate';
+
 import type {
   DetectionResponse,
   HighlightSpan,
@@ -84,7 +85,7 @@ import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
 
 console.log('background script loaded');
 
-// ── Post analysis ────────────────────────────────────────────────
+// -- Post analysis ------------------------------------------------
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
 // hardcoded developer toggle. keep true for offline fake responses.
@@ -1049,6 +1050,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     // Fire text detection only when language is supported;
     // for MIXED with fetched images, also fire image detection in parallel.
     const firstImage = hasImages ? enrichedImages.find((img) => img.bytesBase64) : undefined;
+    const mediaType = firstImage?.mediaType ?? 'image';
 
     const textPromise = textLangSupported
       ? (async () => {
@@ -1058,11 +1060,11 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         })()
       : Promise.resolve(null);
 
-    const imagePromise = firstImage
+    const imageMiniPromise = firstImage
       ? (async () => {
           try {
             const start = performance.now();
-            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType, 'mini');
             return { result, elapsedMs: Math.round(performance.now() - start) };
           } catch {
             return null; // image detection is best-effort
@@ -1070,7 +1072,43 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         })()
       : Promise.resolve(null);
 
-    const [textResult, imageResult] = await Promise.all([textPromise, imagePromise]);
+    const imageFullPromise = firstImage
+      ? (async () => {
+          try {
+            const start = performance.now();
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType, 'full');
+            return { result, elapsedMs: Math.round(performance.now() - start) };
+          } catch {
+            return null; // image detection is best-effort
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [textResult, imageMiniResult] = await Promise.all([textPromise, imageMiniPromise]);
+
+    if (textResult && imageMiniResult) {
+      const preliminary = mapToDetectionResponse(
+        textResult.result,
+        enrichedPost.postId,
+        textResult.elapsedMs,
+        'text',
+        { isFinal: false },
+      );
+      preliminary.imageResult = mapToImageDetectionResult(
+        imageMiniResult.result,
+        imageMiniResult.elapsedMs,
+        mediaType,
+        imageMiniResult.result.model_variant ?? 'mini',
+      );
+      preliminary.explanation.summary += ' Preliminary image sub-result uses mini model.';
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: preliminary,
+      });
+    }
+
+    const imageFullResult = await imageFullPromise;
+    const imageResult = imageFullResult ?? imageMiniResult;
 
     // If text was skipped (unsupported language) but image succeeded, return image-only result.
     // Use the image result as the primary verdict (don't also set imageResult, which would
@@ -1080,8 +1118,16 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         imageResult.result,
         enrichedPost.postId,
         imageResult.elapsedMs,
-        firstImage?.mediaType ?? 'image',
+        mediaType,
+        {
+          isFinal: true,
+          modelVariant: imageResult.result.model_variant,
+        },
       );
+      if (!imageFullResult && imageMiniResult) {
+        imgResponse.explanation.summary +=
+          ' Full-model refinement is currently unavailable; keeping preliminary result.';
+      }
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
         payload: imgResponse,
@@ -1117,14 +1163,20 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       mapped.imageResult = mapToImageDetectionResult(
         imageResult.result,
         imageResult.elapsedMs,
-        firstImage?.mediaType ?? 'image',
+        mediaType,
         imageResult.result.model_variant,
       );
+      if (!imageFullResult && imageMiniResult) {
+        mapped.explanation.summary += ' Image refinement stayed on mini because full model was unavailable.';
+      }
     }
 
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_RESULT',
-      payload: mapped,
+      payload: {
+        ...mapped,
+        isFinal: true,
+      },
     });
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
