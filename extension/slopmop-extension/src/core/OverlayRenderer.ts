@@ -125,7 +125,7 @@ export class OverlayRenderer {
             fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
             fontWeight: "600",
             color: "#fff",
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             cursor: "pointer",
         };
     }
@@ -146,6 +146,43 @@ export class OverlayRenderer {
         return this.scaleByBadgeSize("4px 8px", "spacing");
     }
 
+    private getIndicatorTheme(): DetectionSettings["detectionTheme"] {
+        return this.settings.detectionTheme ?? "default";
+    }
+
+    private getNeutralIndicatorColor(): string {
+        const theme = this.getIndicatorTheme();
+        if (theme === "high_contrast") return "#111827";
+        if (theme === "minimal") return "#4b5563";
+        return "#6b7280";
+    }
+
+    private getVerdictIndicatorColor(verdict: DetectionResponse["verdict"]): string {
+        const theme = this.getIndicatorTheme();
+        if (theme === "high_contrast") {
+            const colorMap: Record<DetectionResponse["verdict"], string> = {
+                likely_ai: "#ff1f1f",
+                likely_human: "#00ff66",
+                unknown: "#111827",
+            };
+            return colorMap[verdict];
+        }
+        if (theme === "minimal") {
+            const colorMap: Record<DetectionResponse["verdict"], string> = {
+                likely_ai: "#f87171",
+                likely_human: "#86efac",
+                unknown: "#4b5563",
+            };
+            return colorMap[verdict];
+        }
+        const colorMap: Record<DetectionResponse["verdict"], string> = {
+            likely_ai: "#ef4444",
+            likely_human: "#22c55e",
+            unknown: "#6b7280",
+        };
+        return colorMap[verdict];
+    }
+
     // render DetectionResponse as a badge on the page
     // for now, start with basic appearance, then we can match the UI mockups
     renderResult(postId: PostId, res: DetectionResponse): void {
@@ -159,12 +196,7 @@ export class OverlayRenderer {
 
         const isSimple = this.settings.uiMode === "simple";
 
-        const colorMap: Record<DetectionResponse["verdict"], string> = {
-            likely_ai: "#ef4444",
-            likely_human: "#22c55e",
-            unknown: "#6b7280",
-        };
-        surface.style.backgroundColor = colorMap[res.verdict];
+        surface.style.backgroundColor = this.getVerdictIndicatorColor(res.verdict);
         surface.style.cursor = "pointer";
 
         if (isSimple) {
@@ -255,7 +287,7 @@ export class OverlayRenderer {
             ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             color: "#fff",
         });
         if (!onDetectNow) {
@@ -263,7 +295,7 @@ export class OverlayRenderer {
             Object.assign(overlay.style, {
                 padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
                 borderRadius: this.scaleByBadgeSize("4px", "spacing"),
-                backgroundColor: "#6b7280",
+                backgroundColor: this.getNeutralIndicatorColor(),
                 color: "#fff",
             });
             overlay.textContent = "Scanning...";
@@ -277,7 +309,7 @@ export class OverlayRenderer {
                 position: "relative",
                 padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
                 borderRadius: this.scaleByBadgeSize("4px", "spacing"),
-                backgroundColor: "#6b7280",
+                backgroundColor: this.getNeutralIndicatorColor(),
                 color: "#fff",
                 display: "flex",
                 flexDirection: "column",
@@ -314,7 +346,7 @@ export class OverlayRenderer {
             factButton.textContent = "Fact check";
             Object.assign(factButton.style, {
                 ...buttonStyle,
-                backgroundColor: "#6b7280",
+                backgroundColor: this.getNeutralIndicatorColor(),
                 width: "100%",
             });
 
@@ -345,7 +377,7 @@ export class OverlayRenderer {
             detectNowButton.textContent = "Detect Now";
             Object.assign(detectNowButton.style, {
                 ...buttonStyle,
-                backgroundColor: "#6b7280",
+                backgroundColor: this.getNeutralIndicatorColor(),
                 width: "100%",
             });
             detectNowButton.onclick = (event) => {
@@ -368,7 +400,7 @@ export class OverlayRenderer {
             padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
             borderRadius: this.scaleByBadgeSize("4px", "spacing"),
             fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             color: "#fff",
         });
         const detectNowButton = document.createElement("button");
@@ -576,7 +608,9 @@ export class OverlayRenderer {
         }
 
         const hasHits = items.length > 0;
-        factPanel.style.backgroundColor = hasHits ? "#22c55e" : "#6b7280";
+        factPanel.style.backgroundColor = hasHits
+            ? this.getVerdictIndicatorColor("likely_human")
+            : this.getNeutralIndicatorColor();
         factPanel.style.cursor = "pointer";
         factPanel.textContent = hasHits
             ? `${items.length} fact check${items.length !== 1 ? "s" : ""}`
@@ -808,7 +842,7 @@ export class OverlayRenderer {
         if (!surface) return;
         this.resetOverlayInteractions(surface);
         surface.style.whiteSpace = "normal";
-        surface.style.backgroundColor = "#6b7280";
+        surface.style.backgroundColor = this.getNeutralIndicatorColor();
         surface.style.cursor = "default";
         surface.textContent = "Scanning...";
     }
@@ -821,7 +855,7 @@ export class OverlayRenderer {
         this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
         factPanel.style.whiteSpace = "normal";
-        factPanel.style.backgroundColor = "#6b7280";
+        factPanel.style.backgroundColor = this.getNeutralIndicatorColor();
         factPanel.style.cursor = "default";
         factPanel.textContent = "Checking…";
     }
@@ -1049,7 +1083,7 @@ export class OverlayRenderer {
             ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             color: "#fff",
         });
         this.mapToOverlay.set(postId, overlay);

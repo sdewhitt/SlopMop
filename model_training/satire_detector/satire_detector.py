@@ -8,7 +8,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer  # ty
 import csv
 import random
 import datasets  # type: ignore[import-untyped]
-from datasets import load_dataset, Dataset  # type: ignore[import-untyped]
+from datasets import load_dataset, Dataset, concatenate_datasets  # type: ignore[import-untyped]
 from torch.utils.data import DataLoader, Dataset as TorchDataset, Subset  # type: ignore[import-untyped]
 
 # for training loop
@@ -22,6 +22,18 @@ import regex  # type: ignore[import-untyped]
 # for training progress
 from tqdm.auto import tqdm  # type: ignore[import-untyped]
 from typing import Optional, List, Dict, Tuple, NamedTuple, Set
+
+
+def _freeze_csv_writes(csv_path: str) -> None:
+  if os.environ.get("SLOPMOP_ALLOW_TEST_DATASET_WRITE", "").strip() in ("1", "true", "True", "yes", "YES"):
+    return
+  try:
+    if os.path.exists(csv_path):
+      # read-only for user/group/other
+      os.chmod(csv_path, 0o444)
+  except Exception:
+    # best-effort: permissions may not be changeable on some systems
+    pass
 
 # remove all emojis
 def emoji_removal(text):
@@ -71,6 +83,21 @@ def preprocess_text(text):
   clean_up = re.sub(r'\n+', ' ', text)
 
   return re.sub(r'\s+', ' ', clean_up).strip()
+
+def preprocess_text_sarcasm(text: str) -> str:
+  if not text or not isinstance(text, str):
+    return ""
+  # remove URLs
+  text = re.sub(
+    r"\b(?:https?://|www\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*[a-zA-Z0-9/_-])?",
+    "",
+    text,
+  )
+  # remove HTML tags
+  text = re.sub(r"<[^>]*>", "", text)
+  # normalize whitespace only
+  clean_up = re.sub(r"\n+", " ", text)
+  return re.sub(r"\s+", " ", clean_up).strip()
 
 # clean the example
 def clean_example(example: dict, text_column: str = "text") -> dict:
@@ -459,113 +486,223 @@ def sample_subset(dataset, n_human=50, n_ai=50, n_mixed=50, seed=None):
   return dataset.select(sel)
 
 
-# using hugging face (Thewillonline/reddit-sarcasm) dataset
-REDDIT_SARCASM_DATASET = "Thewillonline/reddit-sarcasm"
-_WEAK_SARCASM = re.compile(
-  r"(?i)(?:^|\s)/s(?:\s|$|[.,!?…])|"
-  r"\b(sarcasm|sarcastic|\/s|obvious\s+sarcasm|totally\s+serious|not\s+serious\s+at\s+all)\b"
-)
+# --- Training data: SARC (Reddit) + iSarcasm (English text, HF mirror) ---
+# SARC mirror: comment + binary label (0/1). Split names differ from classic "train".
+SARC_HF_DATASET_ID = "marcbishara/sarcasm-on-reddit"
+# iSarcasm 2022 Task A (English): sentence + sentiment (0/1). Official tweet-ID-only
+# releases need X hydration; this Hub copy includes the text.
+ISARCASM_HF_DATASET_ID = "viethq1906/isarcasm_2022_taskA_En"
 
 
-# get the weak sarcasm label from the text (sarcasms that are not obvious)
-def weak_sarcasm_label_from_text(text: str) -> int:
-  if not text or not isinstance(text, str):
-    return 0
-  return 1 if _WEAK_SARCASM.search(text) else 0
-
-
-
-# add weak binary labels for supervised fine-tuning:
-# 1 = likely sarcasm (/s tag, common markers), 0 = otherwise
-def load_reddit_sarcasm_hf_with_weak_labels(
-  split_slice: str = "train[:100000]",
-) -> Dataset:
-  raw = load_dataset(REDDIT_SARCASM_DATASET, split=split_slice)
-
-  def add_label(ex: dict) -> dict:
-    t = ex.get("text") or ""
-    return {"label": weak_sarcasm_label_from_text(t)}
-
-  return raw.map(add_label)
-
-
-# merge the hugging face reddit-sarcasm dataset with the local CSV dataset
-def merge_hf_reddit_sarcasm_with_csv(
-  csv_path: str,
+def load_sarc_and_isarcasm_combined(
   tokenizer,
-  hf_split_slice: str = "train[:100000]",
-  n_label0: int = 250,
-  n_label1: int = 250,
-  n_mixed: int = 100,
+  sarc_split_slice: str = "sft_train[:20000]",
+  n_sarc_label0: int = 250,
+  n_sarc_label1: int = 250,
+  n_sarc_mixed: int = 100,
   seed: Optional[int] = None,
+  max_isarcasm_examples: Optional[int] = None,
 ) -> SatireDataset:
-  hf_ds = load_reddit_sarcasm_hf_with_weak_labels(split_slice=hf_split_slice)
-  hf_ds = sample_subset(hf_ds, n_human=n_label0, n_ai=n_label1, n_mixed=n_mixed, seed=seed)
-  hf_texts = [hf_ds[i]["text"] for i in range(len(hf_ds))]
-  hf_labels = [int(hf_ds[i]["label"]) for i in range(len(hf_ds))]
+  sarc_raw = load_dataset(SARC_HF_DATASET_ID, split=sarc_split_slice)
+  sarc_sampled = sample_subset(
+    sarc_raw,
+    n_human=n_sarc_label0,
+    n_ai=n_sarc_label1,
+    n_mixed=n_sarc_mixed,
+    seed=seed,
+  )
+  sarc_texts = [str(sarc_sampled[i]["comment"] or "") for i in range(len(sarc_sampled))]
+  sarc_labels = [int(sarc_sampled[i]["label"]) for i in range(len(sarc_sampled))]
 
-  csv_texts: List[str] = []
-  csv_labels: List[int] = []
+  iso_dd = load_dataset(ISARCASM_HF_DATASET_ID)
+  iso_full = concatenate_datasets(
+    [iso_dd["train"], iso_dd["validation"], iso_dd["test"]],
+  )
+  if max_isarcasm_examples is not None and max_isarcasm_examples > 0 and len(iso_full) > max_isarcasm_examples:
+    rng = random.Random(seed)
+    idx = list(range(len(iso_full)))
+    rng.shuffle(idx)
+    iso_full = iso_full.select(idx[:max_isarcasm_examples])
+  iso_texts = [str(iso_full[i]["sentence"] or "") for i in range(len(iso_full))]
+  iso_labels = [int(iso_full[i]["sentiment"]) for i in range(len(iso_full))]
 
-  # open the csv file and read the data
-  with open(csv_path, newline="", encoding="utf-8") as f:
-    reader = csv.DictReader(f)
-    cols = reader.fieldnames or []
-    tc = "text" if "text" in cols else cols[0]
-    for row in reader:
-      csv_texts.append(str(row.get(tc, "") or ""))
-      csv_labels.append(int(row["label"]) if row.get("label") not in (None, "") else 0)
+  texts = sarc_texts + iso_texts
+  labels = sarc_labels + iso_labels
+  # Use lighter preprocessing for sarcasm-specific datasets.
+  return SatireDataset(
+    texts=texts,
+    labels=labels,
+    tokenizer=tokenizer,
+    preprocess_fn=preprocess_text_sarcasm,
+  )
 
-  merged_texts = hf_texts + csv_texts
-  merged_labels = hf_labels + csv_labels
-  return SatireDataset(texts=merged_texts, labels=merged_labels, tokenizer=tokenizer)
+
+# Legacy (disabled): Thewillonline/reddit-sarcasm + weak hashtag labels + local CSV merge.
+if False:
+  REDDIT_SARCASM_DATASET = "Thewillonline/reddit-sarcasm"
+  _WEAK_SARCASM = re.compile(
+    r"(?i)(?:^|\s)/s(?:\s|$|[.,!?…])|"
+    r"\b(sarcasm|sarcastic|\/s|obvious\s+sarcasm|totally\s+serious|not\s+serious\s+at\s+all)\b"
+  )
+
+  def weak_sarcasm_label_from_text(text: str) -> int:
+    if not text or not isinstance(text, str):
+      return 0
+    return 1 if _WEAK_SARCASM.search(text) else 0
+
+  def load_reddit_sarcasm_hf_with_weak_labels(split_slice: str = "train[:100000]") -> Dataset:
+    raw = load_dataset(REDDIT_SARCASM_DATASET, split=split_slice)
+
+    def add_label(ex: dict) -> dict:
+      t = ex.get("text") or ""
+      return {"label": weak_sarcasm_label_from_text(t)}
+
+    return raw.map(add_label)
+
+  def merge_hf_reddit_sarcasm_with_csv(
+    csv_path: str,
+    tokenizer,
+    hf_split_slice: str = "train[:100000]",
+    n_label0: int = 250,
+    n_label1: int = 250,
+    n_mixed: int = 100,
+    seed: Optional[int] = None,
+  ) -> SatireDataset:
+    hf_ds = load_reddit_sarcasm_hf_with_weak_labels(split_slice=hf_split_slice)
+    hf_ds = sample_subset(hf_ds, n_human=n_label0, n_ai=n_label1, n_mixed=n_mixed, seed=seed)
+    hf_texts = [hf_ds[i]["text"] for i in range(len(hf_ds))]
+    hf_labels = [int(hf_ds[i]["label"]) for i in range(len(hf_ds))]
+
+    csv_texts: List[str] = []
+    csv_labels: List[int] = []
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+      reader = csv.DictReader(f)
+      cols = reader.fieldnames or []
+      tc = "text" if "text" in cols else cols[0]
+      for row in reader:
+        csv_texts.append(str(row.get(tc, "") or ""))
+        csv_labels.append(int(row["label"]) if row.get("label") not in (None, "") else 0)
+
+    merged_texts = hf_texts + csv_texts
+    merged_labels = hf_labels + csv_labels
+    return SatireDataset(texts=merged_texts, labels=merged_labels, tokenizer=tokenizer)
+
+  def load_hf_reddit_sarcasm_only(
+    tokenizer,
+    hf_split_slice: str = "train[:100000]",
+    n_label0: int = 250,
+    n_label1: int = 250,
+    n_mixed: int = 100,
+    seed: Optional[int] = None,
+  ) -> SatireDataset:
+    hf_ds = load_reddit_sarcasm_hf_with_weak_labels(split_slice=hf_split_slice)
+    hf_ds = sample_subset(hf_ds, n_human=n_label0, n_ai=n_label1, n_mixed=n_mixed, seed=seed)
+    hf_texts = [hf_ds[i]["text"] for i in range(len(hf_ds))]
+    hf_labels = [int(hf_ds[i]["label"]) for i in range(len(hf_ds))]
+    return SatireDataset(texts=hf_texts, labels=hf_labels, tokenizer=tokenizer)
 
 
 # create the dataloaders
 def create_satire_dataloaders(
-  csv_path: str,
+  csv_path: Optional[str],
   tokenizer,
   batch_size: int = 16,
   val_ratio: float = 0.2,
   test_ratio: float = 0.1,
   seed: int = 42,
   num_workers: int = 0,
+  use_sarc_and_isarcasm: bool = False,
+  sarc_split_slice: str = "sft_train[:20000]",
+  target_train_batches_per_epoch: Optional[int] = None,
   use_hf_reddit_sarcasm: bool = False,
+  only_hf_reddit_sarcasm: bool = False,
   hf_split_slice: str = "train[:100000]",
   n_hf_label0: int = 250,
   n_hf_label1: int = 250,
   n_hf_mixed: int = 100,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, int, int, int]:
-  # create the dataset (optional: mix Thewillonline/reddit-sarcasm + local CSV)
-  if use_hf_reddit_sarcasm:
-    full_dataset = merge_hf_reddit_sarcasm_with_csv(
+
+  if use_sarc_and_isarcasm:
+    max_isarcasm_examples = None
+    if target_train_batches_per_epoch is not None and target_train_batches_per_epoch > 0:
+      # We sample SARC to ~ (n_label0+n_label1+n_mixed) and cap iSarcasm so total stays small.
+      desired_total = batch_size * target_train_batches_per_epoch
+      max_isarcasm_examples = max(
+        0,
+        desired_total - (n_hf_label0 + n_hf_label1 + n_hf_mixed),
+      )
+    full_dataset = load_sarc_and_isarcasm_combined(
+      tokenizer=tokenizer,
+      sarc_split_slice=sarc_split_slice,
+      n_sarc_label0=n_hf_label0,
+      n_sarc_label1=n_hf_label1,
+      n_sarc_mixed=n_hf_mixed,
+      seed=seed,
+      max_isarcasm_examples=max_isarcasm_examples,
+    )
+  # Disabled for now: HF Thewillonline/reddit-sarcasm + test_dataset.csv
+  # elif only_hf_reddit_sarcasm:
+  #   full_dataset = load_hf_reddit_sarcasm_only(...)
+  # elif use_hf_reddit_sarcasm:
+  #   full_dataset = merge_hf_reddit_sarcasm_with_csv(...)
+  # else:
+  #   full_dataset = SatireDataset(csv_path=csv_path, tokenizer=tokenizer)
+  elif only_hf_reddit_sarcasm or use_hf_reddit_sarcasm:
+    raise RuntimeError(
+      "Hugging Face Thewillonline/reddit-sarcasm training paths are disabled for now. "
+      "Use the mixed_dataset.csv or re-enable those legacy branches explicitly.",
+    )
+  elif csv_path:
+    # For CSV training, use lighter sarcasm preprocessing (keep emoji/emoticon cues).
+    full_dataset = SatireDataset(
       csv_path=csv_path,
       tokenizer=tokenizer,
-      hf_split_slice=hf_split_slice,
-      n_label0=n_hf_label0,
-      n_label1=n_hf_label1,
-      n_mixed=n_hf_mixed,
-      seed=seed,
+      preprocess_fn=preprocess_text_sarcasm,
     )
   else:
-    full_dataset = SatireDataset(csv_path=csv_path, tokenizer=tokenizer)
+    raise ValueError("No dataset selected: set use_sarc_and_isarcasm=True or provide csv_path.")
   n = len(full_dataset)
   if n == 0:
-    raise ValueError(f"No examples found in {csv_path}")
+    raise ValueError("No examples found in dataset")
 
-  # shuffle the indices
-  indices = np.arange(n)
-  np.random.seed(seed)
-  np.random.shuffle(indices)
+  labels = getattr(full_dataset, "labels", None)
 
-  # seperate the dataset into test, validation, and training sets
-  test_n = int(n * test_ratio)
-  val_n = int(n * val_ratio)
+  # Stratified splitting (more stable test accuracy when classes are imbalanced).
+  if isinstance(labels, list) and len(labels) == n and len(set(labels)) == 2:
+    idx0 = np.array([i for i, l in enumerate(labels) if l == 0])
+    idx1 = np.array([i for i, l in enumerate(labels) if l == 1])
+    rng = np.random.RandomState(seed)
+    rng.shuffle(idx0)
+    rng.shuffle(idx1)
 
+    test_n0 = int(len(idx0) * test_ratio)
+    val_n0 = int(len(idx0) * val_ratio)
+    test_n1 = int(len(idx1) * test_ratio)
+    val_n1 = int(len(idx1) * val_ratio)
 
-  test_indices = indices[:test_n].tolist()
-  val_indices = indices[test_n : test_n + val_n].tolist()
-  train_indices = indices[test_n + val_n :].tolist()
+    test_idx = np.concatenate([idx0[:test_n0], idx1[:test_n1]])
+    val_idx = np.concatenate([idx0[test_n0 : test_n0 + val_n0], idx1[test_n1 : test_n1 + val_n1]])
+    train_idx = np.concatenate([idx0[test_n0 + val_n0 :], idx1[test_n1 + val_n1 :]])
+
+    rng.shuffle(test_idx)
+    rng.shuffle(val_idx)
+    rng.shuffle(train_idx)
+
+    test_indices = test_idx.tolist()
+    val_indices = val_idx.tolist()
+    train_indices = train_idx.tolist()
+  else:
+    # Fallback: random shuffle (previous behavior).
+    indices = np.arange(n)
+    np.random.seed(seed)
+    np.random.shuffle(indices)
+
+    test_n = int(n * test_ratio)
+    val_n = int(n * val_ratio)
+    test_indices = indices[:test_n].tolist()
+    val_indices = indices[test_n : test_n + val_n].tolist()
+    train_indices = indices[test_n + val_n :].tolist()
 
   # create the datasets
   train_dataset = Subset(full_dataset, train_indices)
@@ -646,27 +783,31 @@ class SatireDetector:
 # training script
 def train_on_social_media_data(
   detector: SatireDetector,
-  csv_path: str,
+  csv_path: Optional[str] = None,
   epochs: int = 2,
   batch_size: int = 16,
   lr: float = 5e-5,
   val_ratio: float = 0.2,
   test_ratio: float = 0.1,
   seed: int = 42,
+  use_sarc_and_isarcasm: bool = False,
+  sarc_split_slice: str = "sft_train[:20000]",
+  target_train_batches_per_epoch: Optional[int] = None,
   use_hf_reddit_sarcasm: bool = False,
+  only_hf_reddit_sarcasm: bool = False,
   hf_split_slice: str = "train[:100000]",
   n_hf_label0: int = 50,
   n_hf_label1: int = 50,
   n_hf_mixed: int = 100,
 ) -> None:
   # load the dataset
-  print(f"Loading dataset from {csv_path}...")
-  # mix the hugging face reddit-sarcasm dataset with the local CSV dataset for increased size of dataset
-  if use_hf_reddit_sarcasm:
+  if use_sarc_and_isarcasm:
     print(
-      f"Mixing Hugging Face {REDDIT_SARCASM_DATASET} ({hf_split_slice}, sample_subset) with CSV for sarcasm/satire cues."
+      f"Loading SARC ({SARC_HF_DATASET_ID}, {sarc_split_slice}) + "
+      f"iSarcasm ({ISARCASM_HF_DATASET_ID}, all splits)…",
     )
-  # create the dataloaders
+  else:
+    print(f"Loading dataset from {csv_path}…")
   train_loader, val_loader, test_loader, train_n, val_n, test_n = create_satire_dataloaders(
     csv_path=csv_path,
     tokenizer=detector.tokenizer,
@@ -674,7 +815,11 @@ def train_on_social_media_data(
     val_ratio=val_ratio,
     test_ratio=test_ratio,
     seed=seed,
+    use_sarc_and_isarcasm=use_sarc_and_isarcasm,
+    sarc_split_slice=sarc_split_slice,
+    target_train_batches_per_epoch=target_train_batches_per_epoch,
     use_hf_reddit_sarcasm=use_hf_reddit_sarcasm,
+    only_hf_reddit_sarcasm=only_hf_reddit_sarcasm,
     hf_split_slice=hf_split_slice,
     n_hf_label0=n_hf_label0,
     n_hf_label1=n_hf_label1,
@@ -790,6 +935,22 @@ if __name__ == "__main__":
 
   best_model_path = os.path.join(os.path.dirname(__file__), "best_satire_detector.pt")
   test_dataset_path = os.path.join(os.path.dirname(__file__), "test_dataset.csv")
+  mixed_dataset_path = os.path.join(os.path.dirname(__file__), "mixed_dataset.csv")
+
+  # Prevent accidental appends to the dataset CSV "for now".
+  _freeze_csv_writes(test_dataset_path)
+  _freeze_csv_writes(mixed_dataset_path)
+
+  # Dataset selection (active): your curated local `mixed_dataset.csv`.
+  USE_SARC_AND_ISARCASM = False
+  USE_MIXED_DATASET = True
+  # Keep training fast while iterating.
+  # With batch_size=16, 50–100 batches ≈ 800–1600 training examples per epoch.
+  TARGET_TRAIN_BATCHES_PER_EPOCH = 80
+
+  # Disabled for now — HF Thewillonline/reddit-sarcasm + local test_dataset.csv
+  # ONLY_USE_HF_REDDIT_SARCASM = True
+  # USE_HF_REDDIT_SARCASM = True
 
   if os.path.exists(best_model_path):
     state = torch.load(best_model_path, map_location=detector.device)
@@ -798,21 +959,56 @@ if __name__ == "__main__":
       detector.model.load_state_dict(state, strict=True)
       print(f"Loaded best model weights from {best_model_path}.")
 
-  if os.path.exists(test_dataset_path):
+  if USE_MIXED_DATASET:
     train_on_social_media_data(
       detector,
-      csv_path=test_dataset_path,
-      epochs=4,
+      csv_path=mixed_dataset_path,
+      epochs=5,
+      batch_size=16,
+      lr=3e-5, # change for increased accuracy (from 5e-5 to 3e-5)
+      use_sarc_and_isarcasm=False,
+    )
+  elif USE_SARC_AND_ISARCASM:
+    train_on_social_media_data(
+      detector,
+      csv_path=None,
+      epochs=5,
       batch_size=16,
       lr=5e-5,
-      use_hf_reddit_sarcasm=True,
-      hf_split_slice="train[:100000]",
+      use_sarc_and_isarcasm=True,
+      sarc_split_slice="sft_train[:20000]",
+      target_train_batches_per_epoch=TARGET_TRAIN_BATCHES_PER_EPOCH,
       n_hf_label0=250,
       n_hf_label1=250,
       n_hf_mixed=100,
     )
+  # elif ONLY_USE_HF_REDDIT_SARCASM:
+  #   train_on_social_media_data(
+  #     detector,
+  #     csv_path=None,
+  #     epochs=4,
+  #     batch_size=16,
+  #     lr=5e-5,
+  #     only_hf_reddit_sarcasm=True,
+  #     hf_split_slice="train[:100000]",
+  #     n_hf_label0=250,
+  #     n_hf_label1=250,
+  #     n_hf_mixed=100,
+  #   )
+  # elif os.path.exists(test_dataset_path):
+  #   train_on_social_media_data(
+  #     detector,
+  #     csv_path=test_dataset_path,
+  #     epochs=4,
+  #     batch_size=16,
+  #     lr=5e-5,
+  #     use_hf_reddit_sarcasm=USE_HF_REDDIT_SARCASM,
+  #     hf_split_slice="train[:100000]",
+  #     n_hf_label0=250,
+  #     n_hf_label1=250,
+  #     n_hf_mixed=100,
+  #   )
   else:
-    print(f"No test_dataset.csv found at {test_dataset_path}")
-    print("Place test_dataset.csv (columns: text, label; 0=non_satire, 1=satire) in this directory to train.")
+    print("Set USE_MIXED_DATASET=True or re-enable a legacy branch in __main__.")
 
   print("Detector initialized.\n")

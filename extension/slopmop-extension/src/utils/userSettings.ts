@@ -44,6 +44,7 @@ export interface DetectionSettings {
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
   badgeSize: 'small' | 'medium' | 'large';
+  detectionTheme: 'default' | 'high_contrast' | 'minimal';
   accessibilityMode: boolean;
   highlightSegments: boolean;
   /** Show Fact check next to Detect Now on posts (manual / eligible feeds). */
@@ -110,6 +111,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanComments: 'auto_top_n',
     uiMode: 'simple',
     badgeSize: 'medium',
+    detectionTheme: 'default',
     accessibilityMode: false,
     highlightSegments: true,
     factCheck: true,

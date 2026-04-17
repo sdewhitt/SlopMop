@@ -277,6 +277,35 @@ describe('Reddit extraction pipeline', () => {
     expect(parseFloat(a11yBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
   });
 
+  it('applies selected detection theme colors to indicators', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+    const renderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      detectionTheme: 'high_contrast',
+    });
+    const response: DetectionResponse = {
+      requestId: 'req-theme',
+      postId: 't3_theme',
+      verdict: 'likely_ai',
+      confidence: 0.8,
+      explanation: {
+        summary: 'Theme check',
+        highlights: [],
+        model: { name: 'm', version: '1' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 1, inferenceMs: 1 },
+      },
+    };
+
+    renderer.renderPending('t3_theme', postNode, 'theme');
+    renderer.renderResult('t3_theme', response);
+
+    const badge = postNode.lastElementChild as HTMLElement;
+    expect(badge.style.backgroundColor).toBe('rgb(255, 31, 31)');
+  });
+
   it('renders dual text + image results on the badge for mixed posts', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);

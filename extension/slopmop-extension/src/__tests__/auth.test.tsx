@@ -61,6 +61,7 @@ vi.mock('../lib/firestoreProxy', () => ({
       scanComments: 'auto_top_n',
       uiMode: 'simple',
       badgeSize: 'medium',
+  detectionTheme: 'default',
       accessibilityMode: false,
       highlightSegments: true,
       factCheck: true,
