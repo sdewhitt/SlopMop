@@ -161,16 +161,16 @@ export class OverlayRenderer {
         const theme = this.getIndicatorTheme();
         if (theme === "high_contrast") {
             const colorMap: Record<DetectionResponse["verdict"], string> = {
-                likely_ai: "#b91c1c",
-                likely_human: "#166534",
+                likely_ai: "#ff1f1f",
+                likely_human: "#00ff66",
                 unknown: "#111827",
             };
             return colorMap[verdict];
         }
         if (theme === "minimal") {
             const colorMap: Record<DetectionResponse["verdict"], string> = {
-                likely_ai: "#7f1d1d",
-                likely_human: "#14532d",
+                likely_ai: "#f87171",
+                likely_human: "#86efac",
                 unknown: "#4b5563",
             };
             return colorMap[verdict];

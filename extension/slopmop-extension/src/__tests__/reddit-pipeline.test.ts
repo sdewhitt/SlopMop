@@ -303,7 +303,7 @@ describe('Reddit extraction pipeline', () => {
     renderer.renderResult('t3_theme', response);
 
     const badge = postNode.lastElementChild as HTMLElement;
-    expect(badge.style.backgroundColor).toBe('rgb(185, 28, 28)');
+    expect(badge.style.backgroundColor).toBe('rgb(255, 31, 31)');
   });
 
   it('renders dual text + image results on the badge for mixed posts', () => {
