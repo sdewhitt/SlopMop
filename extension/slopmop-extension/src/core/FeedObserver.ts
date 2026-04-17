@@ -8,6 +8,7 @@ import {
     getLanguageUnsupportedCopy,
     isTextLanguageSupported,
 } from "@src/utils/languageSupport";
+import { computeFactCheckFingerprint } from "@src/utils/factCheckFingerprint";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -397,7 +398,12 @@ export class FeedObserver {
         const onFactCheck =
             this.settings.factCheck && extracted.text.plain.trim().length > 0
                 ? () => {
-                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain);
+                      // Use a text-only fingerprint so caching is stable across image hydration.
+                      const contentFingerprint = computeFactCheckFingerprint(extracted.site, extracted.text.plain);
+                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain, {
+                          site: extracted.site,
+                          contentFingerprint,
+                      });
                   }
                 : undefined;
         this.overlay.renderPending(
