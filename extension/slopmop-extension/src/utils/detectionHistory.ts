@@ -300,3 +300,22 @@ export function findMatchingHistoryByFingerprint(
   }
   return best;
 }
+
+/**
+ * Reconstruct lightweight explanation highlights from persisted score-only spans.
+ * Used when replaying cached detections from history.
+ */
+export function explanationHighlightsFromSpans(
+  spans: HighlightSpan[],
+): Array<{ start: number; end: number; reason: string }> {
+  return spans.map((span) => {
+    const score = Number.isFinite(span.score) ? span.score : 0;
+    const label =
+      score >= 0.85 ? 'strong AI signal' : score >= 0.65 ? 'possible AI pattern' : 'low-confidence signal';
+    return {
+      start: span.start,
+      end: span.end,
+      reason: `${label} (score ${Math.round(score * 100)}%)`,
+    };
+  });
+}

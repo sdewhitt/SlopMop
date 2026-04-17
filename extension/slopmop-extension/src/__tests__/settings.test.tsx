@@ -65,6 +65,7 @@ vi.mock('../lib/firestoreProxy', () => ({
       scanComments: 'auto_top_n',
       uiMode: 'simple',
       badgeSize: 'medium',
+      detectionTheme: 'default',
       accessibilityMode: false,
       highlightSegments: true,
       factCheck: true,
@@ -243,7 +244,7 @@ describe('Popup Settings Rendering', () => {
     expect(screen.getByText('Sensitivity')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /low/i })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /medium/i }).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: /high/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /high/i }).length).toBeGreaterThan(0);
   });
 
   it('should render badge size options', async () => {
@@ -260,6 +261,19 @@ describe('Popup Settings Rendering', () => {
     expect(screen.getByRole('button', { name: /large/i })).toBeInTheDocument();
   });
 
+  it('should render indicator theme options', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+
+    expect(screen.getByText('Indicator Theme')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /default/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /high contrast/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /minimal/i })).toBeInTheDocument();
+  });
+
   it('persists badge size selection to local settings', async () => {
     const user = userEvent.setup();
     renderPopupSignedIn();
@@ -274,6 +288,25 @@ describe('Popup Settings Rendering', () => {
       expect.objectContaining({
         settings: expect.objectContaining({
           badgeSize: 'large',
+        }),
+      }),
+    );
+  });
+
+  it('persists detection theme selection to local settings', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+    const highContrastBtn = screen.getByRole('button', { name: /high contrast/i });
+    await user.click(highContrastBtn);
+
+    const setMock = browser.storage.local.set as ReturnType<typeof vi.fn>;
+    expect(setMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          detectionTheme: 'high_contrast',
         }),
       }),
     );

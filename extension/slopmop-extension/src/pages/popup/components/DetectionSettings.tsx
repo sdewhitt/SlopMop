@@ -31,6 +31,12 @@ const BADGE_SIZE_LABELS: Record<Settings['badgeSize'], string> = {
   large: 'Large',
 };
 
+const THEME_LABELS: Record<Settings['detectionTheme'], string> = {
+  default: 'Default',
+  high_contrast: 'High Contrast',
+  minimal: 'Minimal',
+};
+
 export default function DetectionSettings({
   settings,
   onUpdateSetting,
@@ -189,6 +195,27 @@ export default function DetectionSettings({
                 }`}
               >
                 {BADGE_SIZE_LABELS[size]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="py-2.5">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Indicator Theme</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Choose how detection indicators are colored.
+          </p>
+          <div className="flex gap-1.5">
+            {(['default', 'high_contrast', 'minimal'] as const).map((theme) => (
+              <button
+                key={theme}
+                onClick={() => onUpdateSetting('detectionTheme', theme)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  settings.detectionTheme === theme
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
+                }`}
+              >
+                {THEME_LABELS[theme]}
               </button>
             ))}
           </div>
