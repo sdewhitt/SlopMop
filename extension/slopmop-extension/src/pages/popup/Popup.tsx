@@ -179,6 +179,7 @@ export default function Popup() {
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
         factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
+        cacheRecentResults: remote.settings.cacheRecentResults ?? defaultSettings.cacheRecentResults,
       };
       setSettings(merged);
       setEnabled(merged.enabled);
@@ -399,6 +400,7 @@ export default function Popup() {
       highlightSegments: defaultUserSettings.settings.highlightSegments,
       factCheck: defaultUserSettings.settings.factCheck,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
+      cacheRecentResults: defaultUserSettings.settings.cacheRecentResults,
     };
     setSettings(defaults);
     setEnabled(defaults.enabled);

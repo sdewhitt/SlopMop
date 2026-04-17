@@ -16,6 +16,7 @@ export interface PlatformToggles {
   youtube: boolean;
   linkedin: boolean;
   instagram: boolean;
+  google: boolean;
 }
 
 /** Languages the user allows for **text** AI detection (subset of model-capable langs). */
@@ -91,6 +92,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
       youtube: true,
       linkedin: true,
       instagram: true,
+      google: true,
     },
     enabled: true,
     scanText: true,

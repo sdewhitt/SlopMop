@@ -17,6 +17,7 @@ import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
 import { XAdapter } from '@src/core/adapters/XAdapter';
+import { GoogleAdapter } from '@src/core/adapters/GoogleAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
@@ -160,8 +161,14 @@ function shouldRunOnCurrentSite(
   if (hostname.includes('facebook.com')) return settings.platforms.facebook;
   if (hostname.includes('youtube.com')) return settings.platforms.youtube;
   if (hostname.includes('linkedin.com')) return settings.platforms.linkedin;
+  if (isGoogleHost(hostname)) return settings.platforms.google;
 
   return false;
+}
+
+function isGoogleHost(hostname: string): boolean {
+  // Matches google.com, google.co.uk, google.de, google.com.au, etc.
+  return /(^|\.)google\.[a-z]{2,3}(\.[a-z]{2,3})?$/.test(hostname);
 }
 
 function startObserver(settings: DetectionSettings): void {
@@ -180,6 +187,9 @@ function startObserver(settings: DetectionSettings): void {
   } else if (hostname.includes('twitter.com') || hostname.includes('x.com')) {
     adapter = new XAdapter();
     overlay = new XOverlayRenderer(adapter, settings);
+  } else if (isGoogleHost(hostname)) {
+    adapter = new GoogleAdapter();
+    overlay = new OverlayRenderer(settings);
   } else {
     return;
   }
