@@ -1,0 +1,19 @@
+.git
+.github
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/*.pyc
+**/.env
+**/.env.*
+
+# Not needed for API image
+extension
+website
+node_modules
+**/node_modules
+
+# Training artifacts not used at runtime (weights come from HF or baked separately)
+model_training/text_model/runs
+model_training/text_model/archive
+**/*.onnx
