@@ -953,16 +953,22 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
       const fullResult = await fullPromise;
       if (fullResult) {
+        const conservativeResult =
+          miniResult && miniResult.result.confidence <= fullResult.result.confidence
+            ? miniResult
+            : fullResult;
         const finalMapped = mapToDetectionResponse(
-          fullResult.result,
+          conservativeResult.result,
           enrichedPost.postId,
-          fullResult.elapsedMs,
+          conservativeResult.elapsedMs,
           mediaType,
           {
             isFinal: true,
-            modelVariant: fullResult.result.model_variant ?? 'full',
+            modelVariant: conservativeResult.result.model_variant ?? 'full',
           },
         );
+        finalMapped.explanation.summary +=
+          ' Final hybrid image score uses the lower AI confidence between mini and full.';
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
           payload: finalMapped,
@@ -1108,7 +1114,11 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     }
 
     const imageFullResult = await imageFullPromise;
-    const imageResult = imageFullResult ?? imageMiniResult;
+    const imageResult = imageFullResult
+      ? (imageMiniResult && imageMiniResult.result.confidence <= imageFullResult.result.confidence
+          ? imageMiniResult
+          : imageFullResult)
+      : imageMiniResult;
 
     // If text was skipped (unsupported language) but image succeeded, return image-only result.
     // Use the image result as the primary verdict (don't also set imageResult, which would
@@ -1127,6 +1137,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       if (!imageFullResult && imageMiniResult) {
         imgResponse.explanation.summary +=
           ' Full-model refinement is currently unavailable; keeping preliminary result.';
+      } else if (imageFullResult && imageMiniResult) {
+        imgResponse.explanation.summary +=
+          ' Final hybrid image score uses the lower AI confidence between mini and full.';
       }
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
@@ -1168,6 +1181,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       );
       if (!imageFullResult && imageMiniResult) {
         mapped.explanation.summary += ' Image refinement stayed on mini because full model was unavailable.';
+      } else if (imageFullResult && imageMiniResult) {
+        mapped.explanation.summary +=
+          ' Image refinement uses the lower AI confidence between mini and full.';
       }
     }
 
