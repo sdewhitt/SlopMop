@@ -168,119 +168,169 @@ export default function Options() {
         {/* General */}
         <section className="mb-8">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">General</h2>
-          <div className="bg-gray-900 rounded-xl p-4 divide-y divide-gray-800">
-            <Toggle
-              checked={settings.enabled}
-              onChange={(v) => update('enabled', v)}
-              label="Enable Detection"
-              description="Turn AI content detection on or off globally"
-            />
-            {!simpleMode && (
+          <div className="bg-gray-900 rounded-xl p-4">
+            <div
+              className="settings-search-block border-t border-gray-800 first:border-t-0 pt-3 first:pt-0"
+              data-search="enable detection global on off ai slopmop power"
+            >
               <Toggle
-                checked={settings.showNotifications}
-                onChange={(v) => update('showNotifications', v)}
-                label="Show Notifications"
-                description="Display a notification when AI content is detected"
+                checked={settings.enabled}
+                onChange={(v) => update('enabled', v)}
+                label="Enable Detection"
+                description="Turn AI content detection on or off globally"
               />
+            </div>
+            {!simpleMode && (
+              <div
+                className="settings-search-block border-t border-gray-800 pt-3"
+                data-search="notifications notify alerts banner toast"
+              >
+                <Toggle
+                  checked={settings.showNotifications}
+                  onChange={(v) => update('showNotifications', v)}
+                  label="Show Notifications"
+                  description="Display a notification when AI content is detected"
+                />
+              </div>
             )}
-            <Toggle
-              checked={settings.scanText}
-              onChange={(v) => update('scanText', v)}
-              label="Scan Text"
-              description="Analyze text content in posts"
-            />
-            <div className="py-3 border-t border-gray-800">
-              <p className="text-sm font-medium text-gray-200 mb-1">Text detection languages</p>
-              <p className="text-xs text-gray-500 mb-3">
-                Run text AI detection only when the post matches a selected language (detected automatically). Uncheck all to skip text detection.
-              </p>
-              <div className="flex flex-col gap-2">
-                {([
-                  ['eng', 'English'],
-                  ['spa', 'Spanish'],
-                  ['fra', 'French'],
-                ] as const).map(([code, label]) => (
-                  <label key={code} className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
-                    <input
-                      type="checkbox"
-                      checked={settings.detectionLanguages.includes(code)}
-                      onChange={() => {
-                        const cur = settings.detectionLanguages;
-                        const on = cur.includes(code);
-                        const next = on ? cur.filter((c) => c !== code) : [...cur, code];
-                        update('detectionLanguages', next);
-                      }}
-                      className="rounded border-gray-600 bg-gray-800"
-                    />
-                    {label}
-                  </label>
-                ))}
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="scan text posts content body"
+            >
+              <Toggle
+                checked={settings.scanText}
+                onChange={(v) => update('scanText', v)}
+                label="Scan Text"
+                description="Analyze text content in posts"
+              />
+            </div>
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="language languages english spanish french eng spa fra locale multilingual"
+            >
+              <div className="py-3">
+                <p className="text-sm font-medium text-gray-200 mb-1">Text detection languages</p>
+                <p className="text-xs text-gray-500 mb-3">
+                  Run text AI detection only when the post matches a selected language (detected automatically). Uncheck all to skip text detection.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {([
+                    ['eng', 'English'],
+                    ['spa', 'Spanish'],
+                    ['fra', 'French'],
+                  ] as const).map(([code, label]) => (
+                    <label key={code} className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={settings.detectionLanguages.includes(code)}
+                        onChange={() => {
+                          const cur = settings.detectionLanguages;
+                          const on = cur.includes(code);
+                          const next = on ? cur.filter((c) => c !== code) : [...cur, code];
+                          update('detectionLanguages', next);
+                        }}
+                        className="rounded border-gray-600 bg-gray-800"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
-            <Toggle
-              checked={settings.scanImages}
-              onChange={(v) => update('scanImages', v)}
-              label="Scan Images"
-              description="Analyze images in posts (coming soon)"
-            />
-            <Toggle
-              checked={effectiveLowBattery}
-              disabled={batteryAutoLowBatteryActive && !settings.lowBatteryMode}
-              onChange={(v) => update('lowBatteryMode', v)}
-              label="Low battery mode"
-              description="Manual power saving: locks Automatic Scanning off until you turn this off. Separate from automatic pause when the battery is low (message below)."
-            />
-            <div className="py-3 border-t border-gray-800">
-              <label className="flex items-start gap-2 cursor-pointer text-sm text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={settings.lowBatteryModeAutoWhenBatteryLow}
-                  onChange={(e) => update('lowBatteryModeAutoWhenBatteryLow', e.target.checked)}
-                  className="mt-0.5 rounded border-gray-600 bg-gray-800"
-                />
-                <span>
-                  <span className="font-medium text-gray-200">Turn on automatically when the battery is low</span>
-                  <span className="block text-xs text-gray-500 mt-0.5 leading-snug">
-                    Same thresholds as automatic pause below. Your saved Automatic Scanning preference is not changed;
-                    when charge is above the resume threshold or you plug in, behavior returns to your saved settings.
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="scan images picture photo vision multimodal"
+            >
+              <Toggle
+                checked={settings.scanImages}
+                onChange={(v) => update('scanImages', v)}
+                label="Scan Images"
+                description="Analyze images in posts (coming soon)"
+              />
+            </div>
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="low battery power saving manual charge unplugged"
+            >
+              <Toggle
+                checked={effectiveLowBattery}
+                disabled={batteryAutoLowBatteryActive && !settings.lowBatteryMode}
+                onChange={(v) => update('lowBatteryMode', v)}
+                label="Low battery mode"
+                description="Manual power saving: locks Automatic Scanning off until you turn this off. Separate from automatic pause when the battery is low (message below)."
+              />
+            </div>
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="battery automatic low threshold pause resume plug charge"
+            >
+              <div className="py-3">
+                <label className="flex items-start gap-2 cursor-pointer text-sm text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={settings.lowBatteryModeAutoWhenBatteryLow}
+                    onChange={(e) => update('lowBatteryModeAutoWhenBatteryLow', e.target.checked)}
+                    className="mt-0.5 rounded border-gray-600 bg-gray-800"
+                  />
+                  <span>
+                    <span className="font-medium text-gray-200">Turn on automatically when the battery is low</span>
+                    <span className="block text-xs text-gray-500 mt-0.5 leading-snug">
+                      Same thresholds as automatic pause below. Your saved Automatic Scanning preference is not changed;
+                      when charge is above the resume threshold or you plug in, behavior returns to your saved settings.
+                    </span>
                   </span>
-                </span>
-              </label>
-              {batteryAutoLowBatteryActive && !settings.lowBatteryMode && (
-                <p className="text-xs text-gray-500 mt-2 pl-6 leading-snug" role="status">
-                  Low battery mode is on automatically until the battery recovers or you turn off the option above.
+                </label>
+                {batteryAutoLowBatteryActive && !settings.lowBatteryMode && (
+                  <p className="text-xs text-gray-500 mt-2 pl-6 leading-snug" role="status">
+                    Low battery mode is on automatically until the battery recovers or you turn off the option above.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="automatic scanning manual detect now feed posts queue"
+            >
+              <Toggle
+                checked={effectiveLowBattery ? false : settings.automaticScanning}
+                disabled={effectiveLowBattery}
+                onChange={(v) => update('automaticScanning', v)}
+                label="Automatic Scanning"
+                description="When off, posts require clicking Detect Now"
+              />
+              {batteryThrottleActive && settings.automaticScanning && !effectiveLowBattery && (
+                <p className="text-xs text-amber-400/95 px-0 pb-2 -mt-1 leading-snug" role="status">
+                  Automatic scanning is paused while the battery is low and unplugged. Plug in or charge above the
+                  threshold to resume.
                 </p>
               )}
             </div>
-            <Toggle
-              checked={effectiveLowBattery ? false : settings.automaticScanning}
-              disabled={effectiveLowBattery}
-              onChange={(v) => update('automaticScanning', v)}
-              label="Automatic Scanning"
-              description="When off, posts require clicking Detect Now"
-            />
-            {batteryThrottleActive && settings.automaticScanning && !effectiveLowBattery && (
-              <p className="text-xs text-amber-400/95 px-0 pb-2 -mt-1 leading-snug" role="status">
-                Automatic scanning is paused while the battery is low and unplugged. Plug in or charge above the
-                threshold to resume.
-              </p>
-            )}
-            <Toggle
-              checked={settings.accessibilityMode}
-              onChange={(v) => update('accessibilityMode', v)}
-              label="Accessibility Mode"
-              description="Larger text and higher contrast for low-vision users"
-            />
-            <Toggle
-              checked={simpleMode}
-              onChange={(v) => {
-                setSimpleMode(v);
-                browser.storage.local.set({ simpleMode: v });
-                flashSaved();
-              }}
-              label="Simple Mode"
-              description="Hide advanced options and show only basic controls"
-            />
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="accessibility a11y contrast vision large text readability"
+            >
+              <Toggle
+                checked={settings.accessibilityMode}
+                onChange={(v) => update('accessibilityMode', v)}
+                label="Accessibility Mode"
+                description="Larger text and higher contrast for low-vision users"
+              />
+            </div>
+            <div
+              className="settings-search-block border-t border-gray-800 pt-3"
+              data-search="simple mode basic beginner advanced hide"
+            >
+              <Toggle
+                checked={simpleMode}
+                onChange={(v) => {
+                  setSimpleMode(v);
+                  browser.storage.local.set({ simpleMode: v });
+                  flashSaved();
+                }}
+                label="Simple Mode"
+                description="Hide advanced options and show only basic controls"
+              />
+            </div>
           </div>
         </section>
 
@@ -289,7 +339,10 @@ export default function Options() {
           <section className="mb-8">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Detection</h2>
             <div className="bg-gray-900 rounded-xl p-4 space-y-4">
-              <div>
+              <div
+                className="settings-search-block"
+                data-search="indicator theme appearance color style default minimal contrast dark light badge overlay"
+              >
                 <label className="text-sm font-medium text-gray-200">Indicator Theme</label>
                 <p className="text-xs text-gray-500 mb-2">Pick your preferred detection color style</p>
                 <div className="flex gap-2">
@@ -312,7 +365,10 @@ export default function Options() {
                   ))}
                 </div>
               </div>
-              <div>
+              <div
+                className="settings-search-block"
+                data-search="badge size indicator small medium large zoom readability"
+              >
                 <label className="text-sm font-medium text-gray-200">Badge Size</label>
                 <p className="text-xs text-gray-500 mb-2">Adjust in-page detection indicator size for readability</p>
                 <div className="flex gap-2">
@@ -331,7 +387,10 @@ export default function Options() {
                   ))}
                 </div>
               </div>
-              <div>
+              <div
+                className="settings-search-block"
+                data-search="sensitivity threshold false positive strict lenient low medium high"
+              >
                 <label className="text-sm font-medium text-gray-200">Sensitivity</label>
                 <p className="text-xs text-gray-500 mb-2">Higher sensitivity flags more content but may increase false positives</p>
                 <div className="flex gap-2">
@@ -351,7 +410,10 @@ export default function Options() {
                 </div>
               </div>
 
-              <div>
+              <div
+                className="settings-search-block"
+                data-search="highlight style border dim underline mark flagged overlay"
+              >
                 <label className="text-sm font-medium text-gray-200">Highlight Style</label>
                 <p className="text-xs text-gray-500 mb-2">How flagged content is visually marked</p>
                 <div className="flex gap-2">
@@ -372,18 +434,28 @@ export default function Options() {
               </div>
 
               <div className="pt-4 border-t border-gray-800 space-y-4">
-                <Toggle
-                  checked={settings.highlightSegments}
-                  onChange={(v) => update('highlightSegments', v)}
-                  label="Highlight segments that triggered detection"
-                  description="Show which parts of the text contributed most to the AI score"
-                />
-                <Toggle
-                  checked={settings.factCheck}
-                  onChange={(v) => update('factCheck', v)}
-                  label="Show Fact check"
-                  description="Fact check button beside Detect Now; runs ClaimReview search via backend"
-                />
+                <div
+                  className="settings-search-block"
+                  data-search="highlight segments explain attribution score text span"
+                >
+                  <Toggle
+                    checked={settings.highlightSegments}
+                    onChange={(v) => update('highlightSegments', v)}
+                    label="Highlight segments that triggered detection"
+                    description="Show which parts of the text contributed most to the AI score"
+                  />
+                </div>
+                <div
+                  className="settings-search-block"
+                  data-search="fact check claim review verify wikipedia sources backend"
+                >
+                  <Toggle
+                    checked={settings.factCheck}
+                    onChange={(v) => update('factCheck', v)}
+                    label="Show Fact check"
+                    description="Fact check button beside Detect Now; runs ClaimReview search via backend"
+                  />
+                </div>
               </div>
             </div>
           </section>
@@ -395,37 +467,61 @@ export default function Options() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Platforms</h2>
             <div className="bg-gray-900 rounded-xl p-4 divide-y divide-gray-800">
               {(Object.keys(settings.platforms) as Array<keyof Settings['platforms']>).map((platform) => (
-                <Toggle
+                <div
                   key={platform}
-                  checked={settings.platforms[platform]}
-                  onChange={(v) => updatePlatform(platform, v)}
-                  label={platform.charAt(0).toUpperCase() + platform.slice(1)}
-                />
+                  className="settings-search-block"
+                  data-search={`${platform} social network site feed ${platform === 'youtube' ? 'video' : ''} ${platform === 'linkedin' ? 'professional' : ''}`}
+                >
+                  <Toggle
+                    checked={settings.platforms[platform]}
+                    onChange={(v) => updatePlatform(platform, v)}
+                    label={platform.charAt(0).toUpperCase() + platform.slice(1)}
+                  />
+                </div>
               ))}
             </div>
           </section>
         )}
 
         {/* Disabled Websites */}
-        {!simpleMode && <DisabledWebsitesManager />}
+        {!simpleMode && (
+          <div
+            className="settings-search-block"
+            data-search="disabled websites blocklist ignore whitelist url domain skip"
+          >
+            <DisabledWebsitesManager />
+          </div>
+        )}
 
         {/* Data */}
         {!simpleMode && (
           <section className="mb-8">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Data</h2>
             <div className="bg-gray-900 rounded-xl p-4 flex gap-3">
-              <button
-                onClick={resetStats}
-                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+              <div
+                className="settings-search-block flex-1"
+                data-search="reset statistics stats counters scanned detected counts"
               >
-                Reset Statistics
-              </button>
-              <button
-                onClick={resetSettings}
-                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors"
+                <button
+                  type="button"
+                  onClick={resetStats}
+                  className="w-full py-2.5 rounded-lg text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                >
+                  Reset Statistics
+                </button>
+              </div>
+              <div
+                className="settings-search-block flex-1"
+                data-search="reset all settings factory defaults restore clear"
               >
-                Reset All Settings
-              </button>
+                <button
+                  type="button"
+                  onClick={resetSettings}
+                  className="w-full py-2.5 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors"
+                >
+                  Reset All Settings
+                </button>
+              </div>
             </div>
           </section>
         )}
