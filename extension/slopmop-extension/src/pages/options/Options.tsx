@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import browser from 'webextension-polyfill';
 import { type Settings, defaultSettings } from '../popup/types';
 import { normalizeDetectionLanguages } from '../../utils/userSettings';
@@ -49,6 +49,9 @@ export default function Options() {
   const [simpleMode, setSimpleMode] = useState(false);
   const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
   const [batteryAutoLowBatteryActive, setBatteryAutoLowBatteryActive] = useState(false);
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
+  const [settingsSearchNoMatches, setSettingsSearchNoMatches] = useState(false);
+  const settingsSearchInputRef = useRef<HTMLInputElement>(null);
 
   const mergeSettings = (raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
@@ -78,6 +81,35 @@ export default function Options() {
         setBatteryAutoLowBatteryActive(result[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true);
       });
   }, []);
+
+  useEffect(() => {
+    if (tab !== 'settings') {
+      setSettingsSearchQuery('');
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'settings') return;
+    const id = requestAnimationFrame(() => settingsSearchInputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'settings') {
+      setSettingsSearchNoMatches(false);
+      return;
+    }
+    const q = settingsSearchQuery.trim().toLowerCase();
+    const blocks = document.querySelectorAll<HTMLElement>('.settings-search-block');
+    let visible = 0;
+    blocks.forEach((el) => {
+      const ds = el.getAttribute('data-search') ?? '';
+      const match = !q || ds.toLowerCase().includes(q);
+      el.style.display = match ? '' : 'none';
+      if (match) visible += 1;
+    });
+    setSettingsSearchNoMatches(q.length > 0 && visible === 0);
+  }, [settingsSearchQuery, tab, simpleMode]);
 
   useEffect(() => {
     const handler = (changes: Record<string, browser.Storage.StorageChange>, areaName: string) => {
@@ -141,6 +173,66 @@ export default function Options() {
             saved ? 'opacity-100 bg-green-500/20 text-green-400' : 'opacity-0'
           }`}>Saved</span>
         </div>
+
+        {tab === 'settings' && (
+        <div
+          className="settings-page-search-panel mb-6"
+          role="search"
+          aria-label="Search settings"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Search settings</p>
+          <div className="relative">
+            <svg
+              className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <input
+              ref={settingsSearchInputRef}
+              type="text"
+              value={settingsSearchQuery}
+              onChange={(e) => setSettingsSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSettingsSearchQuery('');
+                  e.preventDefault();
+                }
+              }}
+              placeholder="Filter by keyword…"
+              autoComplete="off"
+              inputMode="search"
+              className="settings-page-search-input w-full rounded-xl border border-gray-700 bg-gray-900 py-2.5 pl-10 pr-10 text-sm text-gray-200 placeholder-gray-500 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+              aria-label="Filter settings by keyword"
+            />
+            {settingsSearchQuery.trim() !== '' && (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-gray-500 hover:bg-gray-800 hover:text-gray-300"
+                aria-label="Clear search"
+                onClick={() => {
+                  setSettingsSearchQuery('');
+                  settingsSearchInputRef.current?.focus();
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" aria-hidden>
+                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {settingsSearchNoMatches && (
+            <p className="mt-3 text-center text-sm text-gray-500" role="status">
+              No matching settings found
+            </p>
+          )}
+        </div>
+        )}
 
         {/* Tab bar */}
         <div className="flex gap-1 bg-gray-900 p-1 rounded-xl mb-8">

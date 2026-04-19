@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import browser from 'webextension-polyfill';
 import 'react/jsx-runtime';
 import { normalizeConfidence, resolveExplanation } from '@src/utils/generateExplanation';
@@ -87,6 +87,10 @@ export default function Popup() {
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportSuccess, setReportSuccess] = useState<string | null>(null);
+  const [popupSettingsSearchQuery, setPopupSettingsSearchQuery] = useState('');
+  const [popupSettingsSearchNoMatches, setPopupSettingsSearchNoMatches] = useState(false);
+  const popupSettingsSearchInputRef = useRef<HTMLInputElement>(null);
+  const popupSettingsScrollRef = useRef<HTMLDivElement>(null);
 
   const syncStatsFromStorage = useCallback((stored: Record<string, unknown>) => {
     setStats({
@@ -335,6 +339,37 @@ export default function Popup() {
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
   }, [mergeSettings]);
+
+  useEffect(() => {
+    if (view !== 'settings') {
+      setPopupSettingsSearchQuery('');
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== 'settings') return;
+    const id = requestAnimationFrame(() => popupSettingsSearchInputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [view]);
+
+  useLayoutEffect(() => {
+    if (view !== 'settings') {
+      setPopupSettingsSearchNoMatches(false);
+      return;
+    }
+    const root = popupSettingsScrollRef.current;
+    if (!root) return;
+    const q = popupSettingsSearchQuery.trim().toLowerCase();
+    const blocks = root.querySelectorAll<HTMLElement>('.settings-search-block');
+    let visible = 0;
+    blocks.forEach((el) => {
+      const ds = el.getAttribute('data-search') ?? '';
+      const match = !q || ds.toLowerCase().includes(q);
+      el.style.display = match ? '' : 'none';
+      if (match) visible += 1;
+    });
+    setPopupSettingsSearchNoMatches(q.length > 0 && visible === 0);
+  }, [popupSettingsSearchQuery, view, simpleMode]);
 
   useEffect(() => {
     const isFeedUrl = (url: string) =>
@@ -601,7 +636,69 @@ export default function Popup() {
         {onboardingModal}
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
-        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
+        <div
+          className="shrink-0 px-4 pt-2 pb-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900"
+          role="search"
+          aria-label="Search settings"
+        >
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Search settings</p>
+          <div className="relative">
+            <svg
+              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <input
+              ref={popupSettingsSearchInputRef}
+              type="text"
+              value={popupSettingsSearchQuery}
+              onChange={(e) => setPopupSettingsSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setPopupSettingsSearchQuery('');
+                  e.preventDefault();
+                }
+              }}
+              placeholder="Filter by keyword…"
+              autoComplete="off"
+              inputMode="search"
+              className="w-full min-h-[36px] rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-8 text-xs text-gray-900 placeholder-gray-500 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-400"
+              aria-label="Filter settings by keyword"
+            />
+            {popupSettingsSearchQuery.trim() !== '' && (
+              <button
+                type="button"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                aria-label="Clear search"
+                onClick={() => {
+                  setPopupSettingsSearchQuery('');
+                  popupSettingsSearchInputRef.current?.focus();
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden>
+                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {popupSettingsSearchNoMatches && (
+            <p className="mt-2 text-center text-[11px] text-gray-500" role="status">
+              No matching settings found
+            </p>
+          )}
+        </div>
+
+        <div
+          ref={popupSettingsScrollRef}
+          className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0"
+          style={{ maxHeight: 'calc(580px - 52px - 88px)' }}
+        >
           {/* Simple view: only detection on/off (on Home) and account remain; advanced settings hidden */}
           {!simpleMode && (
             <>
@@ -614,7 +711,12 @@ export default function Popup() {
 
               <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
 
-              <DisabledWebsitesManager />
+              <div
+                className="settings-search-block"
+                data-search="disabled websites blocklist ignore url domain skip"
+              >
+                <DisabledWebsitesManager />
+              </div>
 
               <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
             </>
@@ -622,7 +724,8 @@ export default function Popup() {
 
           {simpleMode && (
             <section
-              className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-700/60 dark:bg-amber-500/10 dark:text-amber-100"
+              className="settings-search-block rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-700/60 dark:bg-amber-500/10 dark:text-amber-100"
+              data-search="simple mode beginner basic options page extension"
               aria-live="polite"
             >
               <p className="font-semibold mb-1">Simple mode is on</p>
@@ -641,7 +744,10 @@ export default function Popup() {
           )}
 
           {/* Sign-out button */}
-          <section>
+          <section
+            className="settings-search-block"
+            data-search="account email sign out logout report issue profile"
+          >
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
               Account
             </p>
