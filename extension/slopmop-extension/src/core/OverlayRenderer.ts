@@ -95,6 +95,9 @@ export class OverlayRenderer {
     /** Merge new settings and re-apply visible badges/tooltip wiring for completed scans. */
     updateSettings(settings: DetectionSettings): void {
         this.settings = settings;
+        for (const overlay of this.mapToOverlay.values()) {
+            this.updateOverlayPosition(overlay);
+        }
         for (const [postId, res] of this.mapToResponse) {
             this.renderResult(postId, res);
         }
@@ -106,6 +109,16 @@ export class OverlayRenderer {
 
     protected getBadgePositionForHost(_hostNode: HTMLElement): Record<string, string> {
         return this.getBadgePosition();
+    }
+
+    private updateOverlayPosition(overlay: HTMLElement): void {
+        const hostNode = overlay.parentElement;
+        if (!(hostNode instanceof HTMLElement)) return;
+        overlay.style.top = "";
+        overlay.style.right = "";
+        overlay.style.bottom = "";
+        overlay.style.left = "";
+        Object.assign(overlay.style, this.getBadgePositionForHost(hostNode));
     }
 
     protected resolveBadgePosition(base: Record<string, string>): Record<string, string> {
