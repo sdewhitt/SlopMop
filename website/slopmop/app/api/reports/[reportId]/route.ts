@@ -46,9 +46,11 @@ function toReportRecord(
     submitterUid: typeof data.submitterUid === "string" ? data.submitterUid : null,
     submitterEmail: typeof data.submitterEmail === "string" ? data.submitterEmail : null,
     notificationInterval:
-      data.notificationInterval === "daily" || data.notificationInterval === "weekly"
+      data.notificationInterval === "daily" ||
+      data.notificationInterval === "weekly" ||
+      data.notificationInterval === "immediate"
         ? data.notificationInterval
-        : "immediate",
+        : null,
     userAgent: typeof data.userAgent === "string" ? data.userAgent : null,
     resolutionNote: typeof data.resolutionNote === "string" ? data.resolutionNote : null,
     addressedAt: asIso(data.addressedAt),

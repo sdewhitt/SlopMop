@@ -8,7 +8,6 @@ import {
 } from "../../lib/reportAuth";
 import { sendReportSubmittedEmail } from "../../lib/reportEmail";
 import {
-  isReportNotificationInterval,
   isReportStatus,
   isReportType,
   normalizeOptionalString,
@@ -62,9 +61,12 @@ function toReportRecord(
       typeof data.submitterUid === "string" ? data.submitterUid : null,
     submitterEmail:
       typeof data.submitterEmail === "string" ? data.submitterEmail : null,
-    notificationInterval: isReportNotificationInterval(data.notificationInterval)
-      ? data.notificationInterval
-      : "immediate",
+    notificationInterval:
+      data.notificationInterval === "daily" ||
+      data.notificationInterval === "weekly" ||
+      data.notificationInterval === "immediate"
+        ? data.notificationInterval
+        : null,
     userAgent: typeof data.userAgent === "string" ? data.userAgent : null,
     resolutionNote:
       typeof data.resolutionNote === "string" ? data.resolutionNote : null,
@@ -145,12 +147,11 @@ export async function POST(request: Request) {
       request.headers.get("authorization")
     );
     const configuredNotificationInterval =
-      getConfiguredReportNotificationInterval();
+      await getConfiguredReportNotificationInterval();
 
     const now = FieldValue.serverTimestamp();
     const data = {
       ...validation.value,
-      notificationInterval: configuredNotificationInterval,
       status: "open" as const,
       submitterUid: authUser?.uid ?? null,
       submitterEmail: authUser?.email ?? null,

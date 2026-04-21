@@ -19,7 +19,6 @@ export interface CreateReportPayload {
   message: string;
   pageUrl?: string;
   reporterEmail?: string;
-  notificationInterval?: ReportNotificationInterval;
   userAgent?: string;
 }
 
@@ -33,7 +32,7 @@ export interface ReportRecord {
   reporterEmail: string | null;
   submitterUid: string | null;
   submitterEmail: string | null;
-  notificationInterval: ReportNotificationInterval;
+  notificationInterval: ReportNotificationInterval | null;
   userAgent: string | null;
   resolutionNote: string | null;
   addressedAt: string | null;
@@ -42,6 +41,13 @@ export interface ReportRecord {
   lastNotifiedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+export interface ReportNotificationSettings {
+  notificationInterval: ReportNotificationInterval;
+  updatedAt: string | null;
+  updatedByUid: string | null;
+  updatedByEmail: string | null;
 }
 
 export function isReportType(value: unknown): value is ReportType {

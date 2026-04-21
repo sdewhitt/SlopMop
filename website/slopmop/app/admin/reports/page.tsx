@@ -5,7 +5,12 @@ import Link from "next/link";
 import Navbar from "../../components/navbar";
 import Footer from "../../components/footer";
 import { useAuth } from "../../context/AuthContext";
-import { type ReportRecord, type ReportStatus } from "../../lib/reportTypes";
+import {
+  REPORT_NOTIFICATION_INTERVALS,
+  type ReportNotificationInterval,
+  type ReportRecord,
+  type ReportStatus,
+} from "../../lib/reportTypes";
 
 type FilterStatus = ReportStatus | "all";
 
@@ -20,6 +25,10 @@ export default function AdminReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [notificationInterval, setNotificationInterval] =
+    useState<ReportNotificationInterval>("immediate");
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -33,6 +42,18 @@ export default function AdminReportsPage() {
     void loadReports(statusFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, statusFilter]);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!user) {
+      setLoadingSettings(false);
+      return;
+    }
+
+    void loadSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user]);
 
   async function loadReports(filter: FilterStatus, options?: { background?: boolean }) {
     if (!user) return;
@@ -145,6 +166,79 @@ export default function AdminReportsPage() {
     }
   }
 
+  async function loadSettings() {
+    if (!user) return;
+
+    setLoadingSettings(true);
+    setError(null);
+
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/reports/config", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const body = (await res.json()) as {
+        error?: string;
+        settings?: {
+          notificationInterval?: ReportNotificationInterval;
+        };
+      };
+
+      if (!res.ok) {
+        throw new Error(body.error ?? "Failed to load report settings");
+      }
+
+      if (body.settings?.notificationInterval) {
+        setNotificationInterval(body.settings.notificationInterval);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load report settings");
+    } finally {
+      setLoadingSettings(false);
+    }
+  }
+
+  async function saveSettings() {
+    if (!user) return;
+
+    setSavingSettings(true);
+    setError(null);
+
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/reports/config", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ notificationInterval }),
+      });
+
+      const body = (await res.json()) as {
+        error?: string;
+        settings?: {
+          notificationInterval?: ReportNotificationInterval;
+        };
+      };
+
+      if (!res.ok) {
+        throw new Error(body.error ?? "Failed to save report settings");
+      }
+
+      if (body.settings?.notificationInterval) {
+        setNotificationInterval(body.settings.notificationInterval);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save report settings");
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   const totals = useMemo(() => {
     const open = reports.filter((report) => report.status === "open").length;
     const addressed = reports.filter((report) => report.status === "addressed").length;
@@ -234,6 +328,47 @@ export default function AdminReportsPage() {
           <StatCard title="Addressed" value={String(totals.addressed)} />
         </div>
 
+        <div className="mb-6 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Notification Cadence</p>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                This is a global server setting for all report notifications.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="report-interval" className="text-xs text-neutral-500">
+                Interval
+              </label>
+              <select
+                id="report-interval"
+                disabled={loadingSettings || savingSettings}
+                value={notificationInterval}
+                onChange={(e) =>
+                  setNotificationInterval(e.target.value as ReportNotificationInterval)
+                }
+                className="rounded-lg border border-neutral-300 bg-transparent px-3 py-1.5 text-sm outline-none ring-blue-500 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700"
+              >
+                {REPORT_NOTIFICATION_INTERVALS.map((interval) => (
+                  <option key={interval} value={interval}>
+                    {interval[0].toUpperCase() + interval.slice(1)}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => void saveSettings()}
+                disabled={loadingSettings || savingSettings}
+                className="rounded-full bg-black px-4 py-1.5 text-xs font-semibold text-white transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black"
+              >
+                {savingSettings ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {error && (
           <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
             {error}
@@ -297,9 +432,11 @@ export default function AdminReportsPage() {
                   </p>
                   <p>
                     <strong className="font-semibold text-neutral-700 dark:text-neutral-300">
-                      Interval:
+                      Last Notified:
                     </strong>{" "}
-                    {report.notificationInterval}
+                    {report.lastNotifiedAt
+                      ? new Date(report.lastNotifiedAt).toLocaleString()
+                      : "never"}
                   </p>
                   <p>
                     <strong className="font-semibold text-neutral-700 dark:text-neutral-300">
