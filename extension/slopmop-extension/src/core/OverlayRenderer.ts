@@ -12,6 +12,10 @@ import {
     normalizePlainText,
     prepareHighlightSpans,
 } from "@src/utils/highlightSpans";
+import {
+    SATIRE_SCORE_HIGH_BANNER_THRESHOLD,
+    SATIRE_SCORE_SOFTEN_THRESHOLD,
+} from "@src/utils/factCheckSatire";
  
 
 export class OverlayRenderer {
@@ -1138,6 +1142,52 @@ export class OverlayRenderer {
             tip.appendChild(this.makeTooltipLanguageRow(langLineSimple, "13px", "#9ca3af"));
         }
 
+        const satireScore = (res as any)?.satire_score;
+        const satireLabelRaw = (res as any)?.satire_label;
+        const satireLabel =
+            typeof satireLabelRaw === "string" && satireLabelRaw.toLowerCase() === "satire"
+                ? "satire"
+                : typeof satireLabelRaw === "string" &&
+                    (satireLabelRaw.toLowerCase() === "non_satire" ||
+                        satireLabelRaw.toLowerCase() === "non-satire")
+                    ? "non_satire"
+                    : null;
+        if (typeof satireScore === "number" || satireLabel !== null) {
+            const line = document.createElement("div");
+            Object.assign(line.style, {
+                marginTop: "6px",
+                marginBottom: "8px",
+                fontSize: "12px",
+                color: "#d1d5db",
+                fontWeight: "600",
+            });
+            const pct = typeof satireScore === "number" ? ` (${Math.round(satireScore * 100)}%)` : "";
+            line.textContent =
+                "Satire: " +
+                (satireLabel === "satire" ? "Yes" : satireLabel === "non_satire" ? "No" : "Unknown") +
+                pct;
+            tip.appendChild(line);
+        }
+        if (typeof satireScore === "number" && satireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD) {
+            const banner = document.createElement("div");
+            Object.assign(banner.style, {
+                marginTop: "8px",
+                marginBottom: "8px",
+                padding: "8px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(251, 191, 36, 0.12)",
+                border: "1px solid rgba(251, 191, 36, 0.45)",
+                color: "#fde68a",
+                fontSize: "12px",
+                lineHeight: "1.45",
+            });
+            banner.textContent =
+                satireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                    ? "Satire/parody detected. AI scores may be lowered on satirical posts to reduce false positives."
+                    : "Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.";
+            tip.appendChild(banner);
+        }
+
         const summary = document.createElement("div");
         Object.assign(summary.style, { fontSize: "14px", marginTop: "8px" });
         summary.textContent = res.explanation.summary;
@@ -1208,6 +1258,50 @@ export class OverlayRenderer {
         );
         if (langLine) {
             tip.appendChild(this.makeTooltipLanguageRow(langLine, "12px", "#9ca3af"));
+        }
+
+        const satireScore = (res as any)?.satire_score;
+        const satireLabelRaw = (res as any)?.satire_label;
+        const satireLabel =
+            typeof satireLabelRaw === "string" && satireLabelRaw.toLowerCase() === "satire"
+                ? "satire"
+                : typeof satireLabelRaw === "string" &&
+                    (satireLabelRaw.toLowerCase() === "non_satire" ||
+                        satireLabelRaw.toLowerCase() === "non-satire")
+                    ? "non_satire"
+                    : null;
+        if (typeof satireScore === "number" || satireLabel !== null) {
+            const line = document.createElement("div");
+            Object.assign(line.style, {
+                marginBottom: "8px",
+                fontSize: "11px",
+                color: "#d1d5db",
+                fontWeight: "600",
+            });
+            const pct = typeof satireScore === "number" ? ` (${Math.round(satireScore * 100)}%)` : "";
+            line.textContent =
+                "Satire: " +
+                (satireLabel === "satire" ? "Yes" : satireLabel === "non_satire" ? "No" : "Unknown") +
+                pct;
+            tip.appendChild(line);
+        }
+        if (typeof satireScore === "number" && satireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD) {
+            const banner = document.createElement("div");
+            Object.assign(banner.style, {
+                marginBottom: "8px",
+                padding: "8px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(251, 191, 36, 0.12)",
+                border: "1px solid rgba(251, 191, 36, 0.45)",
+                color: "#fde68a",
+                fontSize: "11px",
+                lineHeight: "1.45",
+            });
+            banner.textContent =
+                satireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                    ? "Satire/parody detected. AI scores may be lowered on satirical posts to reduce false positives."
+                    : "Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.";
+            tip.appendChild(banner);
         }
 
         // confidence progress bar

@@ -30,6 +30,10 @@ import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
 import { BATTERY_THROTTLE_ACTIVE_KEY, BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY } from '@src/utils/batteryThrottle';
 import type { FactCheckItem } from '@src/types/domain';
 import type { SubmitExtensionReportPayload } from '@src/lib/api';
+import {
+  SATIRE_SCORE_HIGH_BANNER_THRESHOLD,
+  SATIRE_SCORE_SOFTEN_THRESHOLD,
+} from '@src/utils/factCheckSatire';
 
 type DetectResponse = {
   confidence?: number;
@@ -776,13 +780,20 @@ export default function Popup() {
     (detectResponse?.confidence_score as number | undefined) ??
     null;
   const confidence = normalizeConfidence(rawConfidence);
-  const baseExplanation = detectResponse
-    ? resolveExplanation({
-        explanation: detectResponse.explanation as string | undefined,
-        confidence: rawConfidence,
-        metadataComplete: detectResponse.metadataComplete as boolean | undefined,
-      })
-    : null;
+  const baseExplanation = (() => {
+    if (!detectResponse) return null;
+    const exp = (detectResponse as any).explanation;
+    // Newer background payloads store `DetectionResponse` with `explanation.summary`.
+    if (exp && typeof exp === 'object' && typeof exp.summary === 'string') {
+      return exp.summary.trim();
+    }
+    // Older / alternate shapes store `explanation` as a string.
+    return resolveExplanation({
+      explanation: typeof exp === 'string' ? exp : undefined,
+      confidence: rawConfidence,
+      metadataComplete: (detectResponse as any).metadataComplete as boolean | undefined,
+    });
+  })();
   const patternReasons = (detectResponse as { patternReasons?: string[] } | null)?.patternReasons;
   const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
@@ -793,6 +804,25 @@ export default function Popup() {
     : detectResponse?.detectionSource === 'image'
       ? 'Image'
       : null;
+  const detectSatireScore =
+    typeof (detectResponse as any)?.satire_score === 'number'
+      ? ((detectResponse as any).satire_score as number)
+      : typeof (detectResponse as any)?.satireScore === 'number'
+        ? ((detectResponse as any).satireScore as number)
+        : null;
+  const detectSatireLabelRaw =
+    typeof (detectResponse as any)?.satire_label === 'string'
+      ? ((detectResponse as any).satire_label as string)
+      : typeof (detectResponse as any)?.satireLabel === 'string'
+        ? ((detectResponse as any).satireLabel as string)
+        : null;
+  const detectSatireLabel =
+    detectSatireLabelRaw?.toLowerCase() === 'satire'
+      ? 'satire'
+      : detectSatireLabelRaw?.toLowerCase() === 'non_satire' ||
+          detectSatireLabelRaw?.toLowerCase() === 'non-satire'
+        ? 'non_satire'
+        : null;
 
   // ── History view ──────────────────────────────────────────────
   if (view === 'history') {
@@ -857,6 +887,41 @@ export default function Popup() {
             <p className="text-xs font-medium uppercase tracking-wider text-gray-400 mb-1">
               Source: {mediaSourceLabel}
             </p>
+          )}
+          {(detectSatireScore != null || detectSatireLabel != null) && (
+            <p className="mb-2 text-[11px] font-medium text-gray-600 dark:text-gray-300">
+              Satire:{' '}
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border ${
+                  detectSatireLabel === 'satire'
+                    ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+                    : detectSatireLabel === 'non_satire'
+                      ? 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
+                      : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'
+                }`}
+              >
+                {detectSatireLabel === 'satire'
+                  ? 'Yes'
+                  : detectSatireLabel === 'non_satire'
+                    ? 'No'
+                    : 'Unknown'}
+                {detectSatireScore != null ? ` (${Math.round(detectSatireScore * 100)}%)` : ''}
+              </span>
+            </p>
+          )}
+          {detectSatireScore != null && detectSatireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD && (
+            <div
+              className={`mb-2 rounded-lg border px-3 py-2 text-xs leading-snug ${
+                detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                  ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+                  : 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
+              }`}
+              role="status"
+            >
+              {detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                ? 'Satire/parody detected. The text model may lower AI scores on satirical posts to reduce false positives.'
+                : 'Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.'}
+            </div>
           )}
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
