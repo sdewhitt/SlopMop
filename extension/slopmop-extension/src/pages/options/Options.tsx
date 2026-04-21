@@ -290,6 +290,29 @@ export default function Options() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Detection</h2>
             <div className="bg-gray-900 rounded-xl p-4 space-y-4">
               <div>
+                <label className="text-sm font-medium text-gray-200">Badge Position</label>
+                <p className="text-xs text-gray-500 mb-2">Place detection indicators in your preferred corner</p>
+                <div className="flex gap-2">
+                  {([
+                    ['top_right', 'Top-right'],
+                    ['top_left', 'Top-left'],
+                    ['bottom_right', 'Bottom-right'],
+                  ] as const).map(([pos, label]) => (
+                    <button
+                      key={pos}
+                      onClick={() => update('badgePosition', pos)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        settings.badgePosition === pos
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <label className="text-sm font-medium text-gray-200">Indicator Theme</label>
                 <p className="text-xs text-gray-500 mb-2">Pick your preferred detection color style</p>
                 <div className="flex gap-2">

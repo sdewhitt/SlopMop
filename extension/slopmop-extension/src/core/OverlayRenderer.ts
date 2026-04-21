@@ -101,11 +101,24 @@ export class OverlayRenderer {
     }
 
     protected getBadgePosition(): Record<string, string> {
-        return { bottom: "8px", right: "8px" };
+        return this.resolveBadgePosition({ top: "8px", right: "8px" });
     }
 
     protected getBadgePositionForHost(_hostNode: HTMLElement): Record<string, string> {
         return this.getBadgePosition();
+    }
+
+    protected resolveBadgePosition(base: Record<string, string>): Record<string, string> {
+        const position = this.settings.badgePosition ?? "top_right";
+        const top = base.top ?? base.bottom ?? "8px";
+        const right = base.right ?? base.left ?? "8px";
+        if (position === "top_left") {
+            return { top, left: right };
+        }
+        if (position === "bottom_right") {
+            return { bottom: top, right };
+        }
+        return { top, right };
     }
 
     protected getTooltipPosition(): Record<string, string> {
@@ -410,7 +423,10 @@ export class OverlayRenderer {
         const detectNowButton = document.createElement("button");
         detectNowButton.type = "button";
         detectNowButton.textContent = "Detect Now";
-        Object.assign(detectNowButton.style, this.getActionButtonStyle(hostNode, isSimple));
+        Object.assign(detectNowButton.style, {
+            backgroundColor: this.getNeutralIndicatorColor(),
+            ...this.getActionButtonStyle(hostNode, isSimple),
+        });
         detectNowButton.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();

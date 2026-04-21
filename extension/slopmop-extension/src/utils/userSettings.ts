@@ -44,6 +44,7 @@ export interface DetectionSettings {
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
   badgeSize: 'small' | 'medium' | 'large';
+  badgePosition: 'top_right' | 'top_left' | 'bottom_right';
   detectionTheme: 'default' | 'high_contrast' | 'minimal';
   accessibilityMode: boolean;
   highlightSegments: boolean;
@@ -111,6 +112,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanComments: 'auto_top_n',
     uiMode: 'simple',
     badgeSize: 'medium',
+    badgePosition: 'top_right',
     detectionTheme: 'default',
     accessibilityMode: false,
     highlightSegments: true,
