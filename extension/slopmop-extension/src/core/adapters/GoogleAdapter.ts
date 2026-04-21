@@ -4,41 +4,58 @@ import type { SiteAdapter } from "./SiteAdapter";
  * SiteAdapter for Google Search (google.com and country TLDs).
  *
  * Targets AI-generated content blocks on the SERP — primarily the "AI Overview"
- * (also referred to as SGE / Search Generative Experience). Ordinary organic
- * results are intentionally ignored.
+ * (previously SGE / Search Generative Experience). Ordinary organic results are
+ * intentionally ignored.
  *
- * Selector strategy: Google frequently changes class names, so this adapter uses
- * a fallback chain of selectors. When none match, findPostNodes returns [] and
- * the MutationObserver-driven scan is effectively a no-op.
+ * Selector strategy:
+ *   Google rotates class names frequently (e.g. .Kevs9, .Y3BBE, .M8OgIe) but keeps
+ *   a small set of stable attribute hooks. We prefer those, then fall back to the
+ *   literal heading text "AI Overview" and walk up the DOM a bounded number of
+ *   levels to find the content container.
+ *
+ *   Verified against Google SERP DOM, early 2026. See:
+ *     - data-attrid="overview"          (container)
+ *     - jsname="tJHJj"                  (container)
+ *     - .Kevs9                          (content wrapper; class rotates)
+ *     - .Y3BBE                          (per-paragraph; class rotates)
  */
 
 /**
- * Primary → fallback selector chain for AI Overview / generative blocks.
- * Ordered by specificity; first match wins.
+ * Primary → fallback attribute-based selector chain. First match wins.
+ * All entries should be "real" hooks observed on live SERP HTML.
  */
 const AI_OVERVIEW_SELECTORS = [
-  // Modern AI Overview containers (as of 2024-2026)
-  'div[data-attrid="AIOverview"]',
-  'div[data-attrid*="ai_overview"]',
-  'div[aria-label*="AI Overview" i]',
-  'div[aria-label*="AI-generated" i]',
-  // Generative block fallbacks (SGE-era)
-  'div[data-sgrd]',
-  'div.g-blk[data-hveid]',
-  // Knowledge panel generative descriptions
-  'div.kno-rdesc',
+  // Stable attribute container (lowercase `overview`).
+  'div[data-attrid="overview"]',
+  // Stable jsname fingerprint for the AIO card.
+  'div[jsname="tJHJj"]',
+  // Aria-labelled landmark (occasionally emitted on the outer region).
+  '[role="region"][aria-label*="AI Overview" i]',
+  '[role="region"][aria-label*="AI-generated" i]',
 ];
 
-/**
- * Heading text used to locate AI Overview containers when data attributes are
- * missing. We look for headings matching these patterns and return the nearest
- * meaningful container ancestor.
- */
+/** Heading text used to locate AI Overview containers by content. */
 const AI_HEADING_PATTERNS = [
   /\bAI\s*Overview\b/i,
   /\bAI-generated\b/i,
-  /\bGenerative\s*AI\b/i,
 ];
+
+/**
+ * Max levels `findByHeading` walks up from the heading looking for a container
+ * that holds both the heading and substantially more body text. Matches the
+ * pattern used by community AIO scrapers (they walk 10 ancestors for `.Kevs9`).
+ */
+const HEADING_ANCESTOR_WALK_LIMIT = 10;
+
+/**
+ * Minimum extra characters of text the container must contain beyond the
+ * heading itself. Picks a wrapper that includes the AIO body, not just a title
+ * chip.
+ */
+const MIN_BODY_CHARS_BEYOND_HEADING = 80;
+
+/** Max ancestors `getPostOverlayHost` climbs when looking past clipping parents. */
+const OVERLAY_HOST_WALK_LIMIT = 8;
 
 export class GoogleAdapter implements SiteAdapter {
   getSiteId(): string {
@@ -52,18 +69,16 @@ export class GoogleAdapter implements SiteAdapter {
     for (const sel of AI_OVERVIEW_SELECTORS) {
       const nodes = this.querySelectorAllIncludingRoot(root, sel);
       for (const node of nodes) {
-        const picked = this.pickMeaningfulContainer(node);
-        if (!picked || seen.has(picked)) continue;
-        if (this.hasMeaningfulText(picked)) {
-          seen.add(picked);
-          out.push(picked);
+        if (seen.has(node)) continue;
+        if (this.hasMeaningfulText(node)) {
+          seen.add(node);
+          out.push(node);
         }
       }
     }
 
     if (out.length === 0) {
-      const fromHeading = this.findByHeading(root);
-      for (const node of fromHeading) {
+      for (const node of this.findByHeading(root)) {
         if (!seen.has(node) && this.hasMeaningfulText(node)) {
           seen.add(node);
           out.push(node);
@@ -91,13 +106,41 @@ export class GoogleAdapter implements SiteAdapter {
   }
 
   getTextNode(postNode: Element): HTMLElement | null {
-    // The adapter's root is already scoped to the AI block; use it as the text host.
+    // The post node is already scoped to the AI block; use it as the text host.
     if (postNode instanceof HTMLElement) return postNode;
     return null;
   }
 
+  /**
+   * Google collapses the AI Overview with `overflow: hidden` + a `max-height`
+   * animation. An absolute-positioned badge appended inside the AIO would be
+   * clipped by that outer wrapper even when the post node itself isn't the
+   * clipper. Walk self + up to N ancestors; if any of them clip, return the
+   * first ancestor that sits above *every* clipping element in the chain.
+   * Falls back to the post node itself when no clean ancestor is found.
+   */
+  getPostOverlayHost(postNode: Element): HTMLElement | null {
+    if (!(postNode instanceof HTMLElement)) return null;
+
+    const ancestors: HTMLElement[] = [];
+    let node: HTMLElement | null = postNode;
+    for (let i = 0; node && i <= OVERLAY_HOST_WALK_LIMIT; i++) {
+      ancestors.push(node);
+      node = node.parentElement;
+    }
+
+    let lastClipIdx = -1;
+    for (let i = 0; i < ancestors.length; i++) {
+      if (this.isClipping(ancestors[i])) lastClipIdx = i;
+    }
+
+    if (lastClipIdx === -1) return postNode;
+    if (lastClipIdx + 1 < ancestors.length) return ancestors[lastClipIdx + 1];
+    return postNode;
+  }
+
   getImageNodes(_postNode: Element): HTMLImageElement[] {
-    // AI Overview images are thumbnails of cited sources, not generated content.
+    // AI Overview images are source citation thumbnails, not generated content.
     return [];
   }
 
@@ -137,48 +180,106 @@ export class GoogleAdapter implements SiteAdapter {
   }
 
   /**
-   * Some selectors match inner wrappers. Walk up a few ancestors to find a
-   * container that meaningfully bounds the AI block.
+   * Heading-text fallback: find h1/h2/h3/[role="heading"] elements whose text
+   * matches an AI Overview marker, then walk up to HEADING_ANCESTOR_WALK_LIMIT
+   * ancestors and pick the first ancestor whose own text contains the heading
+   * plus MIN_BODY_CHARS_BEYOND_HEADING more characters. That heuristic avoids
+   * bare title chips and over-broad SERP shells alike.
    */
-  private pickMeaningfulContainer(el: Element): Element | null {
-    const withHveid = el.closest('[data-hveid]');
-    if (withHveid && this.hasMeaningfulText(withHveid)) return withHveid;
-    return el;
-  }
-
   private findByHeading(root: ParentNode): Element[] {
-    const docRoot = root instanceof Document ? root : root instanceof Element ? root : document;
-    const candidates = docRoot.querySelectorAll<HTMLElement>(
-      'h1, h2, h3, [role="heading"], [aria-level]',
+    const docRoot =
+      root instanceof Document ? root :
+      root instanceof Element ? root :
+      document;
+    const headings = docRoot.querySelectorAll<HTMLElement>(
+      'h1, h2, h3, [role="heading"]',
     );
-    const out: Element[] = [];
-    for (const h of Array.from(candidates)) {
-      const text = (h.textContent ?? "").trim();
-      if (!text) continue;
-      if (!AI_HEADING_PATTERNS.some((rx) => rx.test(text))) continue;
 
-      const container =
-        h.closest('[data-hveid]') ??
-        h.closest("section") ??
-        h.parentElement;
+    const out: Element[] = [];
+    for (const h of Array.from(headings)) {
+      const headingText = (h.textContent ?? "").trim();
+      if (!headingText) continue;
+      if (!AI_HEADING_PATTERNS.some((rx) => rx.test(headingText))) continue;
+
+      const container = this.walkUpForAioContainer(h, headingText);
       if (container) out.push(container);
     }
     return out;
   }
 
-  private hasMeaningfulText(el: Element): boolean {
-    if (!(el instanceof HTMLElement)) return false;
-    const text = (el.innerText ?? "").trim();
-    return text.length >= 40;
+  private walkUpForAioContainer(
+    heading: HTMLElement,
+    headingText: string,
+  ): Element | null {
+    let node: HTMLElement | null = heading.parentElement;
+    let level = 0;
+    while (node && level < HEADING_ANCESTOR_WALK_LIMIT) {
+      const ownText = this.getInnerText(node);
+      const extra = ownText.length - headingText.length;
+      if (extra >= MIN_BODY_CHARS_BEYOND_HEADING) {
+        return node;
+      }
+      node = node.parentElement;
+      level++;
+    }
+    return null;
   }
 
-  /** First 500 chars of innerText — stable across re-renders of the same AI Overview. */
+  private hasMeaningfulText(el: Element): boolean {
+    return this.getInnerText(el).length >= 40;
+  }
+
+  /**
+   * True when the element would visually clip an absolute-positioned badge
+   * placed at its bottom/right corner. Checks computed overflow (hidden/clip/
+   * scroll) and whether a capped max-height is in effect. Falls back to inline
+   * styles when getComputedStyle is unavailable (e.g. jsdom without layout).
+   */
+  private isClipping(el: HTMLElement): boolean {
+    const overflows = this.readOverflowStyles(el);
+    for (const v of overflows) {
+      if (v === "hidden" || v === "clip" || v === "scroll") return true;
+    }
+    const maxH = this.readStyle(el, "maxHeight", "max-height");
+    if (maxH && maxH !== "none" && maxH !== "0px" && maxH !== "0") {
+      return true;
+    }
+    return false;
+  }
+
+  private readOverflowStyles(el: HTMLElement): string[] {
+    return [
+      this.readStyle(el, "overflow", "overflow"),
+      this.readStyle(el, "overflowX", "overflow-x"),
+      this.readStyle(el, "overflowY", "overflow-y"),
+    ];
+  }
+
+  private readStyle(
+    el: HTMLElement,
+    inlineKey: keyof CSSStyleDeclaration,
+    cssProp: string,
+  ): string {
+    try {
+      const computed = window.getComputedStyle(el).getPropertyValue(cssProp);
+      if (computed) return computed.trim();
+    } catch {
+      // getComputedStyle can throw in rare detached-node contexts.
+    }
+    const inline = el.style[inlineKey];
+    return typeof inline === "string" ? inline.trim() : "";
+  }
+
+  /** Normalized innerText (whitespace-collapsed) for fingerprint and length checks. */
+  private getInnerText(el: Element): string {
+    if (!(el instanceof HTMLElement)) return "";
+    const raw = el.innerText ?? el.textContent ?? "";
+    return raw.replace(/\s+/g, " ").trim();
+  }
+
+  /** First 500 chars of innerText — stable across same-content re-renders. */
   private getContentFingerprint(el: Element): string | null {
-    if (!(el instanceof HTMLElement)) return null;
-    const text = (el.innerText ?? "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 500);
+    const text = this.getInnerText(el).slice(0, 500);
     return text || null;
   }
 

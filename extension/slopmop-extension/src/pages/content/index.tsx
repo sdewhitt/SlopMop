@@ -18,6 +18,7 @@ import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
 import { XAdapter } from '@src/core/adapters/XAdapter';
 import { GoogleAdapter } from '@src/core/adapters/GoogleAdapter';
+import { FacebookAdapter } from '@src/core/adapters/FacebookAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
@@ -189,6 +190,9 @@ function startObserver(settings: DetectionSettings): void {
     overlay = new XOverlayRenderer(adapter, settings);
   } else if (isGoogleHost(hostname)) {
     adapter = new GoogleAdapter();
+    overlay = new OverlayRenderer(settings);
+  } else if (hostname.includes('facebook.com')) {
+    adapter = new FacebookAdapter();
     overlay = new OverlayRenderer(settings);
   } else {
     return;

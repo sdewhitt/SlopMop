@@ -339,12 +339,19 @@ export class FeedObserver {
                 ? this.adapter.getTextNode(node)
                 : this.adapter.getCommentTextNode(node);
 
-        // For comments on sites with nested containers (e.g. Reddit shreddit-comment),
-        // the adapter can supply a narrower host so the badge anchors to the comment's
-        // own text instead of the bottom of the entire reply subtree.
+        // Adapters may override where the badge mounts:
+        //   - Comments with nested containers (e.g. Reddit shreddit-comment) use
+        //     a narrower host so the badge anchors to the comment's own text.
+        //   - Posts whose node clips its contents (e.g. Google AI Overview's
+        //     collapsed overflow:hidden state) use a less-restrictive ancestor.
+        const commentHost = type === "comment"
+            ? this.adapter.getCommentOverlayHost?.(node)
+            : null;
+        const postHost = type === "post"
+            ? this.adapter.getPostOverlayHost?.(node)
+            : null;
         const hostNode: HTMLElement =
-            (type === "comment" && this.adapter.getCommentOverlayHost?.(node))
-            || (node as HTMLElement);
+            commentHost || postHost || (node as HTMLElement);
 
         // step 2: dedupe. Set.has() is O(1) lookup.
         // Virtualized feeds (X) recycle DOM nodes: if the badge is gone, clear seen state and
