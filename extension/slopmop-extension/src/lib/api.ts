@@ -4,6 +4,8 @@
  */
 
 import type { FactCheckItem, HighlightSpan } from '@src/types/domain';
+import type { SatireSignal } from '@src/types/domain';
+import type { SatireCheckApiShape } from '@src/utils/factCheckSatire';
 
 /** Extra attempts after the first try (1 + this = total attempts). */
 const DETECTION_MAX_RETRIES = 10;
@@ -257,6 +259,8 @@ export interface FactCheckResponse {
     items: FactCheckItem[];
 }
 
+export interface SatireCheckResponse extends SatireCheckApiShape {}
+
 export class FactCheckApiError extends Error {
     readonly status: number;
 
@@ -293,6 +297,35 @@ export async function factCheckText(text: string): Promise<FactCheckResponse> {
     }
 
     return response.json() as Promise<FactCheckResponse>;
+}
+
+/**
+ * POST /satire-check — returns a satire probability used to soften fact-check UX.
+ * Failure should be treated as non-fatal by callers.
+ */
+export async function satireCheckText(text: string): Promise<SatireCheckResponse> {
+    const baseUrl: string = getBaseUrl();
+    const cleanedText: string = text.trim();
+    const response = await fetch(baseUrl + '/satire-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleanedText }),
+    });
+
+    if (response.ok === false) {
+        let message: string = 'HTTP ' + response.status;
+        try {
+            const data = await response.json();
+            if (data !== null && data !== undefined && typeof data.detail === 'string') {
+                message = data.detail;
+            }
+        } catch {
+            /* keep default */
+        }
+        throw new Error(message);
+    }
+
+    return response.json() as Promise<SatireCheckResponse>;
 }
 /*
 * Sends a base64-encoded image to backend API and returns image detection result.
