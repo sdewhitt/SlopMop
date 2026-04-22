@@ -1116,7 +1116,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     const textPromise = textLangSupported
       ? (async () => {
           const start = performance.now();
-          const result = await detectText(plainText, settings.highlightSegments);
+          const result = await detectText(
+            plainText,
+            settings.highlightSegments,
+            enrichedPost.commentTexts,
+            enrichedPost.domContext?.subreddit,
+          );
           return { result, elapsedMs: Math.round(performance.now() - start) };
         })()
       : Promise.resolve(null);
