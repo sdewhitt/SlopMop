@@ -8,7 +8,7 @@ export class LinkedInOverlayRenderer extends OverlayRenderer {
   }
 
   protected override getBadgePosition(): Record<string, string> {
-    return { top: "48px", right: "8px" };
+    return this.resolveBadgePosition({ top: "48px", right: "8px" });
   }
 
   protected override getPendingBadgeContainerStyle(isSimple: boolean): Record<string, string> {

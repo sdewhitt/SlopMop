@@ -433,6 +433,32 @@ export default function Options() {
             <div className="bg-gray-900 rounded-xl p-4 space-y-4">
               <div
                 className="settings-search-block"
+                data-search="badge position corner top bottom left right placement indicator"
+              >
+                <label className="text-sm font-medium text-gray-200">Badge Position</label>
+                <p className="text-xs text-gray-500 mb-2">Place detection indicators in your preferred corner</p>
+                <div className="flex gap-2">
+                  {([
+                    ['top_right', 'Top-right'],
+                    ['top_left', 'Top-left'],
+                    ['bottom_right', 'Bottom-right'],
+                  ] as const).map(([pos, label]) => (
+                    <button
+                      key={pos}
+                      onClick={() => update('badgePosition', pos)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        settings.badgePosition === pos
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div
+                className="settings-search-block"
                 data-search="indicator theme appearance color style default minimal contrast dark light badge overlay"
               >
                 <label className="text-sm font-medium text-gray-200">Indicator Theme</label>

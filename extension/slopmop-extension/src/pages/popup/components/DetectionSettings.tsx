@@ -37,6 +37,12 @@ const THEME_LABELS: Record<Settings['detectionTheme'], string> = {
   minimal: 'Minimal',
 };
 
+const POSITION_LABELS: Record<Settings['badgePosition'], string> = {
+  top_right: 'Top-right',
+  top_left: 'Top-left',
+  bottom_right: 'Bottom-right',
+};
+
 export default function DetectionSettings({
   settings,
   onUpdateSetting,
@@ -240,6 +246,31 @@ export default function DetectionSettings({
                 }`}
               >
                 {BADGE_SIZE_LABELS[size]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="badge position corner top bottom left right placement indicator"
+        >
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Badge Position</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Choose where detection badges appear on posts.
+          </p>
+          <div className="flex gap-1.5">
+            {(['top_right', 'top_left', 'bottom_right'] as const).map((pos) => (
+              <button
+                key={pos}
+                type="button"
+                onClick={() => onUpdateSetting('badgePosition', pos)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  settings.badgePosition === pos
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
+                }`}
+              >
+                {POSITION_LABELS[pos]}
               </button>
             ))}
           </div>

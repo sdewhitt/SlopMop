@@ -261,6 +261,19 @@ describe('Popup Settings Rendering', () => {
     expect(screen.getByRole('button', { name: /large/i })).toBeInTheDocument();
   });
 
+  it('should render badge position options', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+
+    expect(screen.getByText('Badge Position')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /top-right/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /top-left/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /bottom-right/i })).toBeInTheDocument();
+  });
+
   it('should render indicator theme options', async () => {
     const user = userEvent.setup();
     renderPopupSignedIn();
@@ -288,6 +301,25 @@ describe('Popup Settings Rendering', () => {
       expect.objectContaining({
         settings: expect.objectContaining({
           badgeSize: 'large',
+        }),
+      }),
+    );
+  });
+
+  it('persists badge position selection to local settings', async () => {
+    const user = userEvent.setup();
+    renderPopupSignedIn();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Settings'));
+    const topLeftBtn = screen.getByRole('button', { name: /top-left/i });
+    await user.click(topLeftBtn);
+
+    const setMock = browser.storage.local.set as ReturnType<typeof vi.fn>;
+    expect(setMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          badgePosition: 'top_left',
         }),
       }),
     );
