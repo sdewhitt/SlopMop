@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
+import time
 import base64
 import io
 from PIL import Image
@@ -187,6 +188,11 @@ class DetectResponse(BaseModel):
     label: str  # "ai" or "human"
     explanation: str  # explanation for the detection
     highlights: List[HighlightSpan] = []  # spans for segment highlighting
+    # Wall-clock timing (ms), optional for backward compatibility. Omitted when None (exclude_none).
+    # /detect sets detect_ms + total_server_ms; fact_check_ms is for combined flows elsewhere only.
+    detect_ms: Optional[int] = None
+    fact_check_ms: Optional[int] = None
+    total_server_ms: Optional[int] = None
 
 
 class DetectImageRequest(BaseModel):
@@ -200,6 +206,9 @@ class DetectImageResponse(BaseModel):
     label: str                 # "ai" or "human"
     explanation: str
     model_variant: Literal["mini", "full"]
+    detect_ms: Optional[int] = None
+    fact_check_ms: Optional[int] = None
+    total_server_ms: Optional[int] = None
 
 
 class FactCheckRequest(BaseModel):
@@ -217,6 +226,9 @@ class FactCheckItem(BaseModel):
 
 class FactCheckResponse(BaseModel):
     items: List[FactCheckItem]
+    detect_ms: Optional[int] = None
+    fact_check_ms: Optional[int] = None
+    total_server_ms: Optional[int] = None
 
 
 @app.get("/")
@@ -295,7 +307,7 @@ def generate_explanation(confidence: float, label: str, text_char_len: int = 0) 
         f"SlopMop text classifier: {pct}% estimated AI-like; labeled human/mixed (below likely-AI band).{short_note}"
     )
 
-@app.post("/detect", response_model=DetectResponse)
+@app.post("/detect", response_model=DetectResponse, response_model_exclude_none=True)
 def detect(
     request: DetectRequest,
     include_spans: bool = Query(
@@ -303,6 +315,7 @@ def detect(
         description="If false, skip segment attribution (one forward pass only).",
     ),
 ):
+    t0 = time.perf_counter()
     # strip spaces from head and tail of text
     clean_text = request.text.strip()
 
@@ -319,18 +332,31 @@ def detect(
 
     comment_texts = _normalize_comment_texts(request.comment_texts)
 
+    t_detect_start = time.perf_counter()
     if include_spans:
         confidence, label, highlights = score_text_with_spans(clean_text, comment_texts)
     else:
         confidence, label = score_text_without_spans(clean_text, comment_texts)
         highlights = []
+    t_detect_end = time.perf_counter()
+
+    detect_ms = max(0, int((t_detect_end - t_detect_start) * 1000))
+    total_server_ms = max(0, int((t_detect_end - t0) * 1000))
 
     explanation = generate_explanation(confidence, label, len(clean_text))
-    return DetectResponse(confidence=confidence, label=label, explanation=explanation, highlights=highlights)
+    return DetectResponse(
+        confidence=confidence,
+        label=label,
+        explanation=explanation,
+        highlights=highlights,
+        detect_ms=detect_ms,
+        total_server_ms=total_server_ms,
+    )
 
 
-@app.post("/detect-image", response_model=DetectImageResponse)
+@app.post("/detect-image", response_model=DetectImageResponse, response_model_exclude_none=True)
 def detect_image(request: DetectImageRequest):
+    t0 = time.perf_counter()
     raw = request.image_base64.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="image_base64 is required")
@@ -360,10 +386,15 @@ def detect_image(request: DetectImageRequest):
         selected_model = image_model_mini
         model_name = "Nonescape-mini"
 
+    t_detect_start = time.perf_counter()
     with torch.no_grad():
         probs = selected_model(tensor)
         authentic_prob = probs[0][0].item()
         ai_prob = probs[0][1].item()
+    t_detect_end = time.perf_counter()
+
+    detect_ms = max(0, int((t_detect_end - t_detect_start) * 1000))
+    total_server_ms = max(0, int((t_detect_end - t0) * 1000))
 
     label = "ai" if ai_prob > 0.5 else "human"
     confidence = round(ai_prob, 4)
@@ -377,6 +408,8 @@ def detect_image(request: DetectImageRequest):
         label=label,
         explanation=explanation,
         model_variant=selected_variant,
+        detect_ms=detect_ms,
+        total_server_ms=total_server_ms,
     )
 
 
@@ -398,7 +431,7 @@ def _fact_check_http_error(err: str) -> HTTPException:
     return HTTPException(status_code=502, detail=err)
 
 
-@app.post("/fact-check", response_model=FactCheckResponse)
+@app.post("/fact-check", response_model=FactCheckResponse, response_model_exclude_none=True)
 async def fact_check(request: FactCheckRequest):
     """
     Fact-check post text. Backend is selected with FACT_CHECK_MODE:
@@ -406,6 +439,7 @@ async def fact_check(request: FactCheckRequest):
     - ``google`` (default): Claim Search API, chunked queries (see FACT_CHECK.md).
     - ``llm``: OpenAI JSON output; same response shape; not a substitute for real fact databases.
     """
+    t0 = time.perf_counter()
     raw = request.text.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="text is required")
@@ -416,6 +450,7 @@ async def fact_check(request: FactCheckRequest):
         )
 
     mode = os.environ.get("FACT_CHECK_MODE", "google").strip().lower()
+    t_fc_start = time.perf_counter()
     if mode == "llm":
         items_raw, err = await run_llm_fact_check_for_text(raw)
     elif mode in ("gemini_wiki", "gemini-wiki", "gemini"):
@@ -423,9 +458,17 @@ async def fact_check(request: FactCheckRequest):
     else:
         key = os.environ.get("GOOGLE_FACT_CHECK_API_KEY", "").strip()
         items_raw, err = await run_fact_check_for_text(raw, api_key=key or None)
+    t_fc_end = time.perf_counter()
 
     if err:
         raise _fact_check_http_error(err)
 
+    fact_check_ms = max(0, int((t_fc_end - t_fc_start) * 1000))
+    total_server_ms = max(0, int((t_fc_end - t0) * 1000))
+
     items = [FactCheckItem(**row) for row in items_raw]
-    return FactCheckResponse(items=items)
+    return FactCheckResponse(
+        items=items,
+        fact_check_ms=fact_check_ms,
+        total_server_ms=total_server_ms,
+    )
