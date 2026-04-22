@@ -1,5 +1,5 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
-import type { NormalizedPostContent } from "@src/types/domain";
+import type { DetectionResponse, NormalizedPostContent } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import {
     expandUserDetectionLanguages,
@@ -8,6 +8,11 @@ import {
     getLanguageUnsupportedCopy,
     isTextLanguageSupported,
 } from "@src/utils/languageSupport";
+import {
+    computeTtlRemainingMs,
+    getAllCachedDetections,
+    type CachedDetection,
+} from "@src/utils/detectionCache";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -59,6 +64,14 @@ export class FeedObserver {
     private paused = false;
     /** Timer handles from schedulePostNavigationScans so they can be cancelled on pause/stop. */
     private navScanTimers: ReturnType<typeof setTimeout>[] = [];
+    /**
+     * Snapshot of `browser.storage.local`'s detectionCache at observer start.
+     * Lets the first scan paint cached verdicts without a round-trip through
+     * the background (both automatic and manual mode). Session-local updates
+     * flow through the OverlayRenderer's in-memory `mapToResponse`, so we do
+     * not refresh this map on every write.
+     */
+    private persistedCache: Map<string, CachedDetection> = new Map();
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -66,6 +79,60 @@ export class FeedObserver {
         this.overlay = overlay;
         this.bus = bus;
         this.settings = settings;
+    }
+
+    /**
+     * Load the persistent detection cache from storage into memory so
+     * `handleCandidatePost` can synchronously hydrate badges on the first
+     * scan. Safe to call multiple times; later calls replace the snapshot.
+     * Callers should await this before {@link start} for cached verdicts to
+     * appear on the very first scan.
+     */
+    async primeCacheFromStorage(): Promise<void> {
+        if (!this.settings.cacheRecentResults) {
+            this.persistedCache = new Map();
+            return;
+        }
+        try {
+            const entries = await getAllCachedDetections();
+            this.persistedCache = new Map(entries.map((e) => [e.postId, e]));
+        } catch {
+            // Storage read failure — fall back to empty; background will still
+            // consult the on-disk cache when dispatchAnalyze fires.
+            this.persistedCache = new Map();
+        }
+    }
+
+    /**
+     * Build the `DETECTION_RESULT` payload for a persisted cache entry with
+     * `cache.hit = true` and an accurate `ttlRemainingMs`, mirroring the
+     * background's cache-hit response shape.
+     */
+    private buildCachedResponse(entry: CachedDetection): DetectionResponse {
+        return {
+            ...entry.response,
+            explanation: {
+                ...entry.response.explanation,
+                cache: {
+                    hit: true,
+                    ttlRemainingMs: computeTtlRemainingMs(entry.savedAtMs),
+                },
+            },
+        };
+    }
+
+    /**
+     * Return a cached `DetectionResponse` for the post if one is available.
+     * Prefers the overlay's in-memory map (covers posts analyzed in this
+     * session, including fresh API results) over the persistent snapshot
+     * (previous sessions). Returns `undefined` when nothing is cached.
+     */
+    private getCachedResponseForPost(postId: string): DetectionResponse | undefined {
+        const inMemory = this.overlay.getCachedDetectionResponse?.(postId);
+        if (inMemory) return inMemory;
+        if (!this.settings.cacheRecentResults) return undefined;
+        const persisted = this.persistedCache.get(postId);
+        return persisted ? this.buildCachedResponse(persisted) : undefined;
     }
 
     start(): void {
@@ -368,13 +435,27 @@ export class FeedObserver {
                     this.postsById.delete(extracted.postId);
                 }
             } else {
-                if (
-                    type === "post" &&
-                    !this.settings.automaticScanning &&
-                    !this.renderedHosts.has(node)
-                ) {
-                    this.renderManualEntry(extracted, hostNode, textContainer);
-                    this.renderedHosts.add(node);
+                if (type === "post" && !this.renderedHosts.has(node)) {
+                    // A second DOM host appeared for an already-seen post
+                    // (common on Reddit: subreddit feed + opened post detail
+                    // both mount `shreddit-post` for the same id). Prefer an
+                    // existing verdict so we don't flash a redundant
+                    // "Detect Now" button next to the already-rendered badge.
+                    const cached = this.getCachedResponseForPost(extracted.postId);
+                    if (cached) {
+                        this.postsById.set(extracted.postId, extracted);
+                        this.overlay.mountResultBadgeOnHost?.(
+                            extracted.postId,
+                            hostNode,
+                            extracted.text.plain,
+                            cached,
+                            textContainer,
+                        );
+                        this.renderedHosts.add(node);
+                    } else if (!this.settings.automaticScanning) {
+                        this.renderManualEntry(extracted, hostNode, textContainer);
+                        this.renderedHosts.add(node);
+                    }
                 }
 
                 return;
@@ -401,6 +482,35 @@ export class FeedObserver {
             );
             if (DEBUG_EXTRACTION) {
                 console.log(`[FeedObserver] reattached cached verdict`, { postId: extracted.postId });
+            }
+            return;
+        }
+
+        // Persistent (24h) cache hit: hydrate the badge directly — no
+        // `renderPending` flash, no `dispatchAnalyze`. Covers both automatic
+        // and manual mode so a previously-analyzed post shows its verdict
+        // even when "Automatic scanning" is off (otherwise the user only
+        // sees the Detect Now button).
+        const persisted = this.settings.cacheRecentResults
+            ? this.persistedCache.get(extracted.postId)
+            : undefined;
+        if (persisted) {
+            this.seenPostIds.add(extracted.postId);
+            this.postsById.set(extracted.postId, extracted);
+            const hydrated = this.buildCachedResponse(persisted);
+            this.overlay.mountResultBadgeOnHost?.(
+                extracted.postId,
+                hostNode,
+                extracted.text.plain,
+                hydrated,
+                textContainer,
+            );
+            this.renderedHosts.add(node);
+            if (DEBUG_EXTRACTION) {
+                console.log(`[FeedObserver] hydrated verdict from persistent cache`, {
+                    postId: extracted.postId,
+                    ttlRemainingMs: hydrated.explanation.cache.ttlRemainingMs,
+                });
             }
             return;
         }

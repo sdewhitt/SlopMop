@@ -26,7 +26,7 @@ export const CACHE_KEY = 'detectionCache';
 const MAX_CACHE_ENTRIES = 500;
 
 /** 24 hours in milliseconds. */
-const TTL_MS = 24 * 60 * 60 * 1000;
+export const TTL_MS = 24 * 60 * 60 * 1000;
 
 // ── Schema ────────────────────────────────────────────────────────
 
@@ -76,6 +76,52 @@ export async function getCachedDetection(
 
   const entry = pruned.find((e) => e.postId === postId);
   return entry?.response ?? null;
+}
+
+/**
+ * Looks up the full cached entry (including savedAtMs) for the given postId.
+ * Callers that need to compute `cache.ttlRemainingMs` or log cache age should
+ * prefer this over {@link getCachedDetection}.
+ */
+export async function getCachedDetectionEntry(
+  postId: PostId,
+): Promise<CachedDetection | null> {
+  const raw = await readRaw();
+  const pruned = pruneCache(raw);
+
+  if (pruned.length !== raw.length) {
+    await browser.storage.local.set({ [CACHE_KEY]: pruned });
+  }
+
+  return pruned.find((e) => e.postId === postId) ?? null;
+}
+
+/**
+ * Returns every non-expired cache entry. Used by the content script to prime
+ * an in-memory lookup before the first scan so cached verdicts can render
+ * without a round-trip through the background script.
+ */
+export async function getAllCachedDetections(): Promise<CachedDetection[]> {
+  const raw = await readRaw();
+  const pruned = pruneCache(raw);
+
+  if (pruned.length !== raw.length) {
+    await browser.storage.local.set({ [CACHE_KEY]: pruned });
+  }
+
+  return pruned;
+}
+
+/**
+ * Returns ms until the cached entry expires, clamped to [0, TTL_MS].
+ * Callers building a cache-hit {@link DetectionResponse} use this to fill
+ * `explanation.cache.ttlRemainingMs`.
+ */
+export function computeTtlRemainingMs(savedAtMs: number, nowMs: number = Date.now()): number {
+  const remaining = TTL_MS - (nowMs - savedAtMs);
+  if (remaining <= 0) return 0;
+  if (remaining > TTL_MS) return TTL_MS;
+  return remaining;
 }
 
 /**

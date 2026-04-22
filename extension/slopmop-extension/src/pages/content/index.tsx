@@ -172,7 +172,7 @@ function isGoogleHost(hostname: string): boolean {
   return /(^|\.)google\.[a-z]{2,3}(\.[a-z]{2,3})?$/.test(hostname);
 }
 
-function startObserver(settings: DetectionSettings): void {
+async function startObserver(settings: DetectionSettings): Promise<void> {
   const hostname = getCurrentHost();
   let adapter;
   let overlay;
@@ -236,6 +236,10 @@ function startObserver(settings: DetectionSettings): void {
     overlay.renderFactCheckError(postId, message);
   });
 
+  // Hydrate the in-memory cache snapshot before the first scan so cached
+  // verdicts paint immediately (no Scanning flash, no Detect Now for
+  // previously-analyzed posts in manual mode).
+  await activeObserver.primeCacheFromStorage();
   activeObserver.start();
   console.log('[SlopMop] FeedObserver started');
 }
@@ -250,7 +254,7 @@ async function initFeedObserver(): Promise<void> {
   if (!settings.enabled) return;
   if (!shouldRunOnCurrentSite(settings, ignoredSites)) return;
 
-  startObserver(settings);
+  await startObserver(settings);
 }
 
 browser.storage.onChanged.addListener((changes, areaName) => {

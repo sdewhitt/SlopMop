@@ -43,6 +43,20 @@ const MESSAGE_SELECTORS = [
   'div[data-testid="post_message"]',
 ];
 
+/**
+ * Fallback anchors for FB builds that omit `div[role="article"]` on feed cards.
+ * Ordered from most-specific (one per post) to least; the walker counts the
+ * matching selector in ancestors to decide where the card boundary is.
+ */
+const MESSAGE_ANCHOR_FALLBACKS: string[] = [
+  'div[data-ad-rendering-role="story_message"]',
+  'div[data-ad-comet-preview="message"]',
+  'div[data-ad-preview="message"]',
+];
+
+/** Safety cap on how far to walk up looking for the card boundary. */
+const FALLBACK_WALK_UP_MAX = 25;
+
 /** Substrings in aria-label / text that mark ads/promotions we should not badge. */
 const PROMO_LABEL_MARKERS = [
   "sponsored",
@@ -56,9 +70,23 @@ export class FacebookAdapter implements SiteAdapter {
   }
 
   findPostNodes(root: ParentNode = document): Element[] {
-    const raw = this.querySelectorAllIncludingRoot(root, 'div[role="article"]');
-    // Keep outermost article cards only; nested `div[role="article"]` represents a quoted /
-    // shared post and would otherwise produce a duplicate badge for the same feed unit.
+    // Primary: `div[role="article"]`. Discard skeleton/glimmer placeholders that FB mounts
+    // as `role="article"` while the feed hydrates — they contain a loading-state status
+    // element and no post content, and would otherwise suppress the fallback below.
+    const articles = this.querySelectorAllIncludingRoot(root, 'div[role="article"]')
+      .filter((el) => !this.isLoadingPlaceholder(el));
+
+    // Fallback: some FB builds (observed 2026+) mount real feed cards without
+    // `role="article"` at all. Anchor on the story message container and walk up to the
+    // card boundary. We always union this with `articles` because the feed can mix both
+    // schemas at once (loading skeletons with `role="article"` coexisting with fully
+    // hydrated cards that have only message anchors).
+    const byMessage = this.findCardsByMessageFallback(root);
+
+    const raw = [...articles, ...byMessage];
+
+    // Keep outermost cards only; this also collapses the case where a `role="article"`
+    // wraps the same logical post that the message-walker resolved to an inner div.
     const outermost = raw.filter(
       (el) => !raw.some((other) => other !== el && other.contains(el)),
     );
@@ -220,6 +248,72 @@ export class FacebookAdapter implements SiteAdapter {
     if (root instanceof Element && root.matches(selector)) nodes.push(root);
     nodes.push(...Array.from(root.querySelectorAll(selector)));
     return nodes;
+  }
+
+  /**
+   * Skeleton / glimmer cards mount as `div[role="article"]` while the feed hydrates. They
+   * hold an inner `[data-visualcompletion="loading-state"]` (often paired with
+   * `aria-label="Loading..."`) and no post content. Treating them as candidates would
+   * both generate noise and mask real posts mounted without `role="article"` by keeping
+   * the message-container fallback gated off.
+   */
+  private isLoadingPlaceholder(el: Element): boolean {
+    return el.querySelector('[data-visualcompletion="loading-state"]') !== null;
+  }
+
+  /**
+   * Fallback discovery when `div[role="article"]` is missing: collect message anchors
+   * and walk each one up to the enclosing story card. Tries the most-specific selector
+   * first (`story_message`, which appears once per post) so the walker's "count in
+   * parent" stopping rule is well-defined.
+   */
+  private findCardsByMessageFallback(root: ParentNode): Element[] {
+    for (const sel of MESSAGE_ANCHOR_FALLBACKS) {
+      const anchors = this.querySelectorAllIncludingRoot(root, sel);
+      if (anchors.length === 0) continue;
+      const cards: Element[] = [];
+      const seen = new Set<Element>();
+      for (const anchor of anchors) {
+        const card = this.walkUpToStoryCard(anchor, sel);
+        if (!card || seen.has(card)) continue;
+        seen.add(card);
+        cards.push(card);
+      }
+      if (cards.length > 0) return cards;
+    }
+    return [];
+  }
+
+  /**
+   * Walk up from a message anchor until we hit a feed wrapper or another sibling
+   * post. The highest single-match ancestor below those boundaries is the story
+   * card.
+   *
+   * Stopping rules (any one terminates the walk so `best` is returned):
+   *   - adding `parent` would pull in a second matching marker (sibling post)
+   *   - `parent` has `role="feed"` / `role="main"` (feed-list wrapper)
+   *   - `parent` is `<body>` / `<html>` (we've overshot the document body)
+   *   - `parent` is not a `<div>` (FB story cards are always div-based)
+   */
+  private walkUpToStoryCard(anchor: Element, countSelector: string): Element | null {
+    const doc = anchor.ownerDocument ?? document;
+    const docBody = doc.body;
+    const docEl = doc.documentElement;
+
+    let current: Element | null = anchor;
+    let best: Element | null = anchor;
+    for (let i = 0; i < FALLBACK_WALK_UP_MAX; i++) {
+      const parent: Element | null = current?.parentElement ?? null;
+      if (!parent) break;
+      if (parent === docBody || parent === docEl) break;
+      if (parent.tagName !== "DIV") break;
+      const role = parent.getAttribute("role");
+      if (role === "feed" || role === "main") break;
+      if (parent.querySelectorAll(countSelector).length > 1) break;
+      best = parent;
+      current = parent;
+    }
+    return best;
   }
 
   /**

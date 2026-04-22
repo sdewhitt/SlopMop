@@ -64,8 +64,9 @@ import {
   togglePin,
 } from '@src/utils/detectionHistory';
 import {
-  getCachedDetection,
+  getCachedDetectionEntry,
   saveCachedDetection,
+  computeTtlRemainingMs,
 } from '@src/utils/detectionCache';
 
 console.log('background script loaded');
@@ -664,19 +665,25 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   if (settings.cacheRecentResults) {
     try {
-      const cached = await getCachedDetection(post.postId);
-      if (cached) {
+      const cachedEntry = await getCachedDetectionEntry(post.postId);
+      if (cachedEntry) {
         const cachedResponse: DetectionResponse = {
-          ...cached,
+          ...cachedEntry.response,
           explanation: {
-            ...cached.explanation,
-            cache: { hit: true, ttlRemainingMs: 0 },
+            ...cachedEntry.response.explanation,
+            cache: {
+              hit: true,
+              ttlRemainingMs: computeTtlRemainingMs(cachedEntry.savedAtMs),
+            },
           },
         };
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
           payload: cachedResponse,
         });
+        // Parity with the API success paths: record cache hits in history so
+        // the user's history tab reflects every surfaced verdict.
+        maybeSaveToHistory(post, cachedResponse, tabId).catch(() => {});
         await finalizeStats(cachedResponse.verdict === 'likely_ai');
         return;
       }

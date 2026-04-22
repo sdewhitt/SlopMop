@@ -110,7 +110,24 @@ export class OverlayRenderer {
     // for now, start with basic appearance, then we can match the UI mockups
     renderResult(postId: PostId, res: DetectionResponse): void {
         const surface = this.getDetectSurface(postId);
-        if (!surface) return;
+        if (!surface) {
+            // Record the response so a later re-scan (virtualized feeds, SPA
+            // rerenders) can reattach via `mountResultBadgeOnHost`. Without
+            // this, a DETECTION_RESULT that arrives after the pending host
+            // was destroyed is lost entirely.
+            this.mapToResponse.set(postId, res);
+            return;
+        }
+        if (!surface.isConnected) {
+            // Orphan overlay: host was recycled (e.g. Reddit shreddit virtual
+            // scroll) while the detect request was in flight. Drop the stale
+            // mapping so the next `handleCandidatePost` pass re-mounts via
+            // `mountResultBadgeOnHost`, but preserve the response for reuse.
+            this.mapToResponse.set(postId, res);
+            this.mapToOverlay.delete(postId);
+            this.mapToDetectPanel.delete(postId);
+            return;
+        }
 
         this.restorePostBodyHtml(postId);
         this.mapToResponse.set(postId, res);
@@ -991,6 +1008,14 @@ export class OverlayRenderer {
         res: DetectionResponse,
         textContainer?: HTMLElement | null,
     ): void {
+        // Reddit hydration and SPA transitions can cause the same host to
+        // receive multiple mount calls (feed -> detail, shreddit-post
+        // re-render, etc.). Strip any prior overlay on this host so we don't
+        // stack badges. `removeExistingHostOverlays` also clears associated
+        // maps (mapToPostText / mapToTextBody / mapToResponse), so (re)set
+        // them after. Match `renderPending` by tagging with OVERLAY_ATTR so
+        // future `removeExistingHostOverlays` calls find this overlay too.
+        this.removeExistingHostOverlays(hostNode);
         this.mapToPostText.set(postId, plainText);
         if (textContainer) {
             this.mapToTextBody.set(postId, textContainer);
@@ -998,6 +1023,7 @@ export class OverlayRenderer {
             this.mapToTextBody.delete(postId);
         }
         const overlay = document.createElement("div");
+        overlay.setAttribute(OverlayRenderer.OVERLAY_ATTR, "1");
         hostNode.style.position = "relative";
         hostNode.appendChild(overlay);
         const isSimple = this.settings.uiMode === "simple";
@@ -1010,6 +1036,7 @@ export class OverlayRenderer {
             color: "#fff",
         });
         this.mapToOverlay.set(postId, overlay);
+        this.mapToDetectPanel.set(postId, overlay);
         this.mapToResponse.set(postId, res);
         this.renderResult(postId, res);
     }

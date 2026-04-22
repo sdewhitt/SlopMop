@@ -287,6 +287,163 @@ describe('FacebookAdapter', () => {
     expect(id).toMatch(/^fb-fallback-[0-9a-f]+$/);
   });
 
+  it('ignores role="article" loading-state skeleton placeholders', () => {
+    // FB renders skeleton cards as <div role="article"><div data-visualcompletion="loading-state" aria-label="Loading...">…
+    // while the feed hydrates. Without a filter these were returning 0 real posts because
+    // their mere presence suppressed the message-container fallback.
+    const skeleton = document.createElement('div');
+    skeleton.setAttribute('role', 'article');
+    const status = document.createElement('div');
+    status.setAttribute('data-visualcompletion', 'loading-state');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-label', 'Loading...');
+    skeleton.appendChild(status);
+    document.body.appendChild(skeleton);
+
+    expect(adapter.findPostNodes(document)).toHaveLength(0);
+  });
+
+  it('finds real posts via message-container fallback even when skeleton role="article" cards exist', () => {
+    // Reproduces the live FB home feed state: two role="article" loading skeletons
+    // coexisting with a hydrated post card that has NO role="article" of its own.
+    const skel1 = document.createElement('div');
+    skel1.setAttribute('role', 'article');
+    const s1 = document.createElement('div');
+    s1.setAttribute('data-visualcompletion', 'loading-state');
+    skel1.appendChild(s1);
+
+    const skel2 = document.createElement('div');
+    skel2.setAttribute('role', 'article');
+    const s2 = document.createElement('div');
+    s2.setAttribute('data-visualcompletion', 'loading-state');
+    skel2.appendChild(s2);
+
+    const feed = document.createElement('div');
+    feed.setAttribute('role', 'feed');
+
+    const hydratedCard = document.createElement('div');
+    hydratedCard.className = 'html-div hydrated-card';
+    const storyMessage = document.createElement('div');
+    storyMessage.setAttribute('data-ad-rendering-role', 'story_message');
+    const messageHost = document.createElement('div');
+    messageHost.setAttribute('data-ad-comet-preview', 'message');
+    const messageBody = document.createElement('div');
+    messageBody.setAttribute('dir', 'auto');
+    const bodyText = 'Hydrated post body long enough to qualify for detection.';
+    messageBody.textContent = bodyText;
+    setInnerText(messageBody, bodyText);
+    setInnerText(messageHost, bodyText);
+    messageHost.appendChild(messageBody);
+    storyMessage.appendChild(messageHost);
+    hydratedCard.appendChild(storyMessage);
+    const link = document.createElement('a');
+    link.href = '/charlie.xyz/posts/pfbid0HYDRATED';
+    hydratedCard.appendChild(link);
+    feed.appendChild(hydratedCard);
+
+    document.body.appendChild(skel1);
+    document.body.appendChild(feed);
+    document.body.appendChild(skel2);
+
+    const posts = adapter.findPostNodes(document);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toBe(hydratedCard);
+    expect(adapter.getStablePostId(posts[0])).toBe('fb-pfbid0HYDRATED');
+  });
+
+  it('finds a feed card via message-container fallback when role="article" is absent', () => {
+    // Mirrors an FB build that omits role="article" on feed cards (observed 2026+):
+    // the story card wraps a `data-ad-rendering-role="story_message"` which wraps
+    // `data-ad-comet-preview="message"` / `data-ad-preview="message"`.
+    const feed = document.createElement('div');
+    feed.setAttribute('role', 'feed');
+
+    const cardOuter = document.createElement('div');
+    cardOuter.className = 'html-div outer-card';
+
+    const cardInner = document.createElement('div');
+    cardInner.className = 'html-div inner-card';
+
+    const storyMessage = document.createElement('div');
+    storyMessage.setAttribute('data-ad-rendering-role', 'story_message');
+
+    const messageHost = document.createElement('div');
+    messageHost.setAttribute('data-ad-comet-preview', 'message');
+    messageHost.setAttribute('data-ad-preview', 'message');
+
+    const messageBody = document.createElement('div');
+    messageBody.setAttribute('dir', 'auto');
+    const bodyText = 'Message-anchor fallback body — long enough to qualify for detection.';
+    messageBody.textContent = bodyText;
+    setInnerText(messageBody, bodyText);
+    setInnerText(messageHost, bodyText);
+
+    const permalink = document.createElement('a');
+    permalink.href = '/charlie.xyz/posts/pfbid0FALLBACK123';
+
+    messageHost.appendChild(messageBody);
+    storyMessage.appendChild(messageHost);
+    cardInner.appendChild(storyMessage);
+    cardInner.appendChild(permalink);
+    cardOuter.appendChild(cardInner);
+    feed.appendChild(cardOuter);
+    document.body.appendChild(feed);
+
+    const posts = adapter.findPostNodes(document);
+    expect(posts).toHaveLength(1);
+    // Walker should climb to the highest ancestor that still contains only one
+    // story_message — in this fixture, cardOuter (one level below <div>feed).
+    expect(posts[0]).toBe(cardOuter);
+
+    expect(adapter.getTextNode(posts[0])?.innerText).toMatch(/fallback body/);
+    expect(adapter.getStablePostId(posts[0])).toBe('fb-pfbid0FALLBACK123');
+  });
+
+  it('fallback walker stops before pulling in a sibling post from the feed wrapper', () => {
+    // Two sibling cards under a shared feed wrapper; each must resolve to its own
+    // immediate card boundary, not to the wrapper.
+    const feedWrapper = document.createElement('div');
+    feedWrapper.className = 'html-div feed-wrapper';
+
+    function buildCardNoArticle(permalink: string, text: string): HTMLElement {
+      const card = document.createElement('div');
+      card.className = 'html-div card';
+      const sm = document.createElement('div');
+      sm.setAttribute('data-ad-rendering-role', 'story_message');
+      const msg = document.createElement('div');
+      msg.setAttribute('data-ad-comet-preview', 'message');
+      const body = document.createElement('div');
+      body.setAttribute('dir', 'auto');
+      setInnerText(body, text);
+      msg.appendChild(body);
+      setInnerText(msg, text);
+      sm.appendChild(msg);
+      card.appendChild(sm);
+      const link = document.createElement('a');
+      link.href = permalink;
+      card.appendChild(link);
+      return card;
+    }
+
+    const a = buildCardNoArticle(
+      '/a/posts/pfbid0AAA',
+      'First sibling body long enough to qualify.',
+    );
+    const b = buildCardNoArticle(
+      '/b/posts/pfbid0BBB',
+      'Second sibling body long enough to qualify.',
+    );
+    feedWrapper.appendChild(a);
+    feedWrapper.appendChild(b);
+    document.body.appendChild(feedWrapper);
+
+    const posts = adapter.findPostNodes(document);
+    expect(posts).toHaveLength(2);
+    expect(posts).toContain(a);
+    expect(posts).toContain(b);
+    expect(posts).not.toContain(feedWrapper);
+  });
+
   it('dedupes images via content host and size filter', () => {
     const article = document.createElement('div');
     article.setAttribute('role', 'article');
