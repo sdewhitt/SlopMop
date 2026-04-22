@@ -133,13 +133,17 @@ async function detectTextOnce(
     cleanedText: string,
     includeSpans: boolean,
     commentTexts?: string[],
+    subreddit?: string,
 ): Promise<DetectResponse> {
-    const requestBody: { text: string; comment_texts?: string[] } = {
+    const requestBody: { text: string; comment_texts?: string[]; subreddit?: string } = {
         text: cleanedText,
     };
     // add the comment texts to the request body if they are provided
     if (commentTexts !== undefined && commentTexts.length > 0) {
         requestBody.comment_texts = commentTexts;
+    }
+    if (subreddit && subreddit.trim()) {
+        requestBody.subreddit = subreddit.trim();
     }
 
     const detectUrl =
@@ -185,6 +189,7 @@ export async function detectText(
     text: string,
     includeSpans: boolean = true,
     commentTexts?: string[],
+    subreddit?: string,
 ): Promise<DetectResponse> {
     const baseUrl: string = getBaseUrl();
     const cleanedText: string = text.trim();
@@ -192,7 +197,7 @@ export async function detectText(
     const maxAttempts = 1 + DETECTION_MAX_RETRIES;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            return await detectTextOnce(baseUrl, cleanedText, includeSpans, commentTexts);
+            return await detectTextOnce(baseUrl, cleanedText, includeSpans, commentTexts, subreddit);
         } catch (e) {
             lastError = e;
             if (attempt < maxAttempts) {
@@ -306,26 +311,54 @@ export async function factCheckText(text: string): Promise<FactCheckResponse> {
 export async function satireCheckText(text: string): Promise<SatireCheckResponse> {
     const baseUrl: string = getBaseUrl();
     const cleanedText: string = text.trim();
-    const response = await fetch(baseUrl + '/satire-check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: cleanedText }),
-    });
-
-    if (response.ok === false) {
-        let message: string = 'HTTP ' + response.status;
+    let lastError: unknown;
+    const maxAttempts = 1 + DETECTION_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            const data = await response.json();
-            if (data !== null && data !== undefined && typeof data.detail === 'string') {
-                message = data.detail;
-            }
-        } catch {
-            /* keep default */
-        }
-        throw new Error(message);
-    }
+            const response = await fetch(baseUrl + '/satire-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: cleanedText }),
+            });
 
-    return response.json() as Promise<SatireCheckResponse>;
+            if (response.ok === false) {
+                let message: string = 'HTTP ' + response.status;
+                try {
+                    const data = await response.json();
+                    if (data !== null && data !== undefined && typeof data.detail === 'string') {
+                        message = data.detail;
+                    }
+                } catch {
+                    /* keep default */
+                }
+
+                // Do not retry "model unavailable" style errors.
+                if (response.status === 503) {
+                    throw new FactCheckApiError(message, response.status);
+                }
+
+                // Retry transient upstream errors (e.g., 502) like detectText does.
+                const err = new FactCheckApiError(message, response.status);
+                if (response.status === 502 && attempt < maxAttempts) {
+                    await sleep(RETRY_DELAY_MS);
+                    continue;
+                }
+                throw err;
+            }
+
+            return response.json() as Promise<SatireCheckResponse>;
+        } catch (e) {
+            lastError = e;
+            // If we got here via a thrown FactCheckApiError(503), don't retry.
+            if (e instanceof FactCheckApiError && e.status === 503) {
+                throw e;
+            }
+            if (attempt < maxAttempts) {
+                await sleep(RETRY_DELAY_MS);
+            }
+        }
+    }
+    throw lastError;
 }
 /*
 * Sends a base64-encoded image to backend API and returns image detection result.

@@ -34,6 +34,7 @@ export interface NormalizedPostContent {
     domContext: {
       authorHandle: string;
       timestampText: string;
+      subreddit?: string;
     };
     // visible comment bodies under this post (feed analysis) — sent to /detect for satire heuristics on the main score.
     commentTexts?: string[];
