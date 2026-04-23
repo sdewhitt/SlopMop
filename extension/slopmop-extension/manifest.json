@@ -24,6 +24,8 @@
     "offscreen"
   ],
   "host_permissions": [
+    "https://pkrmvpzmnk.us-east-2.awsapprunner.com/*",
+    "http://127.0.0.1:8000/*",
     "https://i.redd.it/*",
     "https://preview.redd.it/*",
     "https://external-preview.redd.it/*",
