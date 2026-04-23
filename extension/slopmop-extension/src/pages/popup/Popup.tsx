@@ -213,6 +213,10 @@ export default function Popup() {
         accessibilityMode: localSettings?.accessibilityMode ?? defaultSettings.accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
         factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
+        powerUserTiming:
+          remote.settings.powerUserTiming ??
+          localSettings?.powerUserTiming ??
+          defaultSettings.powerUserTiming,
         lowBatteryMode: remote.settings.lowBatteryMode ?? localSettings?.lowBatteryMode ?? defaultSettings.lowBatteryMode,
         lowBatteryModeAutoWhenBatteryLow:
           remote.settings.lowBatteryModeAutoWhenBatteryLow ??
@@ -573,6 +577,7 @@ export default function Popup() {
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
       factCheck: defaultUserSettings.settings.factCheck,
+      powerUserTiming: defaultUserSettings.settings.powerUserTiming,
       lowBatteryMode: defaultUserSettings.settings.lowBatteryMode,
       lowBatteryModeAutoWhenBatteryLow: defaultUserSettings.settings.lowBatteryModeAutoWhenBatteryLow,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],

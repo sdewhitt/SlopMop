@@ -1470,6 +1470,22 @@ function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
   );
 }
 
+function extractServerTimingForDomain(
+  apiResult: DetectResponse | DetectImageResponse,
+): NonNullable<DetectionResponse['explanation']['serverTiming']> | undefined {
+  const dm = typeof apiResult.detect_ms === 'number' ? apiResult.detect_ms : undefined;
+  const tm = typeof apiResult.total_server_ms === 'number' ? apiResult.total_server_ms : undefined;
+  if (typeof dm !== 'number' && typeof tm !== 'number') return undefined;
+  const out: NonNullable<DetectionResponse['explanation']['serverTiming']> = {};
+  if (typeof dm === 'number' && Number.isFinite(dm) && dm >= 0) {
+    out.detectMs = Math.round(dm);
+  }
+  if (typeof tm === 'number' && Number.isFinite(tm) && tm >= 0) {
+    out.totalServerMs = Math.round(tm);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
@@ -1522,6 +1538,8 @@ function mapToDetectionResponse(
     ? { name: 'slopmop-api', version: '1.0' }
     : imageModel;
 
+  const serverTiming = extractServerTimingForDomain(apiResult);
+
   return {
     requestId: crypto.randomUUID(),
     postId,
@@ -1536,6 +1554,7 @@ function mapToDetectionResponse(
       model: explanationModel,
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
+      ...(serverTiming ? { serverTiming } : {}),
     },
   };
 }
@@ -1558,12 +1577,20 @@ function mapToImageDetectionResult(
 
   const model = resolveImageModelDescriptor(modelVariant ?? apiResult.model_variant);
 
+  const serverDetectMs =
+    typeof apiResult.detect_ms === 'number' &&
+    Number.isFinite(apiResult.detect_ms) &&
+    apiResult.detect_ms >= 0
+      ? Math.round(apiResult.detect_ms)
+      : undefined;
+
   return {
     verdict,
     confidence: apiResult.confidence,
     summary: apiResult.explanation,
     model,
     timingMs,
+    ...(serverDetectMs !== undefined ? { serverDetectMs } : {}),
     mediaType,
   };
 }

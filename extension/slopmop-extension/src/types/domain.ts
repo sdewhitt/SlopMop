@@ -77,6 +77,8 @@ export interface ImageDetectionResult {
     summary: string;
     model: { name: string; version: string };
     timingMs: number;
+    /** When present, `/detect-image` wall-clock detect span (ms). */
+    serverDetectMs?: number;
   mediaType?: MediaType;
 }
 
@@ -107,7 +109,12 @@ export interface DetectionResponse {
         timing: {
             totalMs: number;
             inferenceMs: number;
-        }
+        };
+        /** Backend wall-clock timings from `/detect` (or `/detect-image` when text-only path is image). */
+        serverTiming?: {
+            detectMs?: number;
+            totalServerMs?: number;
+        };
     };
     imageResult?: ImageDetectionResult;
 }
@@ -195,6 +202,8 @@ export interface FactCheckResultPayload {
   /** Optional: platform hostname used for caching/debug. */
   site?: SiteId;
   updatedAtMs?: number;
+  /** Wall-clock `/fact-check` handler time when returned from the network (not cached). */
+  factCheckMs?: number;
 }
 
 // similar idea, but from background script to content script

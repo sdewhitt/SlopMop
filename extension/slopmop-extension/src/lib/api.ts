@@ -122,6 +122,11 @@ export interface DetectResponse {
     label: string;
     explanation: string;
     highlights?: HighlightSpan[];
+    detect_ms?: number;
+    fact_check_ms?: number;
+    total_server_ms?: number;
+    satire_score?: number;
+    satire_label?: string;
 }
 
 /**
@@ -214,6 +219,9 @@ export interface DetectImageResponse {
     label: string;
     explanation: string;
     model_variant?: ImageModelVariant;
+    detect_ms?: number;
+    fact_check_ms?: number;
+    total_server_ms?: number;
 }
 
 export type ImageModelVariant = 'mini' | 'full';
@@ -262,6 +270,8 @@ async function detectImageOnce(
 
 export interface FactCheckResponse {
     items: FactCheckItem[];
+    fact_check_ms?: number;
+    total_server_ms?: number;
 }
 
 export interface SatireCheckResponse extends SatireCheckApiShape {}

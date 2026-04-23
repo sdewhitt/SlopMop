@@ -253,8 +253,10 @@ function startObserver(settings: DetectionSettings): void {
     });
   });
 
-  bus.onFactCheckResult(({ postId, items }) => {
-    overlay.renderFactCheckResult(postId, items);
+  bus.onFactCheckResult((payload) => {
+    overlay.renderFactCheckResult(payload.postId, payload.items, {
+      factCheckMs: payload.factCheckMs,
+    });
   });
   bus.onFactCheckError(({ postId, message }) => {
     overlay.renderFactCheckError(postId, message);

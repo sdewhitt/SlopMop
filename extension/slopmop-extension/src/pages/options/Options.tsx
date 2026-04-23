@@ -574,6 +574,17 @@ export default function Options() {
                     description="Fact check button beside Detect Now; runs ClaimReview search via backend"
                   />
                 </div>
+                <div
+                  className="settings-search-block"
+                  data-search="power user timing milliseconds detect fact check server latency debug"
+                >
+                  <Toggle
+                    checked={settings.powerUserTiming}
+                    onChange={(v) => update('powerUserTiming', v)}
+                    label="Power user timing"
+                    description="On hover, show server-reported Detect and Fact-check times (ms) on post badges when available"
+                  />
+                </div>
               </div>
             </div>
           </section>

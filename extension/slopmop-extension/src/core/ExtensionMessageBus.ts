@@ -2,7 +2,7 @@ import {
     ContentToBackgroundMessage,
     DetectionResponse,
     DetectionLanguageUnsupportedPayload,
-    FactCheckItem,
+    FactCheckResultPayload,
     NormalizedPostContent,
     PostId,
 } from "@src/types/domain";
@@ -73,7 +73,7 @@ export class ExtensionMessageBus {
         }
     }
 
-    onFactCheckResult(handler: (payload: { postId: PostId; items: FactCheckItem[] }) => void): void {
+    onFactCheckResult(handler: (payload: FactCheckResultPayload) => void): void {
         const listener = (message: any) => {
             if (message.type === "FACT_CHECK_RESULT") {
                 handler(message.payload);
