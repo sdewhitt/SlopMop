@@ -74,6 +74,10 @@ export class PostExtractor {
         // author and timestamp are currently only implemented for posts in the adapter
         const authorHandle = type === "post" ? adapter.getAuthorHandle(node) : "";
         const timestampText = type === "post" ? adapter.getTimestampText(node) : "";
+        const subreddit =
+            type === "post" && adapter.getSiteId() === "reddit.com" && typeof adapter.getSubreddit === "function"
+                ? adapter.getSubreddit(node)
+                : null;
 
         return {
             site: siteId,
@@ -89,6 +93,7 @@ export class PostExtractor {
             domContext: {
               authorHandle: authorHandle ?? "",
               timestampText: timestampText ?? "",
+              ...(subreddit ? { subreddit } : {}),
             },
           };
     

@@ -21,6 +21,7 @@
     "tabs",
     "storage",
     "identity",
+    "alarms",
     "offscreen"
   ],
   "host_permissions": [

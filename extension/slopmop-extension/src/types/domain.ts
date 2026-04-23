@@ -34,6 +34,7 @@ export interface NormalizedPostContent {
     domContext: {
       authorHandle: string;
       timestampText: string;
+      subreddit?: string;
     };
     // visible comment bodies under this post (feed analysis) — sent to /detect for satire heuristics on the main score.
     commentTexts?: string[];
@@ -189,6 +190,10 @@ export interface FactCheckResultPayload {
   items: FactCheckItem[];
   /** Optional satire context to reduce false positives in UX. */
   satire?: SatireSignal;
+  /** Optional: stable text-only fingerprint used for caching/replay debugging. */
+  contentFingerprint?: string;
+  /** Optional: platform hostname used for caching/debug. */
+  site?: SiteId;
   updatedAtMs?: number;
 }
 

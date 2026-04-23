@@ -174,6 +174,8 @@ class DetectRequest(BaseModel):
     text: str
     # optional visible comment bodies (same post) for satire keyword / consensus heuristics on the main post score.
     comment_texts: Optional[List[str]] = None
+    # optional: reddit community name (e.g. "shitposting") for hard satire allowlist overrides.
+    subreddit: Optional[str] = None
 
 
 class HighlightSpan(BaseModel):
@@ -193,6 +195,9 @@ class DetectResponse(BaseModel):
     detect_ms: Optional[int] = None
     fact_check_ms: Optional[int] = None
     total_server_ms: Optional[int] = None
+    # Optional satire signal (from satire model and/or comment consensus heuristics).
+    satire_score: Optional[float] = None
+    satire_label: Optional[str] = None
 
 
 class DetectImageRequest(BaseModel):
@@ -344,6 +349,46 @@ def detect(
     total_server_ms = max(0, int((t_detect_end - t0) * 1000))
 
     explanation = generate_explanation(confidence, label, len(clean_text))
+
+    # Satire metadata: if top comments confirm satire, force satire label.
+    satire_score = None
+    satire_label = None
+    try:
+        # 0) subreddit allowlist override (hard rule)
+        sub = (request.subreddit or "").strip().lower()
+        satire_subs = {
+            "satire",
+            "shitpost",
+            "shitposts",
+            "shitposting",
+            "circlejerk",
+            "copypasta",
+            "parody",
+        }
+        if sub in satire_subs:
+            satire_score = 1.0
+            satire_label = "satire"
+            print(f"[SlopMop Satire] subreddit override: r/{sub} -> satire", flush=True)
+
+        scan = getattr(text_detector, "_get_satire_heuristic_scan", None)
+        scan_fn = scan() if callable(scan) else None
+        if callable(scan_fn):
+            r = scan_fn(clean_text, comment_texts)
+            reason = getattr(r, "consensus_reason", None)
+            if reason == "top3_2of3":
+                satire_score = 1.0
+                satire_label = "satire"
+                print(f"[SlopMop Satire] top comments: confirmed satire (reason={reason})", flush=True)
+        # If not confirmed by comments, expose neural satire probability when available.
+        if satire_label is None:
+            ps = getattr(text_detector, "_satire_prob_satire", None)
+            ps_val = ps(clean_text) if callable(ps) else None
+            if ps_val is not None:
+                satire_score = float(ps_val)
+                satire_label = "satire" if satire_score >= 0.5 else "non_satire"
+    except Exception as e:
+        print(f"[SlopMop Satire] failed to attach satire metadata: {e}", flush=True)
+
     return DetectResponse(
         confidence=confidence,
         label=label,
@@ -351,6 +396,8 @@ def detect(
         highlights=highlights,
         detect_ms=detect_ms,
         total_server_ms=total_server_ms,
+        satire_score=satire_score,
+        satire_label=satire_label,
     )
 
 

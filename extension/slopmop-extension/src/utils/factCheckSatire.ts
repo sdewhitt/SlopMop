@@ -1,6 +1,10 @@
 import type { FactCheckItem, SatireLabel, SatireSignal } from '@src/types/domain';
 
-/** Above this, reorder fact-check rows and soften strong “false” style verdicts in UI. */
+/**
+ * Thresholds are intentionally conservative:
+ * - soften (0.55): mild nudge once satire is more-likely-than-not, without hiding information.
+ * - banner (0.72): only show prominent copy when satire is strongly indicated to avoid desensitizing users.
+ */
 export const SATIRE_SCORE_SOFTEN_THRESHOLD = 0.55;
 
 /** Above this, show prominent “likely satire” banner copy. */
