@@ -51,6 +51,18 @@ def test_detect_rejects_over_max_length_text():
     assert response.status_code == 400
     assert "at most 5000 characters" in response.json()["detail"]
 
+def test_detect_satire_subreddit_forces_satire_label():
+    payload = {
+        "text": "Completely neutral post text without obvious satire markers.",
+        "subreddit": "satire",
+    }
+    response = client.post("/detect", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["satire_label"] == "satire"
+    assert data["satire_score"] == 1.0
+
 
 # ── /detect-image tests ──────────────────────────────────────────
 
@@ -65,6 +77,11 @@ def _make_test_image_base64() -> str:
 def test_detect_image_success():
     b64 = _make_test_image_base64()
     response = client.post("/detect-image", json={"image_base64": b64})
+    # In minimal/dev environments, image-model deps (e.g. torchvision) may be absent.
+    if response.status_code == 503:
+        assert "Image detection is not available" in response.json()["detail"]
+        return
+
     assert response.status_code == 200
     data = response.json()
     assert "confidence" in data
