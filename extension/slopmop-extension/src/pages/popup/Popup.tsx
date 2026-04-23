@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import browser from 'webextension-polyfill';
 import 'react/jsx-runtime';
 import { normalizeConfidence, resolveExplanation } from '@src/utils/generateExplanation';
@@ -25,9 +25,16 @@ import SignInView from './components/SignInView';
 import OnboardingModal from './components/OnboardingModal';
 import DisabledWebsitesManager from '../options/DisabledWebsitesManager';
 import HistoryPage from '../options/HistoryPage';
+import StatsPage from '../options/StatsPage';
 import ThemeToggle from './components/ThemeToggle';
 import { UNSUPPORTED_LANGUAGE_MESSAGE } from '@src/utils/languageSupport';
+import { BATTERY_THROTTLE_ACTIVE_KEY, BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY } from '@src/utils/batteryThrottle';
 import type { FactCheckItem } from '@src/types/domain';
+import type { SubmitExtensionReportPayload } from '@src/lib/api';
+import {
+  SATIRE_SCORE_HIGH_BANNER_THRESHOLD,
+  SATIRE_SCORE_SOFTEN_THRESHOLD,
+} from '@src/utils/factCheckSatire';
 
 type DetectResponse = {
   confidence?: number;
@@ -40,10 +47,19 @@ type DetectResponse = {
   confidence_score?: number;
 } & Record<string, unknown>;
 
+const REPORT_TYPE_OPTIONS: Array<{
+  value: SubmitExtensionReportPayload['type'];
+  label: string;
+}> = [
+  { value: 'incorrect_detection', label: 'Incorrect detection' },
+  { value: 'bug', label: 'Bug or crash' },
+  { value: 'other', label: 'Other feedback' },
+];
+
 export default function Popup() {
   const { user, loading: authLoading, logOut } = useAuth();
 
-  const [view, setView] = useState<'home' | 'settings' | 'history'>('home');
+  const [view, setView] = useState<'home' | 'settings' | 'history' | 'report' | 'stats'>('home');
   const [enabled, setEnabled] = useState(true);
   const [stats, setStats] = useState<Stats>({ postsScanned: 0, aiDetected: 0, postsProcessing: 0 });
   const [settings, setSettings] = useState<Settings>(defaultSettings);
@@ -67,6 +83,19 @@ export default function Popup() {
     ),
   }), []);
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
+  const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
+  const [batteryAutoLowBatteryActive, setBatteryAutoLowBatteryActive] = useState(false);
+  const [reportType, setReportType] = useState<SubmitExtensionReportPayload['type']>('incorrect_detection');
+  const [reportMessage, setReportMessage] = useState('');
+  const [reportPageUrl, setReportPageUrl] = useState('');
+  const [reporterEmail, setReporterEmail] = useState('');
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSuccess, setReportSuccess] = useState<string | null>(null);
+  const [popupSettingsSearchQuery, setPopupSettingsSearchQuery] = useState('');
+  const [popupSettingsSearchNoMatches, setPopupSettingsSearchNoMatches] = useState(false);
+  const popupSettingsSearchInputRef = useRef<HTMLInputElement>(null);
+  const popupSettingsScrollRef = useRef<HTMLDivElement>(null);
 
   /** Returns the namespaced storage keys for a given user's stats. */
   const statsKeys = useCallback((uid: string) => ({
@@ -87,8 +116,12 @@ export default function Popup() {
         'lastDetectLanguageUnsupported',
         'lastFactCheckResult',
         'lastFactCheckError',
+        BATTERY_THROTTLE_ACTIVE_KEY,
+        BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
       ])
       .then((result) => {
+        setBatteryThrottleActive(result[BATTERY_THROTTLE_ACTIVE_KEY] === true);
+        setBatteryAutoLowBatteryActive(result[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true);
         if (result.settings) {
           const merged = mergeSettings(result.settings as Partial<Settings>);
           setSettings(merged);
@@ -179,6 +212,8 @@ export default function Popup() {
         typeof savedAccessibilityMode === 'boolean'
           ? savedAccessibilityMode
           : defaultSettings.accessibilityMode;
+      // Fall back to locally-stored settings for fields not yet synced from Firestore.
+      const localSettings = local.settings as Partial<Settings> | undefined;
       // Stats are namespaced by UID — always use Firestore as source of truth.
       const mergedStats = {
         postsScanned: remote.stats.postsScanned ?? 0,
@@ -199,9 +234,17 @@ export default function Popup() {
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
         scanComments: remote.settings.scanComments ?? defaultSettings.scanComments,
         uiMode: remote.settings.uiMode ?? defaultSettings.uiMode,
+        badgeSize: remote.settings.badgeSize ?? defaultSettings.badgeSize,
+        badgePosition: remote.settings.badgePosition ?? defaultSettings.badgePosition,
+        detectionTheme: remote.settings.detectionTheme ?? defaultSettings.detectionTheme,
         accessibilityMode,
         highlightSegments: remote.settings.highlightSegments ?? defaultSettings.highlightSegments,
         factCheck: remote.settings.factCheck ?? defaultSettings.factCheck,
+        lowBatteryMode: remote.settings.lowBatteryMode ?? localSettings?.lowBatteryMode ?? defaultSettings.lowBatteryMode,
+        lowBatteryModeAutoWhenBatteryLow:
+          remote.settings.lowBatteryModeAutoWhenBatteryLow ??
+          localSettings?.lowBatteryModeAutoWhenBatteryLow ??
+          defaultSettings.lowBatteryModeAutoWhenBatteryLow,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
       };
       setSettings(merged);
@@ -332,11 +375,52 @@ export default function Popup() {
       if (typeof simpleModeChange?.newValue === 'boolean') {
         setSimpleMode(simpleModeChange.newValue);
       }
+
+      const throttleChange = changes[BATTERY_THROTTLE_ACTIVE_KEY];
+      if (typeof throttleChange?.newValue === 'boolean') {
+        setBatteryThrottleActive(throttleChange.newValue);
+      }
+
+      const autoLowChange = changes[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY];
+      if (typeof autoLowChange?.newValue === 'boolean') {
+        setBatteryAutoLowBatteryActive(autoLowChange.newValue);
+      }
     };
 
     browser.storage.onChanged.addListener(handler);
     return () => browser.storage.onChanged.removeListener(handler);
   }, [mergeSettings]);
+
+  useEffect(() => {
+    if (view !== 'settings') {
+      setPopupSettingsSearchQuery('');
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== 'settings') return;
+    const id = requestAnimationFrame(() => popupSettingsSearchInputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [view]);
+
+  useLayoutEffect(() => {
+    if (view !== 'settings') {
+      setPopupSettingsSearchNoMatches(false);
+      return;
+    }
+    const root = popupSettingsScrollRef.current;
+    if (!root) return;
+    const q = popupSettingsSearchQuery.trim().toLowerCase();
+    const blocks = root.querySelectorAll<HTMLElement>('.settings-search-block');
+    let visible = 0;
+    blocks.forEach((el) => {
+      const ds = el.getAttribute('data-search') ?? '';
+      const match = !q || ds.toLowerCase().includes(q);
+      el.style.display = match ? '' : 'none';
+      if (match) visible += 1;
+    });
+    setPopupSettingsSearchNoMatches(q.length > 0 && visible === 0);
+  }, [popupSettingsSearchQuery, view, simpleMode]);
 
   useEffect(() => {
     const isFeedUrl = (url: string) =>
@@ -367,6 +451,97 @@ export default function Popup() {
 
   const handleScanEntirePage = () => {
     browser.runtime.sendMessage({ type: 'SLOPMOP_SCAN_ENTIRE_PAGE' }).catch(() => {});
+  };
+
+  const openReportView = () => {
+    setView('report');
+    setReportError(null);
+    setReportSuccess(null);
+    if (user?.email && reporterEmail.trim() === '') {
+      setReporterEmail(user.email);
+    }
+  };
+
+  const prefillReportPageUrl = useCallback(async () => {
+    try {
+      const tabsApi = browser.tabs;
+      if (tabsApi?.query) {
+        const tabs = await tabsApi.query({ active: true, lastFocusedWindow: true });
+        const activeUrl = tabs[0]?.url;
+        if (typeof activeUrl === 'string' && activeUrl.trim() !== '') {
+          setReportPageUrl(activeUrl);
+          return;
+        }
+      }
+    } catch {
+      // ignore tab-query failures and fall back to window location when possible
+    }
+
+    if (typeof window !== 'undefined' && window.location?.href) {
+      setReportPageUrl(window.location.href);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    if (reporterEmail.trim() !== '') return;
+    setReporterEmail(user.email);
+  }, [reporterEmail, user?.email]);
+
+  useEffect(() => {
+    if (view !== 'report') return;
+    if (reportPageUrl.trim() !== '') return;
+    void prefillReportPageUrl();
+  }, [prefillReportPageUrl, reportPageUrl, view]);
+
+  const submitReport = async () => {
+    const message = reportMessage.trim();
+    if (message.length === 0) {
+      setReportError('Please describe the issue before submitting.');
+      setReportSuccess(null);
+      return;
+    }
+
+    setReportSubmitting(true);
+    setReportError(null);
+    setReportSuccess(null);
+
+    try {
+      const payload: SubmitExtensionReportPayload = {
+        type: reportType,
+        message,
+        pageUrl: reportPageUrl.trim() || undefined,
+        reporterEmail: reporterEmail.trim() || undefined,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      };
+
+      const response = (await browser.runtime.sendMessage({
+        type: 'SLOPMOP_SUBMIT_REPORT',
+        reportPayload: payload,
+      })) as { success: boolean; error?: string; data?: { reportId?: string } };
+
+      if (!response.success) {
+        throw new Error(response.error ?? 'Failed to submit report.');
+      }
+
+      const reportId =
+        response.data && typeof response.data.reportId === 'string'
+          ? response.data.reportId
+          : null;
+
+      setReportSuccess(
+        reportId
+          ? `Report submitted. Ticket ID: ${reportId}`
+          : 'Report submitted successfully.',
+      );
+      setReportMessage('');
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : 'Failed to submit report.';
+      setReportError(messageText);
+    } finally {
+      setReportSubmitting(false);
+    }
   };
 
   const toggleEnabled = () => {
@@ -449,9 +624,14 @@ export default function Popup() {
       scanImages: defaultUserSettings.settings.scanImages,
       scanComments: defaultUserSettings.settings.scanComments,
       uiMode: defaultUserSettings.settings.uiMode,
+      badgeSize: defaultUserSettings.settings.badgeSize,
+      badgePosition: defaultUserSettings.settings.badgePosition,
+      detectionTheme: defaultUserSettings.settings.detectionTheme,
       accessibilityMode: false,
       highlightSegments: defaultUserSettings.settings.highlightSegments,
       factCheck: defaultUserSettings.settings.factCheck,
+      lowBatteryMode: defaultUserSettings.settings.lowBatteryMode,
+      lowBatteryModeAutoWhenBatteryLow: defaultUserSettings.settings.lowBatteryModeAutoWhenBatteryLow,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
     };
     setSettings(defaults);
@@ -530,26 +710,128 @@ export default function Popup() {
         {onboardingModal}
         <SettingsHeader saved={saved} onBack={() => setView('home')} />
 
-        <div className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
+        <div
+          className="shrink-0 px-4 pt-2 pb-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900"
+          role="search"
+          aria-label="Search settings"
+        >
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Search settings</p>
+          <div className="relative">
+            <svg
+              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <input
+              ref={popupSettingsSearchInputRef}
+              type="text"
+              value={popupSettingsSearchQuery}
+              onChange={(e) => setPopupSettingsSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setPopupSettingsSearchQuery('');
+                  e.preventDefault();
+                }
+              }}
+              placeholder="Filter by keyword…"
+              autoComplete="off"
+              inputMode="search"
+              className="w-full min-h-[36px] rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-8 text-xs text-gray-900 placeholder-gray-500 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-400"
+              aria-label="Filter settings by keyword"
+            />
+            {popupSettingsSearchQuery.trim() !== '' && (
+              <button
+                type="button"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                aria-label="Clear search"
+                onClick={() => {
+                  setPopupSettingsSearchQuery('');
+                  popupSettingsSearchInputRef.current?.focus();
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden>
+                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {popupSettingsSearchNoMatches && (
+            <p className="mt-2 text-center text-[11px] text-gray-500" role="status">
+              No matching settings found
+            </p>
+          )}
+        </div>
+
+        <div
+          ref={popupSettingsScrollRef}
+          className="px-4 py-3 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0"
+          style={{ maxHeight: 'calc(580px - 52px - 88px)' }}
+        >
           {/* Simple view: only detection on/off (on Home) and account remain; advanced settings hidden */}
           {!simpleMode && (
             <>
-              <DetectionSettings settings={settings} onUpdateSetting={updateSetting} />
+              <DetectionSettings
+                settings={settings}
+                onUpdateSetting={updateSetting}
+                batteryThrottleActive={batteryThrottleActive}
+                batteryAutoLowBatteryActive={batteryAutoLowBatteryActive}
+              />
 
               <PlatformSettings platforms={settings.platforms} onUpdatePlatform={updatePlatform} />
 
-              <DisabledWebsitesManager />
+              <div
+                className="settings-search-block"
+                data-search="disabled websites blocklist ignore url domain skip"
+              >
+                <DisabledWebsitesManager />
+              </div>
 
               <DataSettings onResetStats={handleResetStats} onResetSettings={handleResetSettings} />
             </>
           )}
 
+          {simpleMode && (
+            <section
+              className="settings-search-block rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-700/60 dark:bg-amber-500/10 dark:text-amber-100"
+              data-search="simple mode beginner basic options page extension"
+              aria-live="polite"
+            >
+              <p className="font-semibold mb-1">Simple mode is on</p>
+              <p className="text-amber-900/90 dark:text-amber-200/90 mb-2 leading-snug">
+                Badge size, platforms, sensitivity, and other details are on the full options page. Turn off Simple
+                mode there to show them here too.
+              </p>
+              <button
+                type="button"
+                onClick={() => void browser.runtime.openOptionsPage()}
+                className="w-full py-2 rounded-lg text-xs font-medium bg-amber-600 text-white hover:bg-amber-700 transition-colors cursor-pointer"
+              >
+                Open extension options
+              </button>
+            </section>
+          )}
+
           {/* Sign-out button */}
-          <section>
+          <section
+            className="settings-search-block"
+            data-search="account email sign out logout report issue profile"
+          >
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
               Account
             </p>
             <p className="text-[11px] text-gray-600 dark:text-gray-400 mb-2 truncate">{user.email}</p>
+            <button
+              onClick={openReportView}
+              className="w-full py-2 mb-2 rounded-lg text-xs font-medium bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500 transition-colors cursor-pointer"
+            >
+              Report an issue
+            </button>
             <button
               onClick={() => logOut()}
               className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
@@ -562,19 +844,132 @@ export default function Popup() {
     );
   }
 
+  // ── Report view ──────────────────────────────────────────────
+  if (view === 'report') {
+    return (
+      <div
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
+          simpleMode ? 'simple-mode' : ''
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+      >
+        {onboardingModal}
+        <SettingsHeader title="Report an Issue" onBack={() => setView('settings')} />
+
+        <div className="px-4 py-3 space-y-3 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
+          <p className="text-xs text-gray-600 dark:text-gray-400 leading-snug">
+            Submit bugs, incorrect detections, or other feedback directly to the SlopMop team.
+            Notification timing is managed by SlopMop developers.
+          </p>
+
+          <div>
+            <label htmlFor="report-type" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              Report type
+            </label>
+            <select
+              id="report-type"
+              value={reportType}
+              onChange={(event) => setReportType(event.target.value as SubmitExtensionReportPayload['type'])}
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm"
+            >
+              {REPORT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="report-message" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              What happened?
+            </label>
+            <textarea
+              id="report-message"
+              value={reportMessage}
+              onChange={(event) => setReportMessage(event.target.value)}
+              maxLength={2000}
+              rows={5}
+              placeholder="Describe the issue you ran into"
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm resize-y"
+            />
+            <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+              {reportMessage.length}/2000
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="report-page-url" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              Page URL (optional)
+            </label>
+            <input
+              id="report-page-url"
+              type="url"
+              value={reportPageUrl}
+              onChange={(event) => setReportPageUrl(event.target.value)}
+              placeholder="https://example.com/post"
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="report-contact-email" className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              Contact email (optional)
+            </label>
+            <input
+              id="report-contact-email"
+              type="email"
+              value={reporterEmail}
+              onChange={(event) => setReporterEmail(event.target.value)}
+              placeholder="you@example.com"
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm"
+            />
+          </div>
+
+          {reportError && (
+            <div className="rounded-lg px-3 py-2 text-sm bg-red-100 text-red-800 border border-red-300 dark:bg-red-500/20 dark:text-red-200 dark:border-red-500/40">
+              {reportError}
+            </div>
+          )}
+
+          {reportSuccess && (
+            <div className="rounded-lg px-3 py-2 text-sm bg-green-100 text-green-800 border border-green-300 dark:bg-green-500/20 dark:text-green-200 dark:border-green-500/40">
+              {reportSuccess}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void submitReport()}
+            disabled={reportSubmitting}
+            className="w-full py-2 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          >
+            {reportSubmitting ? 'Submitting…' : 'Submit report'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const rawConfidence =
     (detectResponse?.confidence as number | undefined) ??
     (detectResponse?.confidenceScore as number | undefined) ??
     (detectResponse?.confidence_score as number | undefined) ??
     null;
   const confidence = normalizeConfidence(rawConfidence);
-  const baseExplanation = detectResponse
-    ? resolveExplanation({
-        explanation: detectResponse.explanation as string | undefined,
-        confidence: rawConfidence,
-        metadataComplete: detectResponse.metadataComplete as boolean | undefined,
-      })
-    : null;
+  const baseExplanation = (() => {
+    if (!detectResponse) return null;
+    const exp = (detectResponse as any).explanation;
+    // Newer background payloads store `DetectionResponse` with `explanation.summary`.
+    if (exp && typeof exp === 'object' && typeof exp.summary === 'string') {
+      return exp.summary.trim();
+    }
+    // Older / alternate shapes store `explanation` as a string.
+    return resolveExplanation({
+      explanation: typeof exp === 'string' ? exp : undefined,
+      confidence: rawConfidence,
+      metadataComplete: (detectResponse as any).metadataComplete as boolean | undefined,
+    });
+  })();
   const patternReasons = (detectResponse as { patternReasons?: string[] } | null)?.patternReasons;
   const patternText = patternReasons?.length ? formatPatternReasons(patternReasons) : '';
   const explanation = patternText && baseExplanation ? `${patternText} ${baseExplanation}` : patternText || baseExplanation;
@@ -585,6 +980,25 @@ export default function Popup() {
     : detectResponse?.detectionSource === 'image'
       ? 'Image'
       : null;
+  const detectSatireScore =
+    typeof (detectResponse as any)?.satire_score === 'number'
+      ? ((detectResponse as any).satire_score as number)
+      : typeof (detectResponse as any)?.satireScore === 'number'
+        ? ((detectResponse as any).satireScore as number)
+        : null;
+  const detectSatireLabelRaw =
+    typeof (detectResponse as any)?.satire_label === 'string'
+      ? ((detectResponse as any).satire_label as string)
+      : typeof (detectResponse as any)?.satireLabel === 'string'
+        ? ((detectResponse as any).satireLabel as string)
+        : null;
+  const detectSatireLabel =
+    detectSatireLabelRaw?.toLowerCase() === 'satire'
+      ? 'satire'
+      : detectSatireLabelRaw?.toLowerCase() === 'non_satire' ||
+          detectSatireLabelRaw?.toLowerCase() === 'non-satire'
+        ? 'non_satire'
+        : null;
 
   // ── History view ──────────────────────────────────────────────
   if (view === 'history') {
@@ -603,6 +1017,23 @@ export default function Popup() {
     );
   }
 
+  // ── Stats view ────────────────────────────────────────────────
+  if (view === 'stats') {
+    return (
+      <div
+        className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
+          simpleMode ? 'simple-mode' : ''
+        } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
+      >
+        {onboardingModal}
+        <SettingsHeader title="Statistics" onBack={() => setView('home')} />
+        <div className="px-4 py-3 overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: 'calc(580px - 52px)' }}>
+          <StatsPage uid={user.uid} />
+        </div>
+      </div>
+    );
+  }
+
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div
@@ -611,7 +1042,7 @@ export default function Popup() {
       } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
       {onboardingModal}
-      <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} />
+      <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} onStatsClick={() => setView('stats')} />
 
       <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
 
@@ -649,6 +1080,41 @@ export default function Popup() {
             <p className="text-xs font-medium uppercase tracking-wider text-gray-400 mb-1">
               Source: {mediaSourceLabel}
             </p>
+          )}
+          {(detectSatireScore != null || detectSatireLabel != null) && (
+            <p className="mb-2 text-[11px] font-medium text-gray-600 dark:text-gray-300">
+              Satire:{' '}
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border ${
+                  detectSatireLabel === 'satire'
+                    ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+                    : detectSatireLabel === 'non_satire'
+                      ? 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
+                      : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'
+                }`}
+              >
+                {detectSatireLabel === 'satire'
+                  ? 'Yes'
+                  : detectSatireLabel === 'non_satire'
+                    ? 'No'
+                    : 'Unknown'}
+                {detectSatireScore != null ? ` (${Math.round(detectSatireScore * 100)}%)` : ''}
+              </span>
+            </p>
+          )}
+          {detectSatireScore != null && detectSatireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD && (
+            <div
+              className={`mb-2 rounded-lg border px-3 py-2 text-xs leading-snug ${
+                detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                  ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+                  : 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
+              }`}
+              role="status"
+            >
+              {detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                ? 'Satire/parody detected. The text model may lower AI scores on satirical posts to reduce false positives.'
+                : 'Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.'}
+            </div>
           )}
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}

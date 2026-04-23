@@ -49,4 +49,21 @@ describe('applyRichDomHighlightSpans', () => {
     expect(ok).toBe(false);
     root.remove();
   });
+
+  it('prepareHighlightSpans: partial-word API span snaps to full word inside <a>', () => {
+    const root = document.createElement('div');
+    root.innerHTML = 'Hello <a href="https://example.com/x">world</a> today.';
+    document.body.appendChild(root);
+    const plain = 'Hello world today.';
+    mockInnerText(root, plain);
+
+    const ok = applyRichDomHighlightSpans(root, plain, [{ start: 7, end: 10, score: 0.85 }]);
+    expect(ok).toBe(true);
+
+    const mark = root.querySelector('mark.slopmop-highlight');
+    expect(mark).not.toBeNull();
+    expect(mark?.textContent).toBe('world');
+    expect(root.querySelector('a')?.contains(mark ?? null)).toBe(true);
+    root.remove();
+  });
 });

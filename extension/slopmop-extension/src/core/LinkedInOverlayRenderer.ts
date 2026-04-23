@@ -8,14 +8,14 @@ export class LinkedInOverlayRenderer extends OverlayRenderer {
   }
 
   protected override getBadgePosition(): Record<string, string> {
-    return { top: "48px", right: "8px" };
+    return this.resolveBadgePosition({ top: "48px", right: "8px" });
   }
 
   protected override getPendingBadgeContainerStyle(isSimple: boolean): Record<string, string> {
     return {
-      padding: isSimple ? "2px 5px" : "2px 4px",
-      borderRadius: "3px",
-      fontSize: isSimple ? "11px" : "10px",
+      padding: this.scaleByBadgeSize(isSimple ? "2px 5px" : "2px 4px", "spacing"),
+      borderRadius: this.scaleByBadgeSize("3px", "spacing"),
+      fontSize: this.scaleByBadgeSize(isSimple ? "11px" : "10px", "font"),
       lineHeight: "1.2",
     };
   }
@@ -23,9 +23,9 @@ export class LinkedInOverlayRenderer extends OverlayRenderer {
   protected override getActionButtonStyle(_hostNode: HTMLElement, isSimple: boolean): Partial<CSSStyleDeclaration> {
     return {
       border: "none",
-      borderRadius: "3px",
-      padding: "2px 6px",
-      fontSize: isSimple ? "11px" : "10px",
+      borderRadius: this.scaleByBadgeSize("3px", "spacing"),
+      padding: this.scaleByBadgeSize("2px 6px", "spacing"),
+      fontSize: this.scaleByBadgeSize(isSimple ? "11px" : "10px", "font"),
       fontWeight: "600",
       color: "#fff",
       backgroundColor: "#6b7280",
@@ -35,10 +35,10 @@ export class LinkedInOverlayRenderer extends OverlayRenderer {
   }
 
   protected override getSimpleVerdictBadgeFontSize(): string {
-    return "11px";
+    return this.scaleByBadgeSize("11px", "font");
   }
 
   protected override getSimpleVerdictBadgePadding(): string {
-    return "2px 6px";
+    return this.scaleByBadgeSize("2px 6px", "spacing");
   }
 }

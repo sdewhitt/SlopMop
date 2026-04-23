@@ -99,4 +99,31 @@ describe('XOverlayRenderer UI', () => {
     const badge = postNode.querySelector('[style*="position: absolute"]') as HTMLElement;
     expect(badge?.textContent).toBe('likely_human (88%)');
   });
+
+  it('applies configured badge size on X badges', () => {
+    const smallNode = document.createElement('article');
+    const largeNode = document.createElement('article');
+    smallNode.style.position = 'relative';
+    largeNode.style.position = 'relative';
+    document.body.append(smallNode, largeNode);
+
+    const adapter = createAdapter();
+    const smallRenderer = new XOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'small',
+    });
+    const largeRenderer = new XOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'large',
+    });
+
+    smallRenderer.renderPending('x-size-small', smallNode, 'small', () => {});
+    largeRenderer.renderPending('x-size-large', largeNode, 'large', () => {});
+
+    const smallBadge = smallNode.querySelector('[style*="position: absolute"]') as HTMLElement;
+    const largeBadge = largeNode.querySelector('[style*="position: absolute"]') as HTMLElement;
+    expect(parseFloat(largeBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
+  });
 });

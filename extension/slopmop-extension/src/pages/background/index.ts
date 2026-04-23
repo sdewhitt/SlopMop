@@ -22,8 +22,11 @@ import {
   detectText,
   factCheckText,
   FactCheckApiError,
+  submitExtensionReport,
   type DetectImageResponse,
+  type ImageModelVariant,
   type DetectResponse,
+  type SubmitExtensionReportPayload,
 } from '@src/lib/api';
 import {
   isTextLanguageSupported,
@@ -38,6 +41,7 @@ import {
   tryAnalyzePostLanguageUnsupported,
   tryPopupDetectLanguageBlock,
 } from '@src/pages/background/detectLanguageGate';
+
 import type {
   DetectionResponse,
   HighlightSpan,
@@ -47,6 +51,7 @@ import type {
 } from '@src/types/domain';
 import {
   defaultUserSettings,
+  mergeDetectionSettingsFromStored,
   normalizeDetectionLanguages,
   type DetectionSettings,
 } from '@src/utils/userSettings';
@@ -57,16 +62,30 @@ import {
   validateHost,
 } from '@src/utils/disabledWebsites';
 import {
+  applyBatteryThrottleToSettings,
+  applyLowBatteryModeToSettings,
+  BATTERY_THROTTLE_ACTIVE_KEY,
+  BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+} from '@src/utils/batteryThrottle';
+import {
   buildHistoryEntry,
   saveHistoryEntry,
   getHistory,
   clearHistory,
   togglePin,
+  findMatchingHistoryEntry,
+  findMatchingHistoryByFingerprint,
+  explanationHighlightsFromSpans,
+  type HistoryEntry,
 } from '@src/utils/detectionHistory';
+import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
+import { fnv1a32Hex } from '@src/utils/fnv1aHash';
+import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
+import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
 
 console.log('background script loaded');
 
-// ── Post analysis ────────────────────────────────────────────────
+// -- Post analysis ------------------------------------------------
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
 // hardcoded developer toggle. keep true for offline fake responses.
@@ -96,17 +115,16 @@ function platformCountsKey(uid: string): string {
 let statsWriteChain: Promise<void> = Promise.resolve();
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
-  const stored = await browser.storage.local.get('settings');
-  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
-  return {
-    ...defaultUserSettings.settings,
-    ...saved,
-    platforms: {
-      ...defaultUserSettings.settings.platforms,
-      ...(saved.platforms ?? {}),
-    },
-    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
-  };
+  const stored = await browser.storage.local.get([
+    'settings',
+    BATTERY_THROTTLE_ACTIVE_KEY,
+    BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+  ]);
+  const base = mergeDetectionSettingsFromStored(stored.settings);
+  const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
+  const autoLowBatteryOn = stored[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode || autoLowBatteryOn);
+  return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
 }
 
 async function readStoredStats(uid: string): Promise<StoredStats> {
@@ -239,6 +257,10 @@ async function drainAnalysisQueue(): Promise<void> {
 
 initFirebase();
 
+void initBatteryThrottleController().catch((err) => {
+  console.error('[SlopMop] Battery throttle controller failed to start', err);
+});
+
 // Sync the current Firebase user to browser.storage.local so the
 // content-script React tree can read auth state reactively.
 if (auth) {
@@ -345,6 +367,7 @@ interface BackgroundMessage {
   url?: string;
   payload?: NormalizedPostContent;
   postId?: string;
+  reportPayload?: SubmitExtensionReportPayload;
 }
 
 interface MessageResponse {
@@ -385,6 +408,8 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_SUBMIT_REPORT':
+      return handleSubmitReport(msg.reportPayload);
     case 'SLOPMOP_FACT_CHECK': {
       const tabId = sender.tab?.id;
       if (!tabId) {
@@ -658,6 +683,60 @@ async function handleDetect(text: string): Promise<MessageResponse> {
   }
 }
 
+async function handleSubmitReport(
+  reportPayload: SubmitExtensionReportPayload | undefined,
+): Promise<MessageResponse> {
+  try {
+    if (!reportPayload || typeof reportPayload !== 'object') {
+      return { success: false, error: 'Invalid report payload.' };
+    }
+
+    const validTypes: SubmitExtensionReportPayload['type'][] = [
+      'incorrect_detection',
+      'bug',
+      'other',
+    ];
+
+    if (!validTypes.includes(reportPayload.type)) {
+      return { success: false, error: 'Invalid report type.' };
+    }
+
+    const message = reportPayload.message?.trim();
+    if (!message) {
+      return { success: false, error: 'Report message is required.' };
+    }
+
+    let authToken: string | undefined;
+    if (auth?.currentUser) {
+      try {
+        authToken = await auth.currentUser.getIdToken();
+      } catch {
+        authToken = undefined;
+      }
+    }
+
+    const reportData = await submitExtensionReport(
+      {
+        type: reportPayload.type,
+        message,
+        pageUrl: reportPayload.pageUrl?.trim() || undefined,
+        reporterEmail:
+          reportPayload.reporterEmail?.trim().toLowerCase() ||
+          auth?.currentUser?.email ||
+          undefined,
+        userAgent:
+          reportPayload.userAgent?.trim() ||
+          (typeof navigator !== 'undefined' ? navigator.userAgent : undefined),
+      },
+      authToken,
+    );
+
+    return { success: true, data: reportData };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
 /**
  * Fact-check does not use the same language gate as AI detection so any post text can be checked.
  * Results are pushed to the tab + storage for the popup panel.
@@ -716,6 +795,7 @@ async function maybeSaveToHistory(
     if (!uid) return; // no user logged in — don't save history
     const tab = await browser.tabs.get(tabId);
     if (tab.incognito) return;
+    const contentFingerprint = computePostContentFingerprint(post);
     const entry = buildHistoryEntry(
       post.postId,
       post.url,
@@ -723,6 +803,14 @@ async function maybeSaveToHistory(
       post.text?.plain ?? '',
       response.confidence,
       response.verdict,
+      post.domContext?.authorHandle ?? '',
+      contentFingerprint,
+      {
+        textExplanationSummary: response.explanation.summary,
+        textHighlightedSpans: response.explanation.highlightedSpans,
+        imageResult: response.imageResult,
+        detectionSource: response.detectionSource,
+      },
     );
     await saveHistoryEntry(uid, entry);
   } catch (err) {
@@ -730,7 +818,105 @@ async function maybeSaveToHistory(
   }
 }
 
+/**
+ * If history has the same platform, author handle, and text snippet as a prior detection,
+ * resend that verdict without calling the API (no stats / queue impact).
+ */
+async function tryReplayFromHistory(post: NormalizedPostContent, tabId: number): Promise<boolean> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return false;
+
+    const plainText = post.text?.plain ?? '';
+    if (post.contentType === 'IMAGE' && !plainText.trim()) return false;
+
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return false;
+    const entries = await getHistory(uid);
+    const match = findMatchingHistoryEntry(
+      entries,
+      post.site,
+      post.domContext?.authorHandle ?? '',
+      plainText,
+    );
+    if (!match) return false;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: false });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After media is resolved: replay if content fingerprint matches a prior run (reposts / stolen posts).
+ */
+async function tryReplayFromHistoryByFingerprint(
+  post: NormalizedPostContent,
+  tabId: number,
+): Promise<HistoryEntry | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return null;
+
+    const fp = computePostContentFingerprint(post);
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return null;
+    const entries = await getHistory(uid);
+    const match = findMatchingHistoryByFingerprint(entries, post.site, fp);
+    if (!match) return null;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: true });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return match;
+  } catch {
+    return null;
+  }
+}
+
+function buildDetectionResponseFromHistory(
+  entry: HistoryEntry,
+  currentPostId: string,
+  opts?: { fingerprint?: boolean },
+): DetectionResponse {
+  const viaFingerprint = opts?.fingerprint === true;
+  const summaryFallback = viaFingerprint
+    ? 'Same content fingerprint as a recent detection in your history — showing the saved result.'
+    : 'Same author and text as a recent detection in your history — showing the saved result.';
+  const hasStoredSummary = Boolean(entry.textExplanationSummary?.trim());
+  const spans = entry.textHighlightedSpans ?? [];
+  const highlights =
+    spans.length > 0 ? explanationHighlightsFromSpans(spans) : undefined;
+
+  return {
+    requestId: `history-replay-${entry.savedAtMs}-${currentPostId}`,
+    postId: currentPostId,
+    verdict: entry.verdict,
+    confidence: entry.confidence,
+    detectionSource: entry.detectionSource ?? 'text',
+    explanation: {
+      summary: hasStoredSummary ? entry.textExplanationSummary! : summaryFallback,
+      ...(highlights ? { highlights } : {}),
+      ...(spans.length > 0 ? { highlightedSpans: spans } : {}),
+      model: { name: 'history', version: '1' },
+      cache: { hit: true, ttlRemainingMs: 0 },
+      timing: { totalMs: 0, inferenceMs: 0 },
+    },
+    ...(entry.imageResult ? { imageResult: entry.imageResult } : {}),
+  };
+}
+
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  const replayed = await tryReplayFromHistory(post, tabId);
+  if (replayed) return;
+
   // Kick off the incognito check in parallel so it never blocks detection from starting.
   // browser.tabs.get can stall in a freshly-awakened MV3 service worker context; by
   // the time finalizeStats is called the promise will have long since resolved.
@@ -801,6 +987,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
+  const fingerprintReplay = await tryReplayFromHistoryByFingerprint(enrichedPost, tabId);
+  if (fingerprintReplay) {
+    await finalizeStats(fingerprintReplay.verdict === 'likely_ai');
+    return;
+  }
+
   const earlyLangUnsupported = tryAnalyzePostLanguageUnsupported(
     enrichedPost.postId,
     plainText,
@@ -845,27 +1037,104 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   if (enrichedPost.contentType === 'IMAGE') {
     const firstImage = enrichedImages.find((img) => img.bytesBase64);
     if (firstImage) {
-      try {
-        const start = performance.now();
-        const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
-        const elapsedMs = Math.round(performance.now() - start);
-        const mapped = mapToDetectionResponse(
-          imgResult,
-          enrichedPost.postId,
-          elapsedMs,
-          firstImage.mediaType ?? 'image',
-        );
+      const mediaType = firstImage.mediaType ?? 'image';
+      const runImageDetect = async (
+        modelVariant: ImageModelVariant,
+      ): Promise<{ result: DetectImageResponse; elapsedMs: number } | null> => {
+        try {
+          const start = performance.now();
+          const result = await detectImage(
+            firstImage.bytesBase64,
+            firstImage.mimeType,
+            modelVariant,
+          );
+          return { result, elapsedMs: Math.round(performance.now() - start) };
+        } catch {
+          return null;
+        }
+      };
 
+      const miniPromise = runImageDetect('mini');
+      const fullPromise = runImageDetect('full');
+
+      const miniResult = await miniPromise;
+      if (miniResult) {
+        const preliminary = mapToDetectionResponse(
+          miniResult.result,
+          enrichedPost.postId,
+          miniResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: false,
+            modelVariant: miniResult.result.model_variant ?? 'mini',
+          },
+        );
+        preliminary.explanation.summary =
+          'Preliminary result (mini model): ' + preliminary.explanation.summary;
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
-          payload: mapped,
+          payload: preliminary,
         });
-        maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
-        await finalizeStats(mapped.verdict === 'likely_ai');
-        return;
-      } catch {
-        // No text fallback for image-only posts
       }
+
+      const fullResult = await fullPromise;
+      if (fullResult) {
+        const conservativeResult =
+          miniResult && miniResult.result.confidence <= fullResult.result.confidence
+            ? miniResult
+            : fullResult;
+        const finalMapped = mapToDetectionResponse(
+          conservativeResult.result,
+          enrichedPost.postId,
+          conservativeResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: true,
+            modelVariant: conservativeResult.result.model_variant ?? 'full',
+          },
+        );
+        finalMapped.explanation.summary +=
+          ' Final hybrid image score uses the lower AI confidence between mini and full.';
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: finalMapped,
+        });
+        maybeSaveToHistory(enrichedPost, finalMapped, tabId).catch(() => {});
+        await finalizeStats(finalMapped.verdict === 'likely_ai');
+        return;
+      }
+
+      if (miniResult) {
+        const finalMini = mapToDetectionResponse(
+          miniResult.result,
+          enrichedPost.postId,
+          miniResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: true,
+            modelVariant: miniResult.result.model_variant ?? 'mini',
+          },
+        );
+        finalMini.explanation.summary +=
+          ' Full-model refinement is currently unavailable; keeping preliminary result.';
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: finalMini,
+        });
+        maybeSaveToHistory(enrichedPost, finalMini, tabId).catch(() => {});
+        await finalizeStats(finalMini.verdict === 'likely_ai');
+        return;
+      }
+
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_ERROR',
+        payload: {
+          postId: enrichedPost.postId,
+          message: 'image detection failed',
+        },
+      });
+      await finalizeStats(false);
+      return;
     }
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
@@ -913,6 +1182,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     // Fire text detection only when language is supported;
     // for MIXED with fetched images, also fire image detection in parallel.
     const firstImage = hasImages ? enrichedImages.find((img) => img.bytesBase64) : undefined;
+    const mediaType = firstImage?.mediaType ?? 'image';
 
     const textPromise = textLangSupported
       ? (async () => {
@@ -922,11 +1192,11 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         })()
       : Promise.resolve(null);
 
-    const imagePromise = firstImage
+    const imageMiniPromise = firstImage
       ? (async () => {
           try {
             const start = performance.now();
-            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType, 'mini');
             return { result, elapsedMs: Math.round(performance.now() - start) };
           } catch {
             return null; // image detection is best-effort
@@ -934,7 +1204,47 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         })()
       : Promise.resolve(null);
 
-    const [textResult, imageResult] = await Promise.all([textPromise, imagePromise]);
+    const imageFullPromise = firstImage
+      ? (async () => {
+          try {
+            const start = performance.now();
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType, 'full');
+            return { result, elapsedMs: Math.round(performance.now() - start) };
+          } catch {
+            return null; // image detection is best-effort
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [textResult, imageMiniResult] = await Promise.all([textPromise, imageMiniPromise]);
+
+    if (textResult && imageMiniResult) {
+      const preliminary = mapToDetectionResponse(
+        textResult.result,
+        enrichedPost.postId,
+        textResult.elapsedMs,
+        'text',
+        { isFinal: false },
+      );
+      preliminary.imageResult = mapToImageDetectionResult(
+        imageMiniResult.result,
+        imageMiniResult.elapsedMs,
+        mediaType,
+        imageMiniResult.result.model_variant ?? 'mini',
+      );
+      preliminary.explanation.summary += ' Preliminary image sub-result uses mini model.';
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: preliminary,
+      });
+    }
+
+    const imageFullResult = await imageFullPromise;
+    const imageResult = imageFullResult
+      ? (imageMiniResult && imageMiniResult.result.confidence <= imageFullResult.result.confidence
+          ? imageMiniResult
+          : imageFullResult)
+      : imageMiniResult;
 
     // If text was skipped (unsupported language) but image succeeded, return image-only result.
     // Use the image result as the primary verdict (don't also set imageResult, which would
@@ -944,8 +1254,19 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         imageResult.result,
         enrichedPost.postId,
         imageResult.elapsedMs,
-        firstImage?.mediaType ?? 'image',
+        mediaType,
+        {
+          isFinal: true,
+          modelVariant: imageResult.result.model_variant,
+        },
       );
+      if (!imageFullResult && imageMiniResult) {
+        imgResponse.explanation.summary +=
+          ' Full-model refinement is currently unavailable; keeping preliminary result.';
+      } else if (imageFullResult && imageMiniResult) {
+        imgResponse.explanation.summary +=
+          ' Final hybrid image score uses the lower AI confidence between mini and full.';
+      }
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
         payload: imgResponse,
@@ -981,21 +1302,30 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       mapped.imageResult = mapToImageDetectionResult(
         imageResult.result,
         imageResult.elapsedMs,
-        firstImage?.mediaType ?? 'image',
+        mediaType,
+        imageResult.result.model_variant,
       );
+      if (!imageFullResult && imageMiniResult) {
+        mapped.explanation.summary += ' Image refinement stayed on mini because full model was unavailable.';
+      } else if (imageFullResult && imageMiniResult) {
+        mapped.explanation.summary +=
+          ' Image refinement uses the lower AI confidence between mini and full.';
+      }
     }
 
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_RESULT',
-      payload: mapped,
+      payload: {
+        ...mapped,
+        isFinal: true,
+      },
     });
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'network error';
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
-      payload: { postId: enrichedPost.postId, message },
+      payload: { postId: enrichedPost.postId, message: formatDetectionFetchError(err) },
     });
     await finalizeStats(false);
   }
@@ -1026,7 +1356,7 @@ async function fetchInstagramPreviewImageCandidate(
 
     const mediaType: MediaType = url.pathname.includes('/reel/') ? 'video' : 'image';
     return {
-      imageId: `ig-og-${hashString(previewUrl)}`,
+      imageId: `ig-og-${fnv1a32Hex(previewUrl)}`,
       bytesBase64: '',
       srcUrl: previewUrl,
       mimeType: mimeTypeFromImageUrl(previewUrl),
@@ -1066,14 +1396,6 @@ function mimeTypeFromImageUrl(url: string): string {
   return 'image/jpeg';
 }
 
-function hashString(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
-}
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
 async function fetchImagesThrottled(
@@ -1192,6 +1514,15 @@ function isTextDetectApiResult(
   return 'highlights' in result;
 }
 
+function resolveImageModelDescriptor(
+  modelVariant: ImageModelVariant | undefined,
+): { name: string; version: string } {
+  if (modelVariant === 'full') {
+    return { name: 'nonescape', version: 'v0' };
+  }
+  return { name: 'nonescape-mini', version: 'mini-v0' };
+}
+
 function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
   return raw.filter(
     (s) =>
@@ -1210,6 +1541,10 @@ function mapToDetectionResponse(
   postId: string,
   timingMs: number,
   detectionSource: DetectionResponse['detectionSource'] = 'text',
+  opts?: {
+    isFinal?: boolean;
+    modelVariant?: ImageModelVariant;
+  },
 ): DetectionResponse {
   //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
 
@@ -1240,22 +1575,31 @@ function mapToDetectionResponse(
           start: s.start,
           end: s.end,
           reason:
-            'Segment influence (leave-one-token-out): ' +
+            'Segment influence (model attribution): ' +
             `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
         }))
       : [];
+
+  const inferredImageVariant = !isTextDetectApiResult(apiResult)
+    ? apiResult.model_variant
+    : undefined;
+  const imageModel = resolveImageModelDescriptor(opts?.modelVariant ?? inferredImageVariant);
+  const explanationModel = detectionSource === 'text'
+    ? { name: 'slopmop-api', version: '1.0' }
+    : imageModel;
 
   return {
     requestId: crypto.randomUUID(),
     postId,
     verdict,
     confidence: apiResult.confidence,
+    isFinal: opts?.isFinal ?? true,
     detectionSource,
     explanation: {
       summary: apiResult.explanation,
       highlights,
       ...(highlightedSpans.length > 0 ? { highlightedSpans } : {}),
-      model: { name: 'slopmop-api', version: '1.0' },
+      model: explanationModel,
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
     },
@@ -1266,6 +1610,7 @@ function mapToImageDetectionResult(
   apiResult: DetectImageResponse,
   timingMs: number,
   mediaType: MediaType = 'image',
+  modelVariant?: ImageModelVariant,
 ): ImageDetectionResult {
   const confidencePercent = apiResult.confidence <= 1
     ? apiResult.confidence * 100
@@ -1277,11 +1622,13 @@ function mapToImageDetectionResult(
       ? 'unknown'
       : 'likely_human';
 
+  const model = resolveImageModelDescriptor(modelVariant ?? apiResult.model_variant);
+
   return {
     verdict,
     confidence: apiResult.confidence,
     summary: apiResult.explanation,
-    model: { name: 'nonescape-mini', version: '0.1' },
+    model,
     timingMs,
     mediaType,
   };

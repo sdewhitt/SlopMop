@@ -238,6 +238,105 @@ describe('Reddit extraction pipeline', () => {
     expect(overlay?.textContent).toBe('likely_ai (86%)');
   });
 
+  it('applies badge size setting and preserves readability in accessibility mode', () => {
+    const postSmall = document.createElement('article');
+    const postLarge = document.createElement('article');
+    const postA11y = document.createElement('article');
+    document.body.append(postSmall, postLarge, postA11y);
+
+    const rendererSmall = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'small',
+      accessibilityMode: false,
+    });
+    const rendererLarge = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'large',
+      accessibilityMode: false,
+    });
+    const rendererA11y = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'small',
+      accessibilityMode: true,
+    });
+
+    rendererSmall.renderPending('t3_size_small', postSmall, 'small');
+    rendererLarge.renderPending('t3_size_large', postLarge, 'large');
+    rendererA11y.renderPending('t3_size_a11y', postA11y, 'a11y');
+
+    const smallBadge = postSmall.lastElementChild as HTMLElement;
+    const largeBadge = postLarge.lastElementChild as HTMLElement;
+    const a11yBadge = postA11y.lastElementChild as HTMLElement;
+
+    expect(parseFloat(largeBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
+    expect(parseFloat(largeBadge.style.paddingLeft)).toBeGreaterThan(parseFloat(smallBadge.style.paddingLeft));
+    // Accessibility mode should not allow unreadably small badges.
+    expect(parseFloat(a11yBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
+  });
+
+  it('applies selected detection theme colors to indicators', () => {
+    const postNode = document.createElement('article');
+    document.body.appendChild(postNode);
+    const renderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      detectionTheme: 'high_contrast',
+    });
+    const response: DetectionResponse = {
+      requestId: 'req-theme',
+      postId: 't3_theme',
+      verdict: 'likely_ai',
+      confidence: 0.8,
+      explanation: {
+        summary: 'Theme check',
+        highlights: [],
+        model: { name: 'm', version: '1' },
+        cache: { hit: false, ttlRemainingMs: 0 },
+        timing: { totalMs: 1, inferenceMs: 1 },
+      },
+    };
+
+    renderer.renderPending('t3_theme', postNode, 'theme');
+    renderer.renderResult('t3_theme', response);
+
+    const badge = postNode.lastElementChild as HTMLElement;
+    expect(badge.style.backgroundColor).toBe('rgb(255, 31, 31)');
+  });
+
+  it('positions badges according to selected corner', () => {
+    const topLeftHost = document.createElement('article');
+    const bottomRightHost = document.createElement('article');
+    document.body.append(topLeftHost, bottomRightHost);
+
+    const topLeftRenderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      badgePosition: 'top_left',
+    });
+    const bottomRightRenderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      badgePosition: 'bottom_right',
+    });
+
+    topLeftRenderer.renderPending('t3_pos_left', topLeftHost, 'left');
+    bottomRightRenderer.renderPending('t3_pos_bottom', bottomRightHost, 'bottom');
+
+    const topLeftBadge = topLeftHost.lastElementChild as HTMLElement;
+    const bottomRightBadge = bottomRightHost.lastElementChild as HTMLElement;
+
+    expect(topLeftBadge.style.top).toBe('8px');
+    expect(topLeftBadge.style.left).toBe('8px');
+    expect(topLeftBadge.style.right).toBe('');
+    expect(topLeftBadge.style.bottom).toBe('');
+
+    expect(bottomRightBadge.style.bottom).toBe('8px');
+    expect(bottomRightBadge.style.right).toBe('8px');
+    expect(bottomRightBadge.style.left).toBe('');
+    expect(bottomRightBadge.style.top).toBe('');
+  });
+
   it('renders dual text + image results on the badge for mixed posts', () => {
     const postNode = document.createElement('article');
     document.body.appendChild(postNode);

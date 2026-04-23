@@ -37,3 +37,10 @@
   margin: 0;
   font-weight: 500;
 }
+
+/* Fallback so the settings search field is always visible even if utility classes fail to load */
+.settings-page-search-input {
+  box-sizing: border-box;
+  min-height: 2.625rem;
+  width: 100%;
+}

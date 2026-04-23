@@ -65,6 +65,12 @@ vi.mock('../lib/firestoreProxy', () => ({
       scanImages: false,
       scanComments: 'auto_top_n',
       uiMode: 'simple',
+      badgeSize: 'medium',
+  detectionTheme: 'default',
+      accessibilityMode: false,
+      highlightSegments: true,
+      factCheck: true,
+      detectionLanguages: ['eng', 'spa', 'fra'],
     },
     stats: { postsScanned: 0, aiDetected: 0, postsProcessing: 0 },
     ignoredSites: [],
@@ -272,6 +278,12 @@ describe('Popup Homepage', () => {
         scanImages: false,
         scanComments: 'auto_top_n',
         uiMode: 'simple',
+        badgeSize: 'medium',
+  detectionTheme: 'default',
+        accessibilityMode: false,
+        highlightSegments: true,
+        factCheck: true,
+        detectionLanguages: ['eng', 'spa', 'fra'],
       },
       stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 0 },
       ignoredSites: [],
@@ -306,9 +318,9 @@ describe('Popup Homepage', () => {
       }
     });
 
-    expect(screen.getByText('5')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(screen.getAllByText('5').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1').length).toBeGreaterThan(0);
   });
 
   // ── Disclaimer Banner ───────────────────────────────────────

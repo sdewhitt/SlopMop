@@ -13,7 +13,15 @@
  */
 
 import browser from 'webextension-polyfill';
-import type { PostId, SiteId, Verdict } from '@src/types/domain';
+import type {
+  HighlightSpan,
+  ImageDetectionResult,
+  MediaType,
+  PostId,
+  SiteId,
+  Verdict,
+  FactCheckItem,
+} from '@src/types/domain';
 
 export const HISTORY_KEY = 'detectionHistory';
 
@@ -31,6 +39,9 @@ const MAX_HISTORY_ENTRIES = 1000;
 /** 24 hours in milliseconds. */
 const TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Must match {@link buildHistoryEntry} truncation (first N chars of trimmed text). */
+export const HISTORY_SNIPPET_MAX_CHARS = 200;
+
 // ── Schema ────────────────────────────────────────────────────────
 
 export interface HistoryEntry {
@@ -40,8 +51,24 @@ export interface HistoryEntry {
   url: string;
   /** Platform hostname e.g. "reddit.com", "instagram.com". */
   platform: SiteId;
-  /** First 200 characters of the post's plain text. */
+  /** First {@link HISTORY_SNIPPET_MAX_CHARS} characters of the post's plain text. */
   snippet: string;
+  /** Poster handle for deduplication (e.g. Reddit username, X handle). Omitted on older entries. */
+  authorHandle?: string;
+  /** Fingerprint from `computePostContentFingerprint` — reposts / same media under another id. */
+  contentFingerprint?: string;
+  /** Text model explanation summary (mixed and text-only). */
+  textExplanationSummary?: string;
+  /** Text model span highlights for tooltip replay. */
+  textHighlightedSpans?: HighlightSpan[];
+  /** Image sub-result for mixed posts (text primary + image panel). */
+  imageResult?: ImageDetectionResult;
+  /** Primary source when replaying (e.g. image-only runs). */
+  detectionSource?: 'text' | MediaType;
+  /** Cached fact-check result items (if user ran fact check). */
+  factCheckItems?: FactCheckItem[];
+  /** Timestamp (ms) when fact check was last saved for this content. */
+  factCheckSavedAtMs?: number;
   /** AI probability score 0–1 returned by the backend. */
   confidence: number;
   /** Model verdict. */
@@ -124,6 +151,30 @@ export async function saveHistoryEntry(
       verdict: normalizedEntry.verdict,
       url: normalizedEntry.url,
       savedAtMs: normalizedEntry.savedAtMs,
+      ...(normalizedEntry.textExplanationSummary !== undefined && {
+        textExplanationSummary: normalizedEntry.textExplanationSummary,
+      }),
+      ...(normalizedEntry.textHighlightedSpans !== undefined && {
+        textHighlightedSpans: normalizedEntry.textHighlightedSpans,
+      }),
+      ...(normalizedEntry.imageResult !== undefined && {
+        imageResult: normalizedEntry.imageResult,
+      }),
+      ...(normalizedEntry.detectionSource !== undefined && {
+        detectionSource: normalizedEntry.detectionSource,
+      }),
+      ...(normalizedEntry.factCheckItems !== undefined && {
+        factCheckItems: normalizedEntry.factCheckItems,
+      }),
+      ...(normalizedEntry.factCheckSavedAtMs !== undefined && {
+        factCheckSavedAtMs: normalizedEntry.factCheckSavedAtMs,
+      }),
+      ...(normalizedEntry.authorHandle !== undefined && {
+        authorHandle: normalizedEntry.authorHandle,
+      }),
+      ...(normalizedEntry.contentFingerprint !== undefined && {
+        contentFingerprint: normalizedEntry.contentFingerprint,
+      }),
     };
   } else {
     current.push(normalizedEntry);
@@ -177,14 +228,112 @@ export function buildHistoryEntry(
   text: string,
   confidence: number,
   verdict: Verdict,
+  authorHandle: string,
+  contentFingerprint: string,
+  extras?: {
+    textExplanationSummary?: string;
+    textHighlightedSpans?: HighlightSpan[];
+    imageResult?: ImageDetectionResult;
+    detectionSource?: 'text' | MediaType;
+    factCheckItems?: FactCheckItem[];
+    factCheckSavedAtMs?: number;
+  },
 ): Omit<HistoryEntry, 'pinned'> {
   return {
     postId,
     url,
     platform,
-    snippet: text.trim().slice(0, 200),
+    snippet: normalizeContentSnippet(text),
     confidence,
     verdict,
     savedAtMs: Date.now(),
+    authorHandle: authorHandle.trim(),
+    contentFingerprint,
+    ...(extras?.textExplanationSummary !== undefined && {
+      textExplanationSummary: extras.textExplanationSummary,
+    }),
+    ...(extras?.textHighlightedSpans !== undefined && {
+      textHighlightedSpans: extras.textHighlightedSpans,
+    }),
+    ...(extras?.imageResult !== undefined && { imageResult: extras.imageResult }),
+    ...(extras?.detectionSource !== undefined && { detectionSource: extras.detectionSource }),
+    ...(extras?.factCheckItems !== undefined && { factCheckItems: extras.factCheckItems }),
+    ...(extras?.factCheckSavedAtMs !== undefined && { factCheckSavedAtMs: extras.factCheckSavedAtMs }),
   };
+}
+
+/** Normalize handle for comparison across sites (u/, @, case). */
+export function normalizeAuthorHandle(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  if (s.startsWith('u/')) s = s.slice(2);
+  if (s.startsWith('@')) s = s.slice(1);
+  return s;
+}
+
+/** Same truncation as stored history snippets. */
+export function normalizeContentSnippet(text: string): string {
+  return text.trim().slice(0, HISTORY_SNIPPET_MAX_CHARS);
+}
+
+/**
+ * Finds the most recent history entry with the same platform, normalized author, and snippet.
+ * Entries without `authorHandle` (legacy) never match.
+ */
+export function findMatchingHistoryEntry(
+  entries: HistoryEntry[],
+  platform: SiteId,
+  authorHandleRaw: string,
+  plainText: string,
+): HistoryEntry | null {
+  const h = normalizeAuthorHandle(authorHandleRaw);
+  const snippet = normalizeContentSnippet(plainText);
+  if (!h || !snippet) return null;
+
+  let best: HistoryEntry | null = null;
+  for (const e of entries) {
+    if (e.platform !== platform) continue;
+    const eh = normalizeAuthorHandle(e.authorHandle ?? '');
+    if (!eh || eh !== h) continue;
+    if (e.snippet !== snippet) continue;
+    if (!best || e.savedAtMs > best.savedAtMs) best = e;
+  }
+  return best;
+}
+
+/**
+ * Most recent entry with the same platform and content fingerprint.
+ * Legacy entries without `contentFingerprint` never match.
+ */
+export function findMatchingHistoryByFingerprint(
+  entries: HistoryEntry[],
+  platform: SiteId,
+  fingerprint: string,
+): HistoryEntry | null {
+  if (!fingerprint) return null;
+  let best: HistoryEntry | null = null;
+  for (const e of entries) {
+    if (e.platform !== platform) continue;
+    if (!e.contentFingerprint || e.contentFingerprint !== fingerprint) continue;
+    if (!best || e.savedAtMs > best.savedAtMs) best = e;
+  }
+  return best;
+}
+
+/**
+ * Reconstruct lightweight explanation highlights from persisted score-only spans.
+ * Used when replaying cached detections from history.
+ */
+export function explanationHighlightsFromSpans(
+  spans: HighlightSpan[],
+): Array<{ start: number; end: number; reason: string }> {
+  return spans.map((span) => {
+    const score = Number.isFinite(span.score) ? span.score : 0;
+    const label =
+      score >= 0.85 ? 'strong AI signal' : score >= 0.65 ? 'possible AI pattern' : 'low-confidence signal';
+    return {
+      start: span.start,
+      end: span.end,
+      reason: `${label} (score ${Math.round(score * 100)}%)`,
+    };
+  });
 }

@@ -8,6 +8,7 @@ import {
     getLanguageUnsupportedCopy,
     isTextLanguageSupported,
 } from "@src/utils/languageSupport";
+import { computeFactCheckFingerprint } from "@src/utils/factCheckFingerprint";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -397,7 +398,12 @@ export class FeedObserver {
         const onFactCheck =
             this.settings.factCheck && extracted.text.plain.trim().length > 0
                 ? () => {
-                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain);
+                      // Use a text-only fingerprint so caching is stable across image hydration.
+                      const contentFingerprint = computeFactCheckFingerprint(extracted.site, extracted.text.plain);
+                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain, {
+                          site: extracted.site,
+                          contentFingerprint,
+                      });
                   }
                 : undefined;
         this.overlay.renderPending(
@@ -468,6 +474,13 @@ export class FeedObserver {
         if (!timer) return;
         clearTimeout(timer);
         this.pendingAnalyzeTimers.delete(postId);
+    }
+
+    // Keep the post in-flight but refresh timeout after a preliminary update.
+    noteAnalyzeProgress(postId: string): void {
+        if (!this.inFlightAnalyzePostIds.has(postId)) return;
+        if (this.timedOutPostIds.has(postId)) return;
+        this.startAnalyzeTimeout(postId);
     }
 
     // returns true when the caller should render result/error for this post.

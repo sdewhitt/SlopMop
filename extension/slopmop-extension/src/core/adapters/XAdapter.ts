@@ -1,4 +1,5 @@
 import type { SiteAdapter } from "./SiteAdapter";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
 
 /** Tweet cards on x.com use `article` with this test id (class names churn; prefer this). */
 const TWEET_ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
@@ -36,7 +37,7 @@ export class XAdapter implements SiteAdapter {
     const timestamp = this.getTimestampText(postNode);
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
     const base = `${permalink ?? ""}|${author}|${timestamp}|${text}`;
-    return base ? `x-fallback-${this.fnv1a(base)}` : null;
+    return base ? `x-fallback-${fnv1a32Hex(base)}` : null;
   }
 
   getPermalink(postNode: Element): string | null {
@@ -166,7 +167,7 @@ export class XAdapter implements SiteAdapter {
     if (fromUrl) return `x-comment-${fromUrl}`;
 
     const text = this.getCommentTextNode(commentNode)?.innerText?.slice(0, 300).trim() ?? "";
-    return text ? `x-comment-fallback-${this.fnv1a(text)}` : null;
+    return text ? `x-comment-fallback-${fnv1a32Hex(text)}` : null;
   }
 
   getCommentTextNode(commentNode: Element): HTMLElement | null {
@@ -326,12 +327,4 @@ export class XAdapter implements SiteAdapter {
     );
   }
 
-  private fnv1a(input: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16);
-  }
 }
