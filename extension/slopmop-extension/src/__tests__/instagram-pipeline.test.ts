@@ -65,7 +65,7 @@ describe('Instagram extraction pipeline', () => {
       url: 'https://www.instagram.com/p/CxAbCdEfG12/',
       contentType: ContentType.TEXT,
       text: {
-        plain: 'Caption with extra spaces\n\nsecond paragraph',
+        plain: 'Caption with extra spaces second paragraph',
         languageHint: '',
       },
       images: [],

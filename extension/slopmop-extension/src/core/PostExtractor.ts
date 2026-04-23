@@ -2,6 +2,7 @@ import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent, ContentType, MediaType } from "@src/types/domain";
 import { classify } from "./ContentTypeClassifier";
 import { fnv1a32Hex } from "@src/utils/fnv1aHash";
+import { modelPreprocessText } from "@src/utils/modelPreprocessText";
 
 
 export class PostExtractor {
@@ -28,9 +29,8 @@ export class PostExtractor {
             ? adapter.getTextNode(node)
             : adapter.getCommentTextNode(node);
 
-        const rawText = textNode?.innerText?.trim() ?? '';
-        // normalize before classification so repeated whitespace doesn't skew downstream heuristics.
-        const normalizedText = this.normalizeText(rawText);
+        // Same string the model sees (`preprocess_text` on the backend); span offsets are in this space.
+        const normalizedText = modelPreprocessText(textNode?.innerText ?? "");
 
         const permalink = type === "post"
             ? adapter.getPermalink(node)
@@ -92,21 +92,6 @@ export class PostExtractor {
             },
           };
     
-    }
-    private normalizeText(raw: string | null): string {
-        if (!raw) return "";
-        let text = raw;
-        // replace whitespace [ \t]+ matches exactly 1 or more space. 
-        // g is global flag to replace all instances
-        text = text.replace(/[ \t]+/g, " ");
-        // normalize paragraph breaks. capture two or more \n and globally
-        text = text.replace(/\n{2,}/g, "\n\n");
-        // replace multiple newlines with single newline
-        text = text.replace(/\n /g, "\n");
-        // trim leading and trailing whitespace
-        text = text.trim();
-
-        return text;
     }
     private mimeTypeFromUrl(url: string): string {
         // mimetype is just image filetype

@@ -1,6 +1,6 @@
 import type { HighlightSpan } from '@src/types/domain';
 
-/** Same rules as PostExtractor.normalizeText — keeps DOM plain text aligned with API offsets. */
+/** Shared by PostExtractor, highlight gate, and rich DOM mapping — keeps plain text aligned with API offsets. */
 export function normalizePlainText(raw: string): string {
     if (!raw) return '';
     let text = raw;
@@ -169,8 +169,86 @@ function minJForNoTrimPrefix(raw: string, noTrim: string, k: number): number | n
 type TextSeg = { node: Text; rawStart: number; rawEnd: number };
 
 /**
- * Build a string from text nodes + `<br>` as `\n` (common LinkedIn / rich-inline layout).
- * Must normalize to the same `plain` the API used.
+ * Tags whose layout matches browser `innerText` block boundaries (newline before next block sibling).
+ * X/Twitter stacks lines as sibling <div>s; Reddit often uses flatter text — both must flatten the same way.
+ */
+const INNER_TEXT_BLOCK_TAGS = new Set<string>([
+    'ADDRESS',
+    'ARTICLE',
+    'ASIDE',
+    'BLOCKQUOTE',
+    'DIV',
+    'DD',
+    'DL',
+    'DT',
+    'FIELDSET',
+    'FIGCAPTION',
+    'FIGURE',
+    'FOOTER',
+    'FORM',
+    'H1',
+    'H2',
+    'H3',
+    'H4',
+    'H5',
+    'H6',
+    'HEADER',
+    'HR',
+    'LI',
+    'MAIN',
+    'NAV',
+    'OL',
+    'P',
+    'PRE',
+    'SECTION',
+    'TABLE',
+    'TD',
+    'TH',
+    'TR',
+    'UL',
+]);
+
+function isInnerTextBlockElement(el: Element): boolean {
+    return INNER_TEXT_BLOCK_TAGS.has(el.tagName);
+}
+
+/** Inline-by-default tags that feeds often set to `display:block` for line breaks (e.g. LinkedIn). */
+const INNER_TEXT_BLOCKISH_INLINE_TAGS = new Set<string>(['SPAN', 'A']);
+
+/**
+ * `innerText` inserts line breaks before siblings that layout as block-level boxes.
+ * Tag names miss CSS-driven blocks (LinkedIn stacks lines as `display:block` `<span>`s).
+ * Only treat computed `display:block` on inline-default tags: flex-row items often compute
+ * as `block` but sit on one line — a newline would desync `raw` from `innerText`.
+ */
+function needsInnerTextNewlineBeforeElement(el: Element): boolean {
+    if (el.tagName === 'BR') return false;
+    if (isInnerTextBlockElement(el)) return true;
+    if (!(el instanceof HTMLElement)) return false;
+    if (!INNER_TEXT_BLOCKISH_INLINE_TAGS.has(el.tagName)) return false;
+    try {
+        const st = getComputedStyle(el);
+        const d = st.display;
+        if (d === 'block' || d === 'list-item' || d === 'flow-root') {
+            return true;
+        }
+        if (d === 'flex' || d === 'inline-flex') {
+            const dir = st.flexDirection;
+            return dir === 'column' || dir === 'column-reverse';
+        }
+        if (d === 'grid') {
+            return true;
+        }
+    } catch {
+        /* detached / iframe edge */
+    }
+    return false;
+}
+
+/**
+ * Build a string from text nodes + `<br>` as `\n`, and newlines between block-level siblings
+ * (same convention as `innerText` for typical feed markup).
+ * Must normalize to the same `plain` as `normalizePlainText(element.innerText)`.
  */
 function collectTextNodesWithBr(root: Element): { raw: string; textSegments: TextSeg[] } {
     const textSegments: TextSeg[] = [];
@@ -191,7 +269,18 @@ function collectTextNodesWithBr(root: Element): { raw: string; textSegments: Tex
             raw += '\n';
             return;
         }
-        for (const c of n.childNodes) {
+        const children = Array.from(el.childNodes);
+        for (let i = 0; i < children.length; i++) {
+            const c = children[i]!;
+            if (
+                i > 0 &&
+                c.nodeType === Node.ELEMENT_NODE &&
+                needsInnerTextNewlineBeforeElement(c as Element) &&
+                raw.length > 0 &&
+                !raw.endsWith('\n')
+            ) {
+                raw += '\n';
+            }
             walk(c);
         }
     };
@@ -234,20 +323,86 @@ function buildWrapOpsForRawRange(
     return ops;
 }
 
+/** Map `/detect` spans (model-preprocessed string) onto `normalizePlainText(innerText)` for DOM walks. */
+function remapHighlightSpansModelPlainToDisplayPlain(
+    modelPlain: string,
+    displayPlain: string,
+    spans: HighlightSpan[],
+): HighlightSpan[] {
+    const base = sanitizeHighlightSpans(spans, modelPlain.length);
+    if (base.length === 0) return [];
+
+    const flexIndexOf = (haystack: string, needle: string, from: number): number => {
+        if (!needle) return -1;
+        const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const flex = escaped.replace(/\s+/g, '\\s+');
+        let re: RegExp;
+        try {
+            re = new RegExp(flex, 'u');
+        } catch {
+            return -1;
+        }
+        const sub = haystack.slice(from);
+        const m = sub.match(re);
+        if (!m || m.index === undefined) return -1;
+        return from + m.index;
+    };
+
+    const flexMatchLen = (haystack: string, needle: string, startIdx: number): number => {
+        const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const flex = escaped.replace(/\s+/g, '\\s+');
+        let re: RegExp;
+        try {
+            re = new RegExp(flex, 'u');
+        } catch {
+            return needle.length;
+        }
+        const m = haystack.slice(startIdx).match(re);
+        return m ? m[0].length : needle.length;
+    };
+
+    const out: HighlightSpan[] = [];
+    let searchFrom = 0;
+    for (const s of base) {
+        const frag = modelPlain.slice(s.start, s.end);
+        if (!frag.trim()) continue;
+        let idx = flexIndexOf(displayPlain, frag, searchFrom);
+        if (idx < 0) idx = flexIndexOf(displayPlain, frag, 0);
+        if (idx < 0) continue;
+        const len = flexMatchLen(displayPlain, frag, idx);
+        out.push({ start: idx, end: idx + len, score: s.score });
+        searchFrom = idx + len;
+    }
+    return out;
+}
+
 /**
  * Apply `<mark class="slopmop-highlight">` around API span ranges while preserving links and markup.
  * Use when `canApplyInnerHtmlHighlights` is false (e.g. LinkedIn hashtags / mentions as `<a>`).
+ *
+ * @param modelPlain — `modelPreprocessText(innerText)` (same string sent to `/detect`); offsets are in this space.
  */
-export function applyRichDomHighlightSpans(root: HTMLElement, plain: string, spans: HighlightSpan[]): boolean {
-    const merged = prepareHighlightSpans(plain, spans);
-    if (merged.length === 0) return true;
+export function applyRichDomHighlightSpans(root: HTMLElement, modelPlain: string, spans: HighlightSpan[]): boolean {
+    const displayPlain = normalizePlainText(root.innerText ?? '');
+    const remapped = remapHighlightSpansModelPlainToDisplayPlain(modelPlain, displayPlain, spans);
 
-    if (normalizePlainText(root.innerText ?? '') !== plain) return false;
+    if (spans.length > 0 && remapped.length === 0) return false;
+
+    let merged = prepareHighlightSpans(displayPlain, remapped);
+    if (merged.length === 0) {
+        merged = prepareHighlightSpans(displayPlain, sanitizeHighlightSpans(remapped, displayPlain.length));
+    }
+    if (merged.length === 0) {
+        merged = sanitizeHighlightSpans(remapped, displayPlain.length);
+    }
+    if (merged.length === 0) return spans.length === 0;
+
+    if (normalizePlainText(root.innerText ?? '') !== displayPlain) return false;
 
     const { raw, textSegments } = collectTextNodesWithBr(root);
     const noTrim = normalizePlainTextNoTrim(raw);
-    if (noTrim.trim() !== plain) return false;
-    if (normalizePlainText(raw) !== plain) return false;
+    if (noTrim.trim() !== displayPlain) return false;
+    if (normalizePlainText(raw) !== displayPlain) return false;
 
     const lead = noTrim.length - noTrim.trimStart().length;
 
@@ -259,17 +414,21 @@ export function applyRichDomHighlightSpans(root: HTMLElement, plain: string, spa
         if (rawA >= rawB) continue;
         allOps.push(...buildWrapOpsForRawRange(rawA, rawB, textSegments));
     }
-    if (allOps.length === 0) return true;
+    if (allOps.length === 0) return false;
 
     allOps.sort((a, b) => b.rawEnd - a.rawEnd);
 
-    for (const op of allOps) {
-        const range = document.createRange();
-        range.setStart(op.node, op.start);
-        range.setEnd(op.node, op.end);
-        const mark = document.createElement('mark');
-        mark.className = 'slopmop-highlight';
-        range.surroundContents(mark);
+    try {
+        for (const op of allOps) {
+            const range = document.createRange();
+            range.setStart(op.node, op.start);
+            range.setEnd(op.node, op.end);
+            const mark = document.createElement('mark');
+            mark.className = 'slopmop-highlight';
+            range.surroundContents(mark);
+        }
+    } catch {
+        return false;
     }
     return true;
 }

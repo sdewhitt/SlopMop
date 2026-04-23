@@ -81,7 +81,7 @@ describe('Reddit extraction pipeline', () => {
       url: 'https://www.reddit.com/r/test/comments/abc123/title/',
       contentType: ContentType.TEXT,
       text: {
-        plain: 'First line\n\nsecond line',
+        plain: 'First line second line',
         languageHint: '',
       },
       images: [],

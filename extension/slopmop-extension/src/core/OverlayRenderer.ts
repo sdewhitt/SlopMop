@@ -9,9 +9,10 @@ import {
     applyRichDomHighlightSpans,
     buildHighlightedHtml,
     canApplyInnerHtmlHighlights,
-    normalizePlainText,
     prepareHighlightSpans,
+    sanitizeHighlightSpans,
 } from "@src/utils/highlightSpans";
+import { modelPreprocessText } from "@src/utils/modelPreprocessText";
 import {
     SATIRE_SCORE_HIGH_BANNER_THRESHOLD,
     SATIRE_SCORE_SOFTEN_THRESHOLD,
@@ -831,9 +832,12 @@ export class OverlayRenderer {
         const plain = this.mapToPostText.get(postId) ?? "";
         const el = this.mapToTextBody.get(postId);
         if (!plain || !el) return;
-        if (normalizePlainText(el.innerText ?? "") !== plain) return;
+        if (modelPreprocessText(el.innerText ?? "") !== plain) return;
 
-        const usable = prepareHighlightSpans(plain, spans);
+        let usable = prepareHighlightSpans(plain, spans);
+        if (usable.length === 0) {
+            usable = sanitizeHighlightSpans(spans, plain.length);
+        }
         if (usable.length === 0) return;
 
         if (canApplyInnerHtmlHighlights(el)) {
