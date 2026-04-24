@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act, within } from '@testing-library/react';
+import { render, screen, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import browser from 'webextension-polyfill';
 
@@ -387,5 +387,73 @@ describe('Popup Homepage', () => {
     // Settings header appears, home-specific elements disappear
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.queryByText('Pause Detection')).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Auth State Transitions
+// ─────────────────────────────────────────────────────────────────
+
+describe('Auth State Transitions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storageChangedCallbacks = [];
+    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...BASE_STORAGE });
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+        storageChangedCallbacks.push(cb);
+      },
+    );
+    (browser.storage.onChanged.removeListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+        storageChangedCallbacks = storageChangedCallbacks.filter((l) => l !== cb);
+      },
+    );
+  });
+
+  it('logging out clears the popup back to the sign-in view', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    // Confirm we're on the home view (not already on sign-in)
+    expect(screen.queryByText('Sign in to continue')).not.toBeInTheDocument();
+
+    // Simulate the background clearing slopmopUser on logout
+    act(() => {
+      storageChangedCallbacks.forEach((cb) =>
+        cb({ slopmopUser: { newValue: undefined } }, 'local'),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sign in to continue')).toBeInTheDocument();
+    });
+  });
+
+  it('account-specific simpleMode preference is applied on login', async () => {
+    const user = userEvent.setup();
+
+    // Existing account: simpleMode=true stored under both the flat key (read by
+    // initial effect) and the namespaced key (read by loadSettings).
+    renderHomeWithStorage({
+      simpleMode: true,
+      [`simpleMode:${TEST_UID}`]: true,
+    });
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Settings'));
+    await waitFor(() => {
+      expect(screen.getByText('Simple mode is on')).toBeInTheDocument();
+    });
+  });
+
+  it('new account falls back to simpleMode=false default when no preference is stored', async () => {
+    const user = userEvent.setup();
+
+    // New account: no simpleMode key → defaults to false → advanced settings visible
+    renderHomeWithStorage({});
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Settings'));
+    await waitFor(() => {
+      expect(screen.queryByText('Simple mode is on')).not.toBeInTheDocument();
+    });
   });
 });

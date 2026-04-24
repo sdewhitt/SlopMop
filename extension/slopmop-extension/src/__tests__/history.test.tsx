@@ -387,3 +387,39 @@ describe('Privacy Compliance', () => {
     expect(history).toHaveLength(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// History UID Namespacing
+// ─────────────────────────────────────────────────────────────────
+
+describe('History UID Namespacing', () => {
+  beforeEach(() => {
+    store = {};
+    vi.clearAllMocks();
+  });
+
+  it('uses detectionHistory:<uid> storage key, not bare detectionHistory', async () => {
+    await saveHistoryEntry(TEST_UID, makeEntry());
+
+    // Namespaced key must exist with the entry
+    expect(store[`${HISTORY_KEY}:${TEST_UID}`]).toBeDefined();
+    expect((store[`${HISTORY_KEY}:${TEST_UID}`] as unknown[]).length).toBe(1);
+
+    // Bare un-namespaced key must NOT exist
+    expect(store[HISTORY_KEY]).toBeUndefined();
+  });
+
+  it('getHistory for account A returns empty when only account B has entries', async () => {
+    const UID_A = 'account-a-uid';
+    const UID_B = 'account-b-uid';
+
+    await saveHistoryEntry(UID_B, makeEntry({ postId: 'b-post-1' }));
+    await saveHistoryEntry(UID_B, makeEntry({ postId: 'b-post-2' }));
+
+    const historyA = await getHistory(UID_A);
+    expect(historyA).toHaveLength(0);
+
+    const historyB = await getHistory(UID_B);
+    expect(historyB).toHaveLength(2);
+  });
+});
