@@ -168,6 +168,17 @@ export default function DetectionSettings({
             description="When off, posts show a Detect Now button"
           />
         </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="cache recent results reuse detection history 24 hours"
+        >
+          <Toggle
+            checked={settings.cacheRecentResults}
+            onChange={(v) => onUpdateSetting('cacheRecentResults', v)}
+            label="Cache recent results"
+            description="Reuse detection results for 24 hours instead of re-analyzing"
+          />
+        </div>
         {batteryThrottleActive && settings.automaticScanning && !effectiveLowBattery && (
           <div
             className="settings-search-block px-3 py-2.5 -mx-3 bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200/80 dark:border-amber-600/40"

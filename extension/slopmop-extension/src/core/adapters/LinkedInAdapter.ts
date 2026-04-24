@@ -226,9 +226,15 @@ export class LinkedInAdapter implements SiteAdapter {
       const fromComponentKey = this.findCommentRootsFromComponentKey(post);
       const legacy = Array.from(post.querySelectorAll('[data-urn*="urn:li:comment"]'));
       const modern = this.findModernCommentRootsInPost(post);
-      const nodes = [...fromComponentKey, ...legacy, ...modern];
+      const merged = [...fromComponentKey, ...legacy, ...modern];
+      const nodes = merged.filter(
+        (el) => !merged.some((other) => other !== el && other.contains(el)),
+      );
+      const dedupedNodes = this.dedupeCommentNodesByCommentId(
+        this.dedupeCommentNodesByCommentThread(nodes),
+      );
 
-      for (const node of nodes) {
+      for (const node of dedupedNodes) {
         if (seen.has(node)) continue;
         // Exclude nodes inside the social actions bar (e.g. "Comment" button).
         if (this.isLikelyActionBarItem(node)) continue;
@@ -242,6 +248,80 @@ export class LinkedInAdapter implements SiteAdapter {
       }
     }
 
+    return out;
+  }
+
+  /**
+   * Same logical comment can appear as multiple roots (sibling rows with the same urn:li:comment id,
+   * or merged legacy + componentkey paths). Keep one host per stable {@link getCommentId}.
+   */
+  private dedupeCommentNodesByCommentId(nodes: Element[]): Element[] {
+    const bestById = new Map<string, Element>();
+    for (const node of nodes) {
+      const id = this.getCommentId(node);
+      if (!id) continue;
+      const existing = bestById.get(id);
+      if (!existing) {
+        bestById.set(id, node);
+        continue;
+      }
+      const lenA = this.getCommentTextNode(existing)?.innerText?.length ?? 0;
+      const lenB = this.getCommentTextNode(node)?.innerText?.length ?? 0;
+      if (lenB > lenA) bestById.set(id, node);
+    }
+    const seen = new Set<string>();
+    const out: Element[] = [];
+    for (const node of nodes) {
+      const id = this.getCommentId(node);
+      if (!id) {
+        out.push(node);
+        continue;
+      }
+      if (bestById.get(id) !== node) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(node);
+    }
+    return out;
+  }
+
+  /**
+   * One badge per comment thread. LinkedIn often splits a comment into sibling rows (headline +
+   * body), each with its own root; they share the same replaceableComment_* ancestor but get
+   * different text-based ids. Collapse to a single host per urn:li:comment block (prefer the row
+   * with the longest extracted text — usually the body).
+   */
+  private dedupeCommentNodesByCommentThread(nodes: Element[]): Element[] {
+    const bestForBlock = new Map<Element, Element>();
+    for (const node of nodes) {
+      const block = node.closest('[componentkey*="urn:li:comment"]');
+      if (!block) continue;
+      const existing = bestForBlock.get(block);
+      if (!existing) {
+        bestForBlock.set(block, node);
+        continue;
+      }
+      const lenA = this.getCommentTextNode(existing)?.innerText?.length ?? 0;
+      const lenB = this.getCommentTextNode(node)?.innerText?.length ?? 0;
+      if (lenB > lenA) bestForBlock.set(block, node);
+    }
+
+    const seenIds = new Set<string>();
+    const out: Element[] = [];
+    for (const node of nodes) {
+      const block = node.closest('[componentkey*="urn:li:comment"]');
+      if (block) {
+        if (bestForBlock.get(block) !== node) continue;
+        out.push(node);
+        continue;
+      }
+      const id = this.getCommentId(node);
+      if (id) {
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+      }
+      out.push(node);
+    }
     return out;
   }
 
@@ -328,11 +408,24 @@ export class LinkedInAdapter implements SiteAdapter {
   }
 
   private looksLikeCommentExpandableNoPrimary(tb: HTMLElement, post: Element): boolean {
+    if (this.looksLikeCommentThreadChrome(tb)) return false;
     const li = tb.closest("div[role='listitem']");
     const ck = li?.getAttribute("componentkey") ?? "";
     if (this.componentKeyLooksLikeCommentBlock(ck)) return true;
+    if (this.listItemLooksLikeCommentThreadSurface(ck)) return true;
     if (this.isInCommentOrReplyAriaRegion(tb, post)) return true;
     return false;
+  }
+
+  /** Matches {@link componentKeyLooksLikePostSurface} exclusions — thread rows, not main story. */
+  private listItemLooksLikeCommentThreadSurface(ck: string): boolean {
+    const u = ck.toUpperCase();
+    return (
+      u.includes("COMMENT_THREAD") ||
+      u.includes("COMMENT_VIEW") ||
+      u.includes("COMMENT_LIST") ||
+      u.includes("REPLY_THREAD")
+    );
   }
 
   /** Listitem whose componentkey looks like the main story (feed or profile), not a comment row. */
@@ -348,6 +441,7 @@ export class LinkedInAdapter implements SiteAdapter {
     post: Element,
     primaryEl: HTMLElement,
   ): boolean {
+    if (this.looksLikeCommentThreadChrome(tb)) return false;
     if (this.isInsideCommentComponentKeyBlock(tb, post)) return true;
     const li = tb.closest("div[role='listitem']");
     const ck = li?.getAttribute("componentkey") ?? "";
@@ -361,17 +455,56 @@ export class LinkedInAdapter implements SiteAdapter {
     );
   }
 
+  /**
+   * Thread-level wrappers often use aria-label "Comments" / "Comment on this post", which would
+   * incorrectly mark the sort dropdown ("Most relevant") as comment copy. Only treat explicit
+   * reply affordances; thread chrome is handled via {@link looksLikeCommentThreadChrome}.
+   */
   private isInCommentOrReplyAriaRegion(tb: HTMLElement, post: Element): boolean {
     let el: Element | null = tb;
     while (el && el !== post) {
       const lab = el.getAttribute("aria-label")?.toLowerCase() ?? "";
-      if (lab.includes("comment") || lab.includes("reply")) return true;
+      if (lab.includes("reply")) return true;
       el = el.parentElement;
     }
     return false;
   }
 
+  /**
+   * Comment thread UI that uses expandable-text-box but is not user comment body (sort order,
+   * composer placeholder, etc.).
+   */
+  private looksLikeCommentThreadChrome(tb: HTMLElement): boolean {
+    const textEl =
+      tb.querySelector<HTMLElement>('[data-testid="expandable-text-box"]') ?? tb;
+    const raw = (textEl.innerText ?? textEl.textContent ?? "").trim();
+    if (raw.length === 0 || raw.length > 120) return false;
+    const normalized = raw.toLowerCase().replace(/\s+/g, " ");
+    const chromeExact = new Set([
+      "most relevant",
+      "latest",
+      "oldest",
+      "recent",
+      "top",
+      "newest",
+    ]);
+    if (chromeExact.has(normalized)) return true;
+    if (normalized.startsWith("add a comment")) return true;
+    const ck = tb.closest("div[role='listitem']")?.getAttribute("componentkey") ?? "";
+    const u = ck.toUpperCase();
+    if (u.includes("COMMENT_SORT") || u.includes("SORT_ORDER") || u.includes("COMMENT_ORDER")) {
+      return true;
+    }
+    return false;
+  }
+
   private commentRootForExpandable(tb: HTMLElement, post: Element): Element {
+    // Prefer the comment row wrapper (replaceableComment_...) over the outer feed listitem.
+    // Otherwise the nearest listitem is often the whole post card, which breaks dedup and
+    // would attach badges to the wrong host.
+    const commentBlock = tb.closest<HTMLElement>('[componentkey*="urn:li:comment"]');
+    if (commentBlock && post.contains(commentBlock)) return commentBlock;
+
     const li = tb.closest("div[role='listitem']");
     if (li && post.contains(li)) return li;
     const p = tb.parentElement;
@@ -445,6 +578,8 @@ export class LinkedInAdapter implements SiteAdapter {
     ) {
       return false;
     }
+    // commentSortFeedType_* contains "FeedType" → matches FEEDTYPE below; must not be a post root.
+    if (u.includes("COMMENTSORT") || u.includes("COMMENT_SORT")) return false;
     if (u.includes(MAIN_FEED_COMPONENTKEY)) return true;
     if (u.includes("FEEDTYPE") || u.includes("FEED_TYPE")) return true;
     if (u.includes("URN:LI:ACTIVITY") || u.includes("URN:LI:UGCPOST")) return true;
@@ -618,9 +753,12 @@ export class LinkedInAdapter implements SiteAdapter {
 
   /**
    * e.g. componentkey="replaceableComment_urn:li:comment:(urn:li:activity:ACT_ID,COMMENT_ID)"
+   * Row-level keys may include urn:li:comment but only hash to ck-*; keep walking to find a
+   * parent replaceableComment_* tuple so sibling headline/body rows share one stable id.
    */
   private parseCommentIdFromComponentKey(node: Element): string | null {
     let el: Element | null = node;
+    let hashFallback: string | null = null;
     while (el) {
       const ck = el.getAttribute("componentkey")?.trim();
       if (ck && ck.includes("urn:li:comment")) {
@@ -628,12 +766,13 @@ export class LinkedInAdapter implements SiteAdapter {
         if (tuple) return tuple[1];
         const simple = ck.match(/urn:li:comment:\(?(\d+)/);
         if (simple) return simple[1];
-        const hash = fnv1a32Hex(ck);
-        return `ck-${hash}`;
+        if (hashFallback === null) {
+          hashFallback = `ck-${this.fnv1a(ck)}`;
+        }
       }
       el = el.parentElement;
     }
-    return null;
+    return hashFallback;
   }
 
   private parseCommentIdFromUrl(_url: string): string | null {

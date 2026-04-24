@@ -1,5 +1,5 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
-import type { NormalizedPostContent } from "@src/types/domain";
+import type { DetectionResponse, NormalizedPostContent } from "@src/types/domain";
 import type { DetectionSettings } from "@src/utils/userSettings";
 import {
     expandUserDetectionLanguages,
@@ -9,6 +9,11 @@ import {
     isTextLanguageSupported,
 } from "@src/utils/languageSupport";
 import { computeFactCheckFingerprint } from "@src/utils/factCheckFingerprint";
+import {
+    computeTtlRemainingMs,
+    getAllCachedDetections,
+    type CachedDetection,
+} from "@src/utils/detectionCache";
 import { PostExtractor } from "./PostExtractor";
 import { OverlayRenderer } from "./OverlayRenderer";
 import { ExtensionMessageBus } from "./ExtensionMessageBus";
@@ -56,6 +61,18 @@ export class FeedObserver {
     /** x.com virtualizes tweet cells; scroll often mounts nodes without a mutation burst we observe. */
     private xScrollHandler: (() => void) | null = null;
     private xScrollRescanTimer: ReturnType<typeof setTimeout> | null = null;
+    /** True while the tab is hidden — observation is suspended but session state is preserved. */
+    private paused = false;
+    /** Timer handles from schedulePostNavigationScans so they can be cancelled on pause/stop. */
+    private navScanTimers: ReturnType<typeof setTimeout>[] = [];
+    /**
+     * Snapshot of `browser.storage.local`'s detectionCache at observer start.
+     * Lets the first scan paint cached verdicts without a round-trip through
+     * the background (both automatic and manual mode). Session-local updates
+     * flow through the OverlayRenderer's in-memory `mapToResponse`, so we do
+     * not refresh this map on every write.
+     */
+    private persistedCache: Map<string, CachedDetection> = new Map();
 
     constructor(adapter: SiteAdapter, extractor: PostExtractor, overlay: OverlayRenderer, bus: ExtensionMessageBus, settings: DetectionSettings) {
         this.adapter = adapter;
@@ -63,6 +80,60 @@ export class FeedObserver {
         this.overlay = overlay;
         this.bus = bus;
         this.settings = settings;
+    }
+
+    /**
+     * Load the persistent detection cache from storage into memory so
+     * `handleCandidatePost` can synchronously hydrate badges on the first
+     * scan. Safe to call multiple times; later calls replace the snapshot.
+     * Callers should await this before {@link start} for cached verdicts to
+     * appear on the very first scan.
+     */
+    async primeCacheFromStorage(): Promise<void> {
+        if (!this.settings.cacheRecentResults) {
+            this.persistedCache = new Map();
+            return;
+        }
+        try {
+            const entries = await getAllCachedDetections();
+            this.persistedCache = new Map(entries.map((e) => [e.postId, e]));
+        } catch {
+            // Storage read failure — fall back to empty; background will still
+            // consult the on-disk cache when dispatchAnalyze fires.
+            this.persistedCache = new Map();
+        }
+    }
+
+    /**
+     * Build the `DETECTION_RESULT` payload for a persisted cache entry with
+     * `cache.hit = true` and an accurate `ttlRemainingMs`, mirroring the
+     * background's cache-hit response shape.
+     */
+    private buildCachedResponse(entry: CachedDetection): DetectionResponse {
+        return {
+            ...entry.response,
+            explanation: {
+                ...entry.response.explanation,
+                cache: {
+                    hit: true,
+                    ttlRemainingMs: computeTtlRemainingMs(entry.savedAtMs),
+                },
+            },
+        };
+    }
+
+    /**
+     * Return a cached `DetectionResponse` for the post if one is available.
+     * Prefers the overlay's in-memory map (covers posts analyzed in this
+     * session, including fresh API results) over the persistent snapshot
+     * (previous sessions). Returns `undefined` when nothing is cached.
+     */
+    private getCachedResponseForPost(postId: string): DetectionResponse | undefined {
+        const inMemory = this.overlay.getCachedDetectionResponse?.(postId);
+        if (inMemory) return inMemory;
+        if (!this.settings.cacheRecentResults) return undefined;
+        const persisted = this.persistedCache.get(postId);
+        return persisted ? this.buildCachedResponse(persisted) : undefined;
     }
 
     start(): void {
@@ -140,8 +211,67 @@ export class FeedObserver {
             this.xScrollRescanTimer = null;
         }
 
+        for (const t of this.navScanTimers) clearTimeout(t);
+        this.navScanTimers = [];
+        this.paused = false;
+
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] stopped`);
+        }
+    }
+
+    /**
+     * Lightweight suspend: disconnect the MutationObserver and scroll listener
+     * without clearing session state. Use when the tab becomes hidden.
+     */
+    pause(): void {
+        if (this.paused || !this.observer) return;
+        this.paused = true;
+
+        this.observer.disconnect();
+
+        if (this.debounceTimer !== null) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+
+        if (this.xScrollHandler) {
+            window.removeEventListener("scroll", this.xScrollHandler, { capture: true });
+        }
+        if (this.xScrollRescanTimer !== null) {
+            clearTimeout(this.xScrollRescanTimer);
+            this.xScrollRescanTimer = null;
+        }
+
+        for (const t of this.navScanTimers) clearTimeout(t);
+        this.navScanTimers = [];
+
+        if (DEBUG_EXTRACTION) {
+            console.log(`[FeedObserver] paused (tab hidden)`);
+        }
+    }
+
+    /**
+     * Resume after a pause: reconnect the MutationObserver, re-add the scroll
+     * listener, and run a catch-up scan for DOM changes that occurred while hidden.
+     */
+    resume(): void {
+        if (!this.paused || !this.observer) return;
+        this.paused = false;
+
+        this.observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+        });
+
+        if (this.xScrollHandler) {
+            window.addEventListener("scroll", this.xScrollHandler, { passive: true, capture: true });
+        }
+
+        this.scanAndProcess();
+
+        if (DEBUG_EXTRACTION) {
+            console.log(`[FeedObserver] resumed (tab visible), catch-up scan complete`);
         }
     }
 
@@ -152,6 +282,8 @@ export class FeedObserver {
     }
 
     private onDomMutated(): void {
+        if (this.paused) return;
+
         // debounce: Reddit fires many mutations in rapid succession
         // (e.g. 30 mutations in 50ms when loading a batch of posts).
         // without debouncing, scanAndProcess would run 30 times.
@@ -181,8 +313,10 @@ export class FeedObserver {
     // detection misses posts (e.g. virtual scrolling, non-standard DOM updates).
     // (strange reddit cases)
     // all visible posts from adapter.findPostNodes() are processed in one batch.
+    // forceAnalyze bypasses the manual-mode gate so every unseen post is
+    // immediately sent for analysis (used when the user clicks "Scan Entire Page").
     scanEntirePage(): void {
-        this.scanAndProcess();
+        this.scanAndProcess(true);
     }
 
     /**
@@ -203,18 +337,22 @@ export class FeedObserver {
     schedulePostNavigationScans(): void {
         const delaysMs = [80, 250, 700, 1600, 3200];
         for (const ms of delaysMs) {
-            setTimeout(() => {
+            const id = setTimeout(() => {
+                this.navScanTimers = this.navScanTimers.filter((t) => t !== id);
                 this.scanAndProcess();
             }, ms);
+            this.navScanTimers.push(id);
         }
     }
 
-    private scanAndProcess(): void {
+    private scanAndProcess(forceAnalyze = false): void {
+        if (this.paused) return;
+
         // Scan for posts
         const nodes = this.adapter.findPostNodes(document);
         // each node is one post container on the page
         for (const node of nodes) {
-            this.handleCandidatePost(node, "post");
+            this.handleCandidatePost(node, "post", forceAnalyze);
         }
         let numComments = 0;
         // Scan for comments
@@ -237,20 +375,17 @@ export class FeedObserver {
                 : rawCommentNodes.slice(0, maxComments);
             numComments = commentNodes.length;
             for (const node of commentNodes) {
-                this.handleCandidatePost(node, "comment");
+                this.handleCandidatePost(node, "comment", forceAnalyze);
             }
-
         }
-        
 
         if (DEBUG_EXTRACTION) {
             console.log(`[FeedObserver] scan found ${nodes.length+numComments} candidate nodes`);
         }
-
     }
 
 
-    private handleCandidatePost(node: Element, type: "post" | "comment"): void {
+    private handleCandidatePost(node: Element, type: "post" | "comment", forceAnalyze = false): void {
         // step 1: extract. turn raw DOM node into clean NormalizedPostContent
         // returns null if the node is missing critical data (no postId, etc.)
         const extracted = this.extractor.extract(node, this.adapter, type);
@@ -272,10 +407,26 @@ export class FeedObserver {
                 ? this.adapter.getTextNode(node)
                 : this.adapter.getCommentTextNode(node);
 
+        // Adapters may override where the badge mounts:
+        //   - Comments with nested containers (e.g. Reddit shreddit-comment) use
+        //     a narrower host so the badge anchors to the comment's own text.
+        //   - Posts whose node clips its contents (e.g. Google AI Overview's
+        //     collapsed overflow:hidden state) use a less-restrictive ancestor.
+        const commentHost = type === "comment"
+            ? this.adapter.getCommentOverlayHost?.(node)
+            : null;
+        const postHost = type === "post"
+            ? this.adapter.getPostOverlayHost?.(node)
+            : null;
+        const hostNode: HTMLElement =
+            commentHost || postHost || (node as HTMLElement);
+
         // step 2: dedupe. Set.has() is O(1) lookup.
         // Virtualized feeds (X) recycle DOM nodes: if the badge is gone, clear seen state and
         // continue so we can reattach. Otherwise, in manual mode still render Detect Now on
-        // newly encountered hosts (e.g. opening a modal for a post already seen in the grid).
+        // newly encountered hosts for posts only (e.g. opening a modal for a post already seen
+        // in the grid). Comments use one id across sibling DOM rows (LinkedIn headline + body);
+        // re-rendering on a second host duplicates overlays.
         if (this.seenPostIds.has(extracted.postId)) {
             const alive = this.overlay.isBadgeDomAlive?.(extracted.postId);
             if (alive === false) {
@@ -288,15 +439,29 @@ export class FeedObserver {
                 // Re-render on a new host only for posts. Comment lists can expose
                 // duplicate wrappers for the same comment id (notably first comments),
                 // which would otherwise create duplicate Detect/Fact-check controls.
-                if (
-                    type === "post" &&
-                    !this.settings.automaticScanning &&
-                    !this.renderedHosts.has(node)
-                ) {
-                    this.renderManualEntry(extracted, node as HTMLElement, textContainer);
-                    this.renderedHosts.add(node);
+                if (type === "post" && !this.renderedHosts.has(node)) {
+                    // A second DOM host appeared for an already-seen post
+                    // (common on Reddit: subreddit feed + opened post detail
+                    // both mount `shreddit-post` for the same id). Prefer an
+                    // existing verdict so we don't flash a redundant
+                    // "Detect Now" button next to the already-rendered badge.
+                    const cached = this.getCachedResponseForPost(extracted.postId);
+                    if (cached) {
+                        this.postsById.set(extracted.postId, extracted);
+                        this.overlay.mountResultBadgeOnHost?.(
+                            extracted.postId,
+                            hostNode,
+                            extracted.text.plain,
+                            cached,
+                            textContainer,
+                        );
+                        this.renderedHosts.add(node);
+                    } else if (!this.settings.automaticScanning) {
+                        this.renderManualEntry(extracted, hostNode, textContainer);
+                        this.renderedHosts.add(node);
+                    }
                 }
-              
+
                 return;
             }
         }
@@ -314,13 +479,42 @@ export class FeedObserver {
             this.postsById.set(extracted.postId, extracted);
             this.overlay.mountResultBadgeOnHost?.(
                 extracted.postId,
-                node as HTMLElement,
+                hostNode,
                 extracted.text.plain,
                 cachedResult,
                 textContainer,
             );
             if (DEBUG_EXTRACTION) {
                 console.log(`[FeedObserver] reattached cached verdict`, { postId: extracted.postId });
+            }
+            return;
+        }
+
+        // Persistent (24h) cache hit: hydrate the badge directly — no
+        // `renderPending` flash, no `dispatchAnalyze`. Covers both automatic
+        // and manual mode so a previously-analyzed post shows its verdict
+        // even when "Automatic scanning" is off (otherwise the user only
+        // sees the Detect Now button).
+        const persisted = this.settings.cacheRecentResults
+            ? this.persistedCache.get(extracted.postId)
+            : undefined;
+        if (persisted) {
+            this.seenPostIds.add(extracted.postId);
+            this.postsById.set(extracted.postId, extracted);
+            const hydrated = this.buildCachedResponse(persisted);
+            this.overlay.mountResultBadgeOnHost?.(
+                extracted.postId,
+                hostNode,
+                extracted.text.plain,
+                hydrated,
+                textContainer,
+            );
+            this.renderedHosts.add(node);
+            if (DEBUG_EXTRACTION) {
+                console.log(`[FeedObserver] hydrated verdict from persistent cache`, {
+                    postId: extracted.postId,
+                    ttlRemainingMs: hydrated.explanation.cache.ttlRemainingMs,
+                });
             }
             return;
         }
@@ -337,11 +531,12 @@ export class FeedObserver {
             });
         }
 
-        if (this.settings.automaticScanning) {
-            // automatic mode: render scanning state immediately and dispatch analysis now.
+        if (this.settings.automaticScanning || forceAnalyze) {
+            // automatic mode (or explicit "Scan Entire Page"): render scanning state
+            // immediately and dispatch analysis now.
             this.overlay.renderPending(
                 extracted.postId,
-                node as HTMLElement,
+                hostNode,
                 extracted.text.plain,
                 undefined,
                 textContainer,
@@ -351,7 +546,7 @@ export class FeedObserver {
             return;
         }
 
-        this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+        this.renderManualEntry(extracted, hostNode, textContainer);
         this.renderedHosts.add(node);
     }
 
@@ -418,10 +613,9 @@ export class FeedObserver {
         );
     }
 
-    // send extracted post to background and start timeout tracking.
     private dispatchAnalyze(post: NormalizedPostContent): void {
-        // start timeout window before sending message.
-        // if no response/error arrives in ANALYZE_TIMEOUT_MS, badge becomes network timeout.
+        if (this.paused) return;
+
         this.inFlightAnalyzePostIds.add(post.postId);
         this.startAnalyzeTimeout(post.postId);
         this.bus.sendAnalyze(post);

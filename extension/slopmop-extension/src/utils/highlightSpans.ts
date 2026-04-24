@@ -139,6 +139,22 @@ export function canApplyInnerHtmlHighlights(el: HTMLElement): boolean {
     if (el.querySelector('a, button, img, video, iframe, svg')) {
         return false;
     }
+    // Reddit projects post bodies through custom elements like
+    // `<shreddit-post-rtjson-content>`; LinkedIn / X have similar
+    // `faceplate-*` / `<shreddit-*>` wrappers. Their shadow DOM + CSS depend
+    // on that element structure, so replacing innerHTML with our flattened
+    // `<mark>...</mark>text` string keeps the text in the DOM but leaves it
+    // visually invisible. Custom elements always have a hyphen in the tag
+    // name, so bail whenever we see one and let the rich-DOM path (or a
+    // silent no-op) handle the post instead. We also bail when `el` itself
+    // is the custom element — on modern Reddit the `slot="text-body"`
+    // attribute sits directly on `<shreddit-post-rtjson-content>` (no plain
+    // `<div>` wrapper), so a descendants-only check misses it.
+    if (el.tagName.includes('-')) return false;
+    const descendants = el.querySelectorAll('*');
+    for (const node of descendants) {
+        if (node.tagName.includes('-')) return false;
+    }
     return true;
 }
 

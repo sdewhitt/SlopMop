@@ -16,6 +16,8 @@ import { RedditAdapter } from '@src/core/adapters/RedditAdapter';
 import { InstagramAdapter } from '@src/core/adapters/InstagramAdapter';
 import { LinkedInAdapter } from '@src/core/adapters/LinkedInAdapter';
 import { XAdapter } from '@src/core/adapters/XAdapter';
+import { GoogleAdapter } from '@src/core/adapters/GoogleAdapter';
+import { FacebookAdapter } from '@src/core/adapters/FacebookAdapter';
 import { PostExtractor } from '@src/core/PostExtractor';
 import { FeedObserver } from '@src/core/FeedObserver';
 import { OverlayRenderer } from '@src/core/OverlayRenderer';
@@ -193,11 +195,17 @@ function shouldRunOnCurrentSite(
   if (hostname.includes('facebook.com')) return settings.platforms.facebook;
   if (hostname.includes('youtube.com')) return settings.platforms.youtube;
   if (hostname.includes('linkedin.com')) return settings.platforms.linkedin;
+  if (isGoogleHost(hostname)) return settings.platforms.google;
 
   return false;
 }
 
-function startObserver(settings: DetectionSettings): void {
+function isGoogleHost(hostname: string): boolean {
+  // Matches google.com, google.co.uk, google.de, google.com.au, etc.
+  return /(^|\.)google\.[a-z]{2,3}(\.[a-z]{2,3})?$/.test(hostname);
+}
+
+async function startObserver(settings: DetectionSettings): Promise<void> {
   const hostname = getCurrentHost();
   let adapter;
   let overlay;
@@ -213,6 +221,12 @@ function startObserver(settings: DetectionSettings): void {
   } else if (hostname.includes('twitter.com') || hostname.includes('x.com')) {
     adapter = new XAdapter();
     overlay = new XOverlayRenderer(adapter, settings);
+  } else if (isGoogleHost(hostname)) {
+    adapter = new GoogleAdapter();
+    overlay = new OverlayRenderer(settings);
+  } else if (hostname.includes('facebook.com')) {
+    adapter = new FacebookAdapter();
+    overlay = new OverlayRenderer(settings);
   } else {
     return;
   }
@@ -262,6 +276,10 @@ function startObserver(settings: DetectionSettings): void {
     overlay.renderFactCheckError(postId, message);
   });
 
+  // Hydrate the in-memory cache snapshot before the first scan so cached
+  // verdicts paint immediately (no Scanning flash, no Detect Now for
+  // previously-analyzed posts in manual mode).
+  await activeObserver.primeCacheFromStorage();
   activeObserver.start();
   console.log('[SlopMop] FeedObserver started');
 }
@@ -281,7 +299,7 @@ async function initFeedObserver(): Promise<void> {
   if (!settings.enabled) return;
   if (!shouldRunOnCurrentSite(settings, ignoredSites)) return;
 
-  startObserver(settings);
+  await startObserver(settings);
 }
 
 browser.storage.onChanged.addListener((changes, areaName) => {
@@ -388,3 +406,15 @@ function setupNavigationListener(): void {
   };
 }
 setupNavigationListener();
+
+// Pause the feed observer when the tab is hidden to save CPU / network;
+// resume with a catch-up scan when the user returns.
+document.addEventListener('visibilitychange', () => {
+  console.log('[SlopMop] visibilitychange fired, hidden =', document.hidden);
+  if (document.hidden) {
+    activeObserver?.pause();
+  } else {
+    activeObserver?.resume();
+  }
+});
+console.log('[SlopMop] visibility listener registered');

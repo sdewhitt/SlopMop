@@ -56,13 +56,15 @@ export class RedditAdapter implements SiteAdapter {
     const fromUrl = permalink ? this.parsePostIdFromPermalink(permalink) : null;
     if (fromUrl) return fromUrl;
 
-    // 3) Deterministic fallback hash
+    // 3) Deterministic fallback hash.
+    //
+    // Intentionally excludes `getTimestampText`: Reddit renders it as a
+    // relative label ("5 hours ago") that drifts on every refresh, which
+    // would make the postId unstable across sessions and bust the 24-hour
+    // detection cache even for posts that haven't changed.
     const author = this.getAuthorHandle(postNode);
-
-    const timestamp = this.getTimestampText(postNode);
-
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
-    const base = `${permalink ?? ""}|${author}|${timestamp}|${text}`;
+    const base = `${permalink ?? ""}|${author}|${text}`;
 
     return base ? `reddit-fallback-${fnv1a32Hex(base)}` : null;
   }
@@ -236,6 +238,10 @@ export class RedditAdapter implements SiteAdapter {
       commentNode.querySelector<HTMLElement>("div[slot='comment']") ??
       commentNode.querySelector<HTMLElement>("p")
     );
+  }
+
+  getCommentOverlayHost(commentNode: Element): HTMLElement | null {
+    return this.getCommentTextNode(commentNode);
   }
 
   private normalizeUrl(rawUrl: string): string | null {

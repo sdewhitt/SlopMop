@@ -250,6 +250,7 @@ export default function Popup() {
           localSettings?.lowBatteryModeAutoWhenBatteryLow ??
           defaultSettings.lowBatteryModeAutoWhenBatteryLow,
         detectionLanguages: normalizeDetectionLanguages(remote.settings.detectionLanguages),
+        cacheRecentResults: remote.settings.cacheRecentResults ?? defaultSettings.cacheRecentResults,
       };
       setSettings(merged);
       setEnabled(merged.enabled);
@@ -638,6 +639,7 @@ export default function Popup() {
       lowBatteryMode: defaultUserSettings.settings.lowBatteryMode,
       lowBatteryModeAutoWhenBatteryLow: defaultUserSettings.settings.lowBatteryModeAutoWhenBatteryLow,
       detectionLanguages: [...defaultUserSettings.settings.detectionLanguages],
+      cacheRecentResults: defaultUserSettings.settings.cacheRecentResults,
     };
     setSettings(defaults);
     setEnabled(defaults.enabled);

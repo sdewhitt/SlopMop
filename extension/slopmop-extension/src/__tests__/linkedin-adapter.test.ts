@@ -266,6 +266,101 @@ describe('LinkedInAdapter', () => {
     expect(adapter.getCommentId(commentRow)).toMatch(/^linkedin-comment-/);
   });
 
+  it('does not treat comment sort ("Most relevant") as a comment when under a Comments aria region', () => {
+    const postOuter = document.createElement('div');
+    postOuter.setAttribute('role', 'listitem');
+    postOuter.setAttribute('componentkey', 'storyFeedType_MAIN_FEED_RELEVANCE');
+
+    const postText = document.createElement('span');
+    postText.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(postText, 'Original post');
+
+    const commentsRegion = document.createElement('div');
+    commentsRegion.setAttribute('aria-label', 'Comments on this post');
+
+    const sortRow = document.createElement('div');
+    sortRow.setAttribute('role', 'listitem');
+    sortRow.setAttribute('componentkey', 'commentSortFeedType_ORDERING');
+    const sortText = document.createElement('span');
+    sortText.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(sortText, 'Most relevant');
+    sortRow.appendChild(sortText);
+
+    const commentWrap = document.createElement('div');
+    commentWrap.setAttribute(
+      'componentkey',
+      'replaceableComment_urn:li:comment:(urn:li:activity:7443268373033181184,7443269247889403904)',
+    );
+    const commentText = document.createElement('span');
+    commentText.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(commentText, 'Real comment body');
+
+    commentWrap.appendChild(commentText);
+    commentsRegion.appendChild(sortRow);
+    postOuter.appendChild(postText);
+    postOuter.appendChild(commentsRegion);
+    postOuter.appendChild(commentWrap);
+    document.body.appendChild(postOuter);
+
+    Object.defineProperty(sortRow, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 40, top: 10, bottom: 50, left: 0, right: 400 }),
+    });
+    Object.defineProperty(commentWrap, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 50, top: 60, bottom: 110, left: 0, right: 400 }),
+    });
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(commentWrap);
+  });
+
+  it('dedupes sibling comment roots that share the same urn:li:comment id', () => {
+    const postOuter = document.createElement('div');
+    postOuter.setAttribute('role', 'listitem');
+    postOuter.setAttribute('componentkey', 'storyFeedType_MAIN_FEED_RELEVANCE');
+
+    const postText = document.createElement('span');
+    postText.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(postText, 'Original post');
+
+    const rowHeadline = document.createElement('div');
+    rowHeadline.setAttribute(
+      'componentkey',
+      'replaceableCommentRow_urn:li:comment:(urn:li:activity:7443268373033181184,7443269247889403904)',
+    );
+    const headlineText = document.createElement('span');
+    headlineText.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(headlineText, 'Name');
+    rowHeadline.appendChild(headlineText);
+
+    const rowBody = document.createElement('div');
+    rowBody.setAttribute(
+      'componentkey',
+      'replaceableCommentRow_urn:li:comment:(urn:li:activity:7443268373033181184,7443269247889403904)',
+    );
+    const bodyText = document.createElement('span');
+    bodyText.setAttribute('data-testid', 'expandable-text-box');
+    setInnerText(bodyText, 'Longer comment body text that should win dedupe.');
+    rowBody.appendChild(bodyText);
+
+    postOuter.appendChild(postText);
+    postOuter.appendChild(rowHeadline);
+    postOuter.appendChild(rowBody);
+    document.body.appendChild(postOuter);
+
+    Object.defineProperty(rowHeadline, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 30, top: 10, bottom: 40, left: 0, right: 400 }),
+    });
+    Object.defineProperty(rowBody, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 50, top: 45, bottom: 95, left: 0, right: 400 }),
+    });
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toBe(rowBody);
+    expect(adapter.getCommentId(rowBody)).toBe('7443269247889403904');
+  });
+
   it('only returns urn:li:comment nodes for comments, excluding action bar items', () => {
     // findVisibleCommentNodes must use urn:li:comment only. Broad selectors like
     // "ul > li" incorrectly match the action bar (Like, Comment, Repost, Send).

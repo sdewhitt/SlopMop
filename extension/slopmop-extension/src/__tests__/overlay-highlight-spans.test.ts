@@ -204,4 +204,71 @@ describe('OverlayRenderer + highlightedSpans', () => {
     expect(textBody.innerHTML).toBe(htmlBefore);
     expect(detectSurface.textContent).toContain('likely_ai');
   });
+
+  it('custom-element wrapper (Reddit shreddit-*): preserves wrapper so post text stays visible', () => {
+    // Reddit wraps post bodies in custom elements whose shadow DOM / CSS rely
+    // on the wrapper tag (e.g. <shreddit-post-rtjson-content>). Our previous
+    // innerHTML replacement stripped the wrapper, leaving the text in the DOM
+    // but visually invisible. Confirm we now leave the structure alone.
+    const plain = 'Hello world today.';
+    const host = document.createElement('div');
+    const textBody = document.createElement('div');
+    const inner = document.createElement('shreddit-post-rtjson-content');
+    const p = document.createElement('p');
+    p.textContent = plain;
+    inner.appendChild(p);
+    textBody.appendChild(inner);
+    mockInnerText(textBody, plain);
+    const { renderer } = setupPendingHighlightCase(
+      'post-custom-wrapper',
+      plain,
+      textBody,
+      host,
+      true,
+    );
+
+    const res = makeResponse('post-custom-wrapper', [{ start: 6, end: 11, score: 0.9 }]);
+    renderer.renderResult('post-custom-wrapper', res);
+
+    expect(textBody.querySelector('shreddit-post-rtjson-content')).not.toBeNull();
+    expect(textBody.querySelector('shreddit-post-rtjson-content > p')).not.toBeNull();
+    expect(textBody.textContent).toContain(plain);
+  });
+
+  it('custom-element is the text body itself (Reddit slot=text-body on shreddit-post-rtjson-content): preserves light DOM children so post text stays visible', () => {
+    // On modern Reddit the `slot="text-body"` attribute lives directly on the
+    // `<shreddit-post-rtjson-content>` custom element (no plain-<div> wrapper),
+    // so `RedditAdapter.getTextNode` returns the custom element itself. The
+    // previous `canApplyInnerHtmlHighlights` implementation only scanned
+    // descendants, so it returned true and `applyInPostHighlights` wiped the
+    // element's <p> children — which is what made the CMV post body disappear
+    // as soon as a cached verdict was hydrated in manual mode.
+    const plain = 'Hello world today.';
+    const host = document.createElement('div');
+    const textBody = document.createElement('shreddit-post-rtjson-content') as HTMLElement;
+    const p = document.createElement('p');
+    p.textContent = plain;
+    textBody.appendChild(p);
+    mockInnerText(textBody, plain);
+
+    const { renderer } = setupPendingHighlightCase(
+      'post-custom-slotted',
+      plain,
+      textBody,
+      host,
+      true,
+    );
+
+    const res = makeResponse('post-custom-slotted', [{ start: 6, end: 11, score: 0.9 }]);
+    renderer.renderResult('post-custom-slotted', res);
+
+    expect(textBody.querySelector('p')).not.toBeNull();
+    expect(textBody.textContent).toContain(plain);
+
+    const mark = textBody.querySelector('mark.slopmop-highlight');
+    if (mark) {
+      expect(mark.textContent).toBe('world');
+      expect(textBody.querySelector('p')?.contains(mark)).toBe(true);
+    }
+  });
 });

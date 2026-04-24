@@ -17,6 +17,7 @@ export interface Settings {
     instagram: boolean;
     youtube: boolean;
     linkedin: boolean;
+    google: boolean;
   };
   showNotifications: boolean;
   enabled: boolean;
@@ -41,13 +42,15 @@ export interface Settings {
    */
   lowBatteryModeAutoWhenBatteryLow: boolean;
   detectionLanguages: DetectionLanguageCode[];
+  /** Cache recent detection results for up to 24 hours. */
+  cacheRecentResults: boolean;
 }
 
 export const defaultSettings: Settings = {
   sensitivity: 'medium',
   highlightStyle: 'badge',
   automaticScanning: false,
-  platforms: { twitter: true, reddit: true, facebook: true, instagram: true, youtube: true, linkedin: true },
+  platforms: { twitter: true, reddit: true, facebook: true, instagram: true, youtube: true, linkedin: true, google: true },
   showNotifications: true,
   enabled: true,
   scanText: true,
@@ -64,4 +67,5 @@ export const defaultSettings: Settings = {
   lowBatteryMode: false,
   lowBatteryModeAutoWhenBatteryLow: false,
   detectionLanguages: ['eng', 'spa', 'fra'],
+  cacheRecentResults: true,
 };
