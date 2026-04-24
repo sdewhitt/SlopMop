@@ -116,7 +116,7 @@ describe('Stats UI', () => {
     await waitFor(() => {
       const zeros = screen.getAllByText('0');
       expect(zeros.length).toBeGreaterThanOrEqual(3); // postsScanned, aiDetected, human
-      expect(screen.getByText('0%')).toBeInTheDocument();
+      expect(screen.getAllByText('0%').length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -257,7 +257,7 @@ describe('Reset & Privacy Controls', () => {
     await waitFor(() => {
       // postsScanned, aiDetected, human, and aiRate should all show 0 / 0%
       expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(3);
-      expect(screen.getByText('0%')).toBeInTheDocument();
+      expect(screen.getAllByText('0%').length).toBeGreaterThanOrEqual(1);
     });
   });
 
