@@ -439,13 +439,6 @@ export class FeedObserver {
                 // Re-render on a new host only for posts. Comment lists can expose
                 // duplicate wrappers for the same comment id (notably first comments),
                 // which would otherwise create duplicate Detect/Fact-check controls.
-                if (
-                    type === "post" &&
-                    !this.settings.automaticScanning &&
-                    !this.renderedHosts.has(node)
-                ) {
-                    this.renderManualEntry(extracted, node as HTMLElement, textContainer);
-                    this.renderedHosts.add(node);
                 if (type === "post" && !this.renderedHosts.has(node)) {
                     // A second DOM host appeared for an already-seen post
                     // (common on Reddit: subreddit feed + opened post detail

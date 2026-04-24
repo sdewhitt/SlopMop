@@ -973,6 +973,7 @@ function buildDetectionResponseFromHistory(
   };
 }
 
+/**
  * Saves a successful detection result to the 24-hour cache, guarded by incognito check.
  * Failures are swallowed — cache is best-effort and must never affect detection.
  */
@@ -1208,6 +1209,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
           payload: finalMapped,
         });
         maybeSaveToHistory(enrichedPost, finalMapped, tabId).catch(() => {});
+        maybeSaveToCache(enrichedPost.postId, finalMapped, tabId).catch(() => {});
         await finalizeStats(finalMapped.verdict === 'likely_ai');
         return;
       }
@@ -1230,10 +1232,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
           payload: finalMini,
         });
         maybeSaveToHistory(enrichedPost, finalMini, tabId).catch(() => {});
+        maybeSaveToCache(enrichedPost.postId, finalMini, tabId).catch(() => {});
         await finalizeStats(finalMini.verdict === 'likely_ai');
-        maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
-        maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
-        await finalizeStats(mapped.verdict === 'likely_ai');
         return;
       }
 
