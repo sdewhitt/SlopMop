@@ -405,6 +405,24 @@ describe('GoogleAdapter', () => {
     expect(aios).toHaveLength(1);
   });
 
+  it('deduplicates overlapping AI Overview attribute and region containers', () => {
+    const region = document.createElement('div');
+    region.setAttribute('role', 'region');
+    region.setAttribute('aria-label', 'AI Overview');
+
+    const aiBlock = buildSerpWithAIOverview();
+    const attrContainer = aiBlock.querySelector('[data-attrid="AIOverview"]')!;
+    region.appendChild(aiBlock);
+    setInnerText(region, `AI Overview ${LONG_AI_BODY}`);
+    document.body.appendChild(region);
+
+    const found = adapter.findPostNodes(document);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]).toBe(region);
+    expect(found).not.toContain(attrContainer);
+  });
+
   describe('organic search results', () => {
     it('finds each organic result card on a results-only SERP', () => {
       document.body.appendChild(buildSerpWithOrganicResults(3));

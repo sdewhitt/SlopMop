@@ -266,7 +266,7 @@ export class GoogleAdapter implements SiteAdapter {
       }
     }
 
-    return out;
+    return this.keepOutermostNodes(out);
   }
 
   private collectOrganicNodes(root: ParentNode): Element[] {
@@ -286,6 +286,12 @@ export class GoogleAdapter implements SiteAdapter {
     // sub-cards (sitelinks). Keep outermost only so we don't double-badge.
     return out.filter(
       (el) => !out.some((other) => other !== el && other.contains(el)),
+    );
+  }
+
+  private keepOutermostNodes(nodes: Element[]): Element[] {
+    return nodes.filter(
+      (node) => !nodes.some((other) => other !== node && other.contains(node)),
     );
   }
 
