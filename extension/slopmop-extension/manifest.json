@@ -21,6 +21,7 @@
     "scripting",
     "storage",
     "identity",
+    "alarms",
     "offscreen"
   ],
   "host_permissions": [

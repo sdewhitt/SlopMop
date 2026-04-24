@@ -204,6 +204,17 @@ export default function DetectionSettings({
           />
         </div>
         <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="power user timing milliseconds detect fact check server latency"
+        >
+          <Toggle
+            checked={settings.powerUserTiming}
+            onChange={(v) => onUpdateSetting('powerUserTiming', v)}
+            label="Power user timing"
+            description="Show server Detect / Fact-check milliseconds in detection tooltips when available"
+          />
+        </div>
+        <div
           className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
           data-search="comments replies scanning manual auto"
         >

@@ -303,6 +303,24 @@ def _count_satire_meta_comments(comment_texts: List[str]) -> int:
 SATIRE_COMMENT_CROWD_THRESHOLD = 10
 
 
+def _top_comments_confirm_satire(
+  comment_texts: List[str],
+  top_n: int = 3,
+  required: int = 2,
+) -> bool:
+  """
+  Lightweight rule: if the top few comments explicitly frame the post as satire/parody and
+  at least `required` of them give an affirmative signal, treat as confirmed.
+  """
+  n = 0
+  for cmt in comment_texts[: max(0, top_n)]:
+    if not cmt or not isinstance(cmt, str):
+      continue
+    if _comment_satire_claim_with_clear_yes(cmt) or _RE_THIS_POST_SATIRE.search(cmt):
+      n += 1
+  return n >= required
+
+
 # merge the comment keywords for consensus
 def _merge_comment_keywords_for_consensus(
   comment_texts: List[str],
@@ -337,6 +355,17 @@ def extract_satire_keywords_post_then_comments(
 
   if not comment_texts:
     return SatireKeywordScanResult(keywords=[], source=None, comment_index=None)
+
+  # 0) top comments explicitly confirm satire (e.g., 2 of top 3)
+  if _top_comments_confirm_satire(comment_texts, top_n=3, required=2):
+    # include a synthetic marker so callers can distinguish the reason
+    kws = ["satire_comment_top3_consensus"]
+    return SatireKeywordScanResult(
+      keywords=kws,
+      source="comment",
+      comment_index=0,
+      consensus_reason="top3_2of3",
+    )
 
   # 1) comment explicitly says / asks about satire + clear yes (or satire -> yes)
   for i, cmt in enumerate(comment_texts):

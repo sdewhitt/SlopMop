@@ -21,6 +21,7 @@ import {
   detectImage,
   detectText,
   factCheckText,
+  satireCheckText,
   FactCheckApiError,
   submitExtensionReport,
   type DetectImageResponse,
@@ -81,7 +82,13 @@ import {
 import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
 import { fnv1a32Hex } from '@src/utils/fnv1aHash';
 import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
+import {
+  syncBatteryAutoLowBatteryFromStatus,
+  syncBatteryThrottleFromStatus,
+} from '@src/pages/background/batteryThrottleController';
 import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
+import { handleFactCheckRequest } from '@src/pages/background/factCheckController';
+import type { SiteId } from '@src/types/domain';
 
 console.log('background script loaded');
 
@@ -257,9 +264,29 @@ async function drainAnalysisQueue(): Promise<void> {
 
 initFirebase();
 
-void initBatteryThrottleController().catch((err) => {
-  console.error('[SlopMop] Battery throttle controller failed to start', err);
+/** MV3 SW can terminate before `void initBatteryThrottleController()` finishes; schedule via alarms so the async handler runs in an event that keeps the worker alive until completion. */
+const BATTERY_INIT_ALARM = 'slopmopBatteryInit';
+
+function scheduleBatteryInitAlarm(): void {
+  void browser.alarms.create(BATTERY_INIT_ALARM, { when: Date.now() + 1 });
+}
+
+browser.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== BATTERY_INIT_ALARM) return;
+  try {
+    await initBatteryThrottleController();
+  } catch (err) {
+    console.error('[SlopMop] Battery throttle controller failed to start', err);
+  }
 });
+
+browser.runtime.onInstalled.addListener(() => {
+  scheduleBatteryInitAlarm();
+});
+browser.runtime.onStartup.addListener(() => {
+  scheduleBatteryInitAlarm();
+});
+scheduleBatteryInitAlarm();
 
 // Sync the current Firebase user to browser.storage.local so the
 // content-script React tree can read auth state reactively.
@@ -362,6 +389,7 @@ interface BackgroundMessage {
   password?: string;
   uid?: string;
   site?: string;
+  contentFingerprint?: string;
   patch?: Partial<DetectionSettings>;
   text?: string;
   url?: string;
@@ -415,7 +443,37 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       if (!tabId) {
         return Promise.resolve({ success: false, error: 'No active tab.' });
       }
-      return handleFactCheck(msg.text ?? '', msg.postId ?? '', tabId);
+      return handleFactCheck(msg.text ?? '', msg.postId ?? '', tabId, {
+        site: msg.site as SiteId | undefined,
+        contentFingerprint: msg.contentFingerprint as string | undefined,
+      });
+    }
+    case 'SLOPMOP_BATTERY_STATUS': {
+      const s = msg.payload as { level?: unknown; charging?: unknown } | undefined;
+      const level = typeof s?.level === 'number' ? s.level : Number(s?.level);
+      const charging = typeof s?.charging === 'boolean' ? s.charging : Boolean(s?.charging);
+      if (!Number.isFinite(level)) return;
+
+      // Heartbeat + latest snapshot for debugging.
+      // (Service worker context supports storage; offscreen does not.)
+      void browser.storage.local.get('slopmopOffscreenBatteryStartedAt').then((r) => {
+        void browser.storage.local.set({
+          slopmopOffscreenBatteryLastPingAt: Date.now(),
+          slopmopOffscreenBatteryStartedAt:
+            (r.slopmopOffscreenBatteryStartedAt as number | undefined) ?? Date.now(),
+          slopmopLastBatterySnapshot: {
+            at: Date.now(),
+            level,
+            charging,
+            source: 'offscreen',
+          },
+        });
+      });
+
+      // Apply thresholds to local-only flags without mutating user settings.
+      void syncBatteryThrottleFromStatus({ level, charging });
+      void syncBatteryAutoLowBatteryFromStatus({ level, charging });
+      return;
     }
     case 'SLOPMOP_GET_IGNORED_SITES':
       return handleGetIgnoredSites(msg.uid);
@@ -745,20 +803,17 @@ async function handleFactCheck(
   text: string,
   postId: string,
   tabId: number,
+  opts?: { site?: SiteId; contentFingerprint?: string },
 ): Promise<MessageResponse> {
   try {
-    const { items } = await factCheckText(text);
-    await browser.storage.local.set({
-      lastFactCheckResult: { postId, items, updatedAtMs: Date.now() },
-      lastFactCheckError: null,
+    const res = await handleFactCheckRequest({
+      text,
+      postId,
+      tabId,
+      site: opts?.site,
+      contentFingerprint: opts?.contentFingerprint,
     });
-    await browser.tabs
-      .sendMessage(tabId, {
-        type: 'FACT_CHECK_RESULT',
-        payload: { postId, items },
-      })
-      .catch(() => {});
-    return { success: true, data: { items } };
+    return res;
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Fact check failed.';
@@ -1187,7 +1242,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     const textPromise = textLangSupported
       ? (async () => {
           const start = performance.now();
-          const result = await detectText(plainText, settings.highlightSegments);
+          const result = await detectText(
+            plainText,
+            settings.highlightSegments,
+            enrichedPost.commentTexts,
+            enrichedPost.domContext?.subreddit,
+          );
           return { result, elapsedMs: Math.round(performance.now() - start) };
         })()
       : Promise.resolve(null);
@@ -1536,6 +1596,22 @@ function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
   );
 }
 
+function extractServerTimingForDomain(
+  apiResult: DetectResponse | DetectImageResponse,
+): NonNullable<DetectionResponse['explanation']['serverTiming']> | undefined {
+  const dm = typeof apiResult.detect_ms === 'number' ? apiResult.detect_ms : undefined;
+  const tm = typeof apiResult.total_server_ms === 'number' ? apiResult.total_server_ms : undefined;
+  if (typeof dm !== 'number' && typeof tm !== 'number') return undefined;
+  const out: NonNullable<DetectionResponse['explanation']['serverTiming']> = {};
+  if (typeof dm === 'number' && Number.isFinite(dm) && dm >= 0) {
+    out.detectMs = Math.round(dm);
+  }
+  if (typeof tm === 'number' && Number.isFinite(tm) && tm >= 0) {
+    out.totalServerMs = Math.round(tm);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
@@ -1588,6 +1664,8 @@ function mapToDetectionResponse(
     ? { name: 'slopmop-api', version: '1.0' }
     : imageModel;
 
+  const serverTiming = extractServerTimingForDomain(apiResult);
+
   return {
     requestId: crypto.randomUUID(),
     postId,
@@ -1602,6 +1680,7 @@ function mapToDetectionResponse(
       model: explanationModel,
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
+      ...(serverTiming ? { serverTiming } : {}),
     },
   };
 }
@@ -1624,12 +1703,20 @@ function mapToImageDetectionResult(
 
   const model = resolveImageModelDescriptor(modelVariant ?? apiResult.model_variant);
 
+  const serverDetectMs =
+    typeof apiResult.detect_ms === 'number' &&
+    Number.isFinite(apiResult.detect_ms) &&
+    apiResult.detect_ms >= 0
+      ? Math.round(apiResult.detect_ms)
+      : undefined;
+
   return {
     verdict,
     confidence: apiResult.confidence,
     summary: apiResult.explanation,
     model,
     timingMs,
+    ...(serverDetectMs !== undefined ? { serverDetectMs } : {}),
     mediaType,
   };
 }

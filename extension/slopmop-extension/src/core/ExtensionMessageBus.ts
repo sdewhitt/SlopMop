@@ -2,7 +2,7 @@ import {
     ContentToBackgroundMessage,
     DetectionResponse,
     DetectionLanguageUnsupportedPayload,
-    FactCheckItem,
+    FactCheckResultPayload,
     NormalizedPostContent,
     PostId,
 } from "@src/types/domain";
@@ -55,19 +55,25 @@ export class ExtensionMessageBus {
         chrome.runtime.onMessage.addListener(listener);
     }
 
-    async sendFactCheck(postId: PostId, text: string): Promise<void> {
+    async sendFactCheck(
+        postId: PostId,
+        text: string,
+        opts?: { site?: string; contentFingerprint?: string },
+    ): Promise<void> {
         try {
             await chrome.runtime.sendMessage({
                 type: "SLOPMOP_FACT_CHECK",
                 postId,
                 text,
+                ...(opts?.site ? { site: opts.site } : {}),
+                ...(opts?.contentFingerprint ? { contentFingerprint: opts.contentFingerprint } : {}),
             });
         } catch {
             console.log("[SlopMop] Could not send fact-check request to background.");
         }
     }
 
-    onFactCheckResult(handler: (payload: { postId: PostId; items: FactCheckItem[] }) => void): void {
+    onFactCheckResult(handler: (payload: FactCheckResultPayload) => void): void {
         const listener = (message: any) => {
             if (message.type === "FACT_CHECK_RESULT") {
                 handler(message.payload);

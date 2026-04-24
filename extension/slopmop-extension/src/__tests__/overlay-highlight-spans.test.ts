@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OverlayRenderer } from '../core/OverlayRenderer';
 import type { DetectionResponse } from '../types/domain';
+import { modelPreprocessText } from '../utils/modelPreprocessText';
 import { defaultUserSettings } from '../utils/userSettings';
 
 function mockInnerText(el: HTMLElement, value: string): void {
@@ -50,7 +51,7 @@ function setupPendingHighlightCase(
     uiMode: 'simple',
   });
 
-  renderer.renderPending(postId, host, plain, () => {}, textBody);
+  renderer.renderPending(postId, host, modelPreprocessText(plain), () => {}, textBody);
 
   const detectSurface = host.querySelector('[data-slopmop-overlay="1"]') as HTMLElement;
   expect(detectSurface).not.toBeNull();

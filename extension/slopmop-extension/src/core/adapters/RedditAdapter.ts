@@ -103,6 +103,18 @@ export class RedditAdapter implements SiteAdapter {
     return this.normalizeUrl(href);
   }
 
+  getSubreddit(postNode: Element): string | null {
+    // Prefer parsing from permalink: /r/{sub}/comments/...
+    const permalink = this.getPermalink(postNode) ?? window.location.href;
+    try {
+      const u = new URL(permalink);
+      const m = u.pathname.match(/\/r\/([^/]+)\//i);
+      return m?.[1] ? m[1].trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   getTextNode(postNode: Element): HTMLElement | null {
     // Title + body containers, avoiding UI chrome as much as possible.
     return (

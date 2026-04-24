@@ -31,6 +31,8 @@ export interface Settings {
   highlightSegments: boolean;
   /** Show Fact check on posts (ClaimReview search via backend). */
   factCheck: boolean;
+  /** Show server-reported detect / fact-check timing in detection tooltips. */
+  powerUserTiming: boolean;
   /** When on, automatic scanning is off and its toggle is locked until this is turned off. */
   lowBatteryMode: boolean;
   /**
@@ -58,6 +60,7 @@ export const defaultSettings: Settings = {
   accessibilityMode: false,
   highlightSegments: true,
   factCheck: true,
+  powerUserTiming: false,
   lowBatteryMode: false,
   lowBatteryModeAutoWhenBatteryLow: false,
   detectionLanguages: ['eng', 'spa', 'fra'],

@@ -51,6 +51,11 @@ export interface DetectionSettings {
   /** Show Fact check next to Detect Now on posts (manual / eligible feeds). */
   factCheck: boolean;
   /**
+   * When on, detection hover tooltips include server-reported Detect / Fact-check milliseconds
+   * (when available). Off keeps the default tooltip (model line + client round-trip ms).
+   */
+  powerUserTiming: boolean;
+  /**
    * Manual power-saving: when on, automatic scanning is forced off and the Automatic Scanning
    * toggle is disabled until you turn this off. The extension does not overwrite this when it
    * automatically pauses scanning for low battery while unplugged.
@@ -119,6 +124,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     accessibilityMode: false,
     highlightSegments: true,
     factCheck: true,
+    powerUserTiming: false,
     lowBatteryMode: false,
     lowBatteryModeAutoWhenBatteryLow: false,
     detectionLanguages: ['eng', 'spa', 'fra'],
