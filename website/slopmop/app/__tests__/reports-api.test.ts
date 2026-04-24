@@ -10,6 +10,10 @@ jest.mock('../lib/reportEmail', () => ({
   sendReportSubmittedEmail: jest.fn(() => Promise.resolve(true)),
 }))
 
+jest.mock('../lib/reportConfig', () => ({
+  getConfiguredReportNotificationInterval: jest.fn(() => Promise.resolve('immediate')),
+}))
+
 jest.mock('../lib/reportAuth', () => {
   class ReportAuthError extends Error {
     status: number
@@ -35,6 +39,7 @@ import {
   requireAdminUser,
 } from '../lib/reportAuth'
 import { sendReportSubmittedEmail } from '../lib/reportEmail'
+import { getConfiguredReportNotificationInterval } from '../lib/reportConfig'
 
 describe('/api/reports route', () => {
   const originalEnv = process.env
@@ -46,8 +51,6 @@ describe('/api/reports route', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     process.env = { ...originalEnv }
-    delete process.env.REPORT_NOTIFICATION_INTERVAL
-    delete process.env.REPORT_DEFAULT_NOTIFICATION_INTERVAL
   })
 
   afterAll(() => {
@@ -89,7 +92,6 @@ describe('/api/reports route', () => {
         type: 'bug',
         source: 'website',
         message: 'Detected issue details',
-        notificationInterval: 'weekly',
       }),
     })
 
@@ -103,12 +105,12 @@ describe('/api/reports route', () => {
     expect(sendReportSubmittedEmail).toHaveBeenCalledTimes(1)
 
     const inserted = add.mock.calls[0][0] as Record<string, unknown>
-    expect(inserted.notificationInterval).toBe('immediate')
+    expect(inserted.notificationInterval).toBeUndefined()
     expect(data.notificationScheduledFor).toBe('immediate')
   })
 
   it('uses server-configured notification interval for all reports', async () => {
-    process.env.REPORT_NOTIFICATION_INTERVAL = 'weekly'
+    ;(getConfiguredReportNotificationInterval as jest.Mock).mockResolvedValueOnce('weekly')
 
     const add = jest.fn().mockResolvedValue({ id: 'report-456' })
     const collection = jest.fn().mockReturnValue({ add })
@@ -121,7 +123,6 @@ describe('/api/reports route', () => {
         type: 'other',
         source: 'website',
         message: 'Weekly digest check',
-        notificationInterval: 'immediate',
       }),
     })
 
@@ -132,7 +133,7 @@ describe('/api/reports route', () => {
     expect(data.notificationScheduledFor).toBe('weekly')
 
     const inserted = add.mock.calls[0][0] as Record<string, unknown>
-    expect(inserted.notificationInterval).toBe('weekly')
+    expect(inserted.notificationInterval).toBeUndefined()
     expect(sendReportSubmittedEmail).not.toHaveBeenCalled()
   })
 

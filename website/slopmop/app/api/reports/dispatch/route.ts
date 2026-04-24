@@ -1,6 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { initAdminDb } from "../../../lib/firebaseAdmin";
+import { getConfiguredReportNotificationInterval } from "../../../lib/reportConfig";
 import { sendDigestEmail } from "../../../lib/reportEmail";
 import {
   type ReportNotificationInterval,
@@ -37,9 +38,11 @@ function toReportRecord(
     submitterUid: typeof data.submitterUid === "string" ? data.submitterUid : null,
     submitterEmail: typeof data.submitterEmail === "string" ? data.submitterEmail : null,
     notificationInterval:
-      data.notificationInterval === "daily" || data.notificationInterval === "weekly"
+      data.notificationInterval === "daily" ||
+      data.notificationInterval === "weekly" ||
+      data.notificationInterval === "immediate"
         ? data.notificationInterval
-        : "immediate",
+        : null,
     userAgent: typeof data.userAgent === "string" ? data.userAgent : null,
     resolutionNote: typeof data.resolutionNote === "string" ? data.resolutionNote : null,
     addressedAt: asIso(data.addressedAt),
@@ -62,7 +65,6 @@ function shouldNotify(
   nowMs: number
 ): boolean {
   if (report.status !== "open") return false;
-  if (report.notificationInterval !== interval) return false;
 
   if (!report.lastNotifiedAt) return true;
 
@@ -89,48 +91,35 @@ export async function POST(request: Request) {
 
     const now = Date.now();
     const db = initAdminDb();
+    const configuredInterval = await getConfiguredReportNotificationInterval();
 
-    const [dailySnap, weeklySnap] = await Promise.all([
-      db
-        .collection("reports")
-        .where("status", "==", "open")
-        .where("notificationInterval", "==", "daily")
-        .get(),
-      db
-        .collection("reports")
-        .where("status", "==", "open")
-        .where("notificationInterval", "==", "weekly")
-        .get(),
-    ]);
+    if (configuredInterval === "immediate") {
+      return NextResponse.json(
+        {
+          ok: true,
+          interval: configuredInterval,
+          skipped: true,
+          reason: "Immediate mode sends notifications at report submission time.",
+        },
+        { status: 200 }
+      );
+    }
 
-    const dailyReports = dailySnap.docs
+    const openReportsSnap = await db
+      .collection("reports")
+      .where("status", "==", "open")
+      .get();
+
+    const candidateReports = openReportsSnap.docs
       .map((doc) => toReportRecord(doc.id, doc.data() as Record<string, unknown>))
-      .filter((report) => shouldNotify(report, "daily", now));
+      .filter((report) => shouldNotify(report, configuredInterval, now));
 
-    const weeklyReports = weeklySnap.docs
-      .map((doc) => toReportRecord(doc.id, doc.data() as Record<string, unknown>))
-      .filter((report) => shouldNotify(report, "weekly", now));
-
-    const [dailySent, weeklySent] = await Promise.all([
-      sendDigestEmail("daily", dailyReports),
-      sendDigestEmail("weekly", weeklyReports),
-    ]);
+    const sent = await sendDigestEmail(configuredInterval, candidateReports);
 
     const updates: Array<Promise<unknown>> = [];
 
-    if (dailySent && dailyReports.length > 0) {
-      for (const report of dailyReports) {
-        updates.push(
-          db.collection("reports").doc(report.id).update({
-            lastNotifiedAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          })
-        );
-      }
-    }
-
-    if (weeklySent && weeklyReports.length > 0) {
-      for (const report of weeklyReports) {
+    if (sent && candidateReports.length > 0) {
+      for (const report of candidateReports) {
         updates.push(
           db.collection("reports").doc(report.id).update({
             lastNotifiedAt: FieldValue.serverTimestamp(),
@@ -145,14 +134,9 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok: true,
-        daily: {
-          candidates: dailyReports.length,
-          sent: dailySent,
-        },
-        weekly: {
-          candidates: weeklyReports.length,
-          sent: weeklySent,
-        },
+        interval: configuredInterval,
+        candidates: candidateReports.length,
+        sent,
       },
       { status: 200 }
     );

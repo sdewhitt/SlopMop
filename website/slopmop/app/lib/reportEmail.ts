@@ -60,6 +60,8 @@ export async function sendReportSubmittedEmail(
   const recipients = getAdminReportEmails();
   if (recipients.length === 0) return false;
 
+  const intervalLabel = report.notificationInterval ?? "server-configured";
+
   const subject = `[SlopMop] New ${toPrettyType(report.type)} report`;
   const text = [
     "A new report has been submitted.",
@@ -70,7 +72,7 @@ export async function sendReportSubmittedEmail(
     `Page URL: ${report.pageUrl ?? "(none)"}`,
     `Reporter Email: ${report.reporterEmail ?? "(none)"}`,
     `Submitter Email: ${report.submitterEmail ?? "(anonymous)"}`,
-    `Notification Interval: ${report.notificationInterval}`,
+    `Notification Interval: ${intervalLabel}`,
     `Created At: ${report.createdAt ?? "(pending timestamp)"}`,
   ].join("\n");
 
@@ -83,7 +85,7 @@ export async function sendReportSubmittedEmail(
     <p><strong>Page URL:</strong> ${report.pageUrl ?? "(none)"}</p>
     <p><strong>Reporter Email:</strong> ${report.reporterEmail ?? "(none)"}</p>
     <p><strong>Submitter Email:</strong> ${report.submitterEmail ?? "(anonymous)"}</p>
-    <p><strong>Notification Interval:</strong> ${report.notificationInterval}</p>
+    <p><strong>Notification Interval:</strong> ${intervalLabel}</p>
     <p><strong>Created At:</strong> ${report.createdAt ?? "(pending timestamp)"}</p>
   `;
 
