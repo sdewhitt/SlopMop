@@ -58,6 +58,10 @@ export class OverlayRenderer {
     private tooltipCleanupByOverlay = new WeakMap<HTMLElement, () => void>();
     /** Document capture listener for pinned detection-result tooltips (click-outside to dismiss). */
     private mapToDetectTooltipDocCleanup = new Map<PostId, () => void>();
+    /** Wall-clock start time for active detection scans, keyed by post id. */
+    private mapToDetectScanStartedAt = new Map<PostId, number>();
+    /** Cleanup for scanning hover tooltip listeners/interval while a post is processing. */
+    private mapToScanningTooltipCleanup = new Map<PostId, () => void>();
     private settings: DetectionSettings;
 
 
@@ -242,6 +246,7 @@ export class OverlayRenderer {
         }
 
         this.restorePostBodyHtml(postId);
+        this.clearScanningState(postId);
         this.mapToResponse.set(postId, res);
         this.clearDetectTooltipDocListeners(postId);
         this.resetOverlayInteractions(surface);
@@ -372,6 +377,7 @@ export class OverlayRenderer {
         onFactCheck?: () => void,
     ): void {
         this.mapToPostText.set(postId, plainText);
+        this.clearScanningState(postId);
         if (textContainer) {
             this.mapToTextBody.set(postId, textContainer);
         } else {
@@ -406,6 +412,7 @@ export class OverlayRenderer {
             overlay.textContent = "Scanning...";
             this.mapToOverlay.set(postId, overlay);
             this.mapToDetectPanel.set(postId, overlay);
+            this.showDetectionProcessingState(postId, overlay);
             return;
         }
 
@@ -536,6 +543,7 @@ export class OverlayRenderer {
         const stale = new Set(existingOverlays);
         for (const [existingPostId, overlayEl] of this.mapToOverlay) {
             if (!stale.has(overlayEl)) continue;
+            this.clearScanningState(existingPostId);
             this.mapToOverlay.delete(existingPostId);
             this.mapToResponse.delete(existingPostId);
             this.mapToPostText.delete(existingPostId);
@@ -561,6 +569,7 @@ export class OverlayRenderer {
     ): void {
         const surface = this.getDetectSurface(postId);
         if (!surface) return;
+        this.clearScanningState(postId);
         this.restorePostBodyHtml(postId);
         this.mapToResponse.delete(postId);
         this.mapToErrorMessage.delete(postId);
@@ -595,6 +604,7 @@ export class OverlayRenderer {
     renderError(postId: PostId, message: string, onRetry?: () => void): void {
         const surface = this.getDetectSurface(postId);
         if (!surface) return;
+        this.clearScanningState(postId);
         this.restorePostBodyHtml(postId);
         this.mapToResponse.delete(postId);
         console.error("[OverlayRenderer] detection error", { postId, message });
@@ -668,6 +678,7 @@ export class OverlayRenderer {
     clear(postId: PostId): void {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
+        this.clearScanningState(postId);
         this.restorePostBodyHtml(postId);
         this.clearDetectTooltipDocListeners(postId);
         const tipSurface = this.mapToDetectPanel.get(postId) ?? overlay;
@@ -978,10 +989,157 @@ export class OverlayRenderer {
         const surface = this.mapToDetectPanel.get(postId) ?? this.mapToOverlay.get(postId);
         if (!surface) return;
         this.resetOverlayInteractions(surface);
+        this.showDetectionProcessingState(postId, surface);
+    }
+
+    private showDetectionProcessingState(postId: PostId, surface: HTMLElement): void {
+        this.setDetectionScanStart(postId);
         surface.style.whiteSpace = "normal";
         surface.style.backgroundColor = this.getNeutralIndicatorColor();
-        surface.style.cursor = "default";
+        surface.style.cursor = "pointer";
         surface.textContent = "Scanning...";
+        this.attachProcessingTooltip(postId, surface);
+    }
+
+    private setDetectionScanStart(postId: PostId): void {
+        this.mapToDetectScanStartedAt.set(postId, Date.now());
+    }
+
+    private clearScanningState(postId: PostId): void {
+        const cleanup = this.mapToScanningTooltipCleanup.get(postId);
+        cleanup?.();
+        this.mapToScanningTooltipCleanup.delete(postId);
+        this.mapToDetectScanStartedAt.delete(postId);
+    }
+
+    private attachProcessingTooltip(postId: PostId, surface: HTMLElement): void {
+        const existingCleanup = this.mapToScanningTooltipCleanup.get(postId);
+        existingCleanup?.();
+        this.mapToScanningTooltipCleanup.delete(postId);
+
+        let tooltip: HTMLElement | null = null;
+        let updateTimer: ReturnType<typeof setInterval> | null = null;
+        let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const clearHideTimer = () => {
+            if (!hideTooltipTimer) return;
+            clearTimeout(hideTooltipTimer);
+            hideTooltipTimer = null;
+        };
+
+        const updateTooltipText = () => {
+            if (!tooltip) return;
+            const startedAt = this.mapToDetectScanStartedAt.get(postId) ?? Date.now();
+            const elapsedMs = Math.max(0, Date.now() - startedAt);
+            const seconds = (elapsedMs / 1000).toFixed(1);
+            const line = tooltip.querySelector("[data-slopmop-processing-elapsed]") as HTMLElement | null;
+            if (line) {
+                line.textContent = `Elapsed: ${seconds}s`;
+            }
+        };
+
+        const removeTooltip = () => {
+            clearHideTimer();
+            if (updateTimer) {
+                clearInterval(updateTimer);
+                updateTimer = null;
+            }
+            this.dismissTooltipForOverlay(surface);
+            tooltip = null;
+            surface.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, false);
+        };
+
+        const ensureTooltip = () => {
+            clearHideTimer();
+            if (!tooltip) {
+                surface.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
+                this.setOverlayLayer(postId, true);
+                tooltip = this.createProcessingTooltip(postId);
+                this.mountTooltipOnBody(surface, tooltip);
+                updateTooltipText();
+            }
+            if (!updateTimer) {
+                updateTimer = setInterval(updateTooltipText, 200);
+            }
+        };
+
+        const scheduleHide = () => {
+            clearHideTimer();
+            hideTooltipTimer = setTimeout(() => {
+                removeTooltip();
+            }, OverlayRenderer.TOOLTIP_HIDE_DELAY_MS);
+        };
+
+        surface.onmouseenter = () => {
+            ensureTooltip();
+        };
+        surface.onmouseleave = () => {
+            scheduleHide();
+        };
+
+        this.mapToScanningTooltipCleanup.set(postId, () => {
+            clearHideTimer();
+            if (updateTimer) {
+                clearInterval(updateTimer);
+                updateTimer = null;
+            }
+            this.dismissTooltipForOverlay(surface);
+            tooltip = null;
+            surface.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
+            this.setOverlayLayer(postId, false);
+            if (surface.onmouseenter) surface.onmouseenter = null;
+            if (surface.onmouseleave) surface.onmouseleave = null;
+        });
+    }
+
+    private createProcessingTooltip(postId: PostId): HTMLElement {
+        const isSimple = this.settings.uiMode === "simple";
+        const tip = document.createElement("div");
+        Object.assign(tip.style, {
+            minWidth: isSimple ? "200px" : "240px",
+            maxWidth: isSimple ? "300px" : "320px",
+            padding: isSimple ? "14px" : "12px",
+            borderRadius: "8px",
+            backgroundColor: "#1f2937",
+            color: "#f3f4f6",
+            fontSize: isSimple ? "14px" : "12px",
+            lineHeight: "1.5",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
+            pointerEvents: "none",
+            wordBreak: "break-word",
+        });
+
+        const title = document.createElement("div");
+        Object.assign(title.style, {
+            fontWeight: "700",
+            fontSize: isSimple ? "16px" : "14px",
+            marginBottom: "6px",
+        });
+        title.textContent = "Detection in progress";
+        tip.appendChild(title);
+
+        const elapsed = document.createElement("div");
+        elapsed.setAttribute("data-slopmop-processing-elapsed", "1");
+        elapsed.textContent = "Elapsed: 0.0s";
+        tip.appendChild(elapsed);
+
+        if (this.settings.powerUserTiming) {
+            const detail = document.createElement("div");
+            Object.assign(detail.style, {
+                fontSize: "11px",
+                color: "#9ca3af",
+                marginTop: "6px",
+            });
+            const startedAt = this.mapToDetectScanStartedAt.get(postId);
+            if (typeof startedAt === "number") {
+                detail.textContent = `Started ${Math.round((Date.now() - startedAt) / 1000)}s ago`;
+            }
+            tip.appendChild(detail);
+        }
+
+        return tip;
     }
 
     private showFactCheckingState(postId: PostId): void {
@@ -1208,6 +1366,7 @@ export class OverlayRenderer {
         const el = this.mapToOverlay.get(postId);
         if (!el) return;
         if (el.isConnected) return;
+        this.clearScanningState(postId);
         this.dismissTooltipForOverlay(el);
         this.mapToOverlay.delete(postId);
         this.clearFactCheckTooltipListeners(postId);

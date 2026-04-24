@@ -126,4 +126,37 @@ describe('XOverlayRenderer UI', () => {
     const largeBadge = largeNode.querySelector('[style*="position: absolute"]') as HTMLElement;
     expect(parseFloat(largeBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
   });
+
+  it('shows a processing hover tooltip with live elapsed time while scanning', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+    try {
+      const postNode = document.createElement('article');
+      postNode.style.position = 'relative';
+      document.body.appendChild(postNode);
+
+      const adapter = createAdapter();
+      const renderer = new XOverlayRenderer(adapter, {
+        ...defaultUserSettings.settings,
+        uiMode: 'simple',
+      });
+
+      renderer.renderPending('x-processing-1', postNode, 'Processing text');
+
+      const badge = postNode.querySelector('[style*="position: absolute"]') as HTMLElement;
+      expect(badge?.textContent).toBe('Scanning...');
+
+      badge.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      let elapsedLine = document.body.querySelector('[data-slopmop-processing-elapsed]') as HTMLElement | null;
+      expect(elapsedLine).not.toBeNull();
+      expect(elapsedLine?.textContent).toBe('Elapsed: 0.0s');
+
+      vi.advanceTimersByTime(1800);
+      elapsedLine = document.body.querySelector('[data-slopmop-processing-elapsed]') as HTMLElement | null;
+      expect(elapsedLine?.textContent).toBe('Elapsed: 1.8s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
