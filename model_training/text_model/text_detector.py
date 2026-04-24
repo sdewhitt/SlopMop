@@ -403,7 +403,7 @@ class TextDetectors:
       satire_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "satire_detector"))
       if satire_dir not in sys.path:
         sys.path.insert(0, satire_dir)
-      from satire_detector import extract_satire_keywords_post_then_comments  # type: ignore[import-untyped]
+      from satire_comment_heuristics import extract_satire_keywords_post_then_comments  # type: ignore[import-untyped]
 
       self._satire_heuristic_scan_fn = extract_satire_keywords_post_then_comments
     except Exception as e:

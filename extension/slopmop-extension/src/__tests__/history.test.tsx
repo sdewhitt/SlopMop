@@ -67,6 +67,7 @@ import { computePostContentFingerprint } from '@src/utils/postContentFingerprint
 import HistoryPage from '@src/pages/options/HistoryPage';
 
 const HOUR_MS = 60 * 60 * 1000;
+const TEST_UID = 'test-user-123';
 
 /** Minimal valid HistoryEntry with optional overrides. */
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -106,9 +107,9 @@ describe('History Storage', () => {
       'coolauthor',
       'fp-cool',
     );
-    await saveHistoryEntry(entry);
+    await saveHistoryEntry(TEST_UID, entry);
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     const saved = history.find((e) => e.postId === 'post-abc');
 
     expect(saved).toBeDefined();
@@ -133,6 +134,7 @@ describe('History Storage', () => {
 
   it('duplicate detection updates existing entry rather than creating a new one', async () => {
     await saveHistoryEntry(
+      TEST_UID,
       makeEntry({
         postId: 'dup-post',
         confidence: 0.5,
@@ -150,6 +152,7 @@ describe('History Storage', () => {
       }),
     );
     await saveHistoryEntry(
+      TEST_UID,
       makeEntry({
         postId: 'dup-post',
         confidence: 0.92,
@@ -159,7 +162,7 @@ describe('History Storage', () => {
       }),
     );
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     const entries = history.filter((e) => e.postId === 'dup-post');
 
     expect(entries).toHaveLength(1);
@@ -366,21 +369,57 @@ describe('Privacy Compliance', () => {
     // Replicate the maybeSaveToHistory guard from the background script
     const tab = await browser.tabs.get(1);
     if (!tab.incognito) {
-      await saveHistoryEntry(makeEntry({ postId: 'incognito-post' }));
+      await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'incognito-post' }));
     }
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     expect(history.find((e) => e.postId === 'incognito-post')).toBeUndefined();
   });
 
   it('"Clear History" removes all entries from storage', async () => {
-    await saveHistoryEntry(makeEntry({ postId: 'post-a', pinned: false }));
-    await saveHistoryEntry(makeEntry({ postId: 'post-b', pinned: false }));
-    await saveHistoryEntry(makeEntry({ postId: 'post-c', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-a', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-b', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-c', pinned: false }));
 
-    await clearHistory();
-    const history = await getHistory();
+    await clearHistory(TEST_UID);
+    const history = await getHistory(TEST_UID);
 
     expect(history).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// History UID Namespacing
+// ─────────────────────────────────────────────────────────────────
+
+describe('History UID Namespacing', () => {
+  beforeEach(() => {
+    store = {};
+    vi.clearAllMocks();
+  });
+
+  it('uses detectionHistory:<uid> storage key, not bare detectionHistory', async () => {
+    await saveHistoryEntry(TEST_UID, makeEntry());
+
+    // Namespaced key must exist with the entry
+    expect(store[`${HISTORY_KEY}:${TEST_UID}`]).toBeDefined();
+    expect((store[`${HISTORY_KEY}:${TEST_UID}`] as unknown[]).length).toBe(1);
+
+    // Bare un-namespaced key must NOT exist
+    expect(store[HISTORY_KEY]).toBeUndefined();
+  });
+
+  it('getHistory for account A returns empty when only account B has entries', async () => {
+    const UID_A = 'account-a-uid';
+    const UID_B = 'account-b-uid';
+
+    await saveHistoryEntry(UID_B, makeEntry({ postId: 'b-post-1' }));
+    await saveHistoryEntry(UID_B, makeEntry({ postId: 'b-post-2' }));
+
+    const historyA = await getHistory(UID_A);
+    expect(historyA).toHaveLength(0);
+
+    const historyB = await getHistory(UID_B);
+    expect(historyB).toHaveLength(2);
   });
 });

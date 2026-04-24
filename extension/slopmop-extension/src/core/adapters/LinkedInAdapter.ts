@@ -141,19 +141,19 @@ export class LinkedInAdapter implements SiteAdapter {
   }
 
   getTextNode(postNode: Element): HTMLElement | null {
+    // LinkedIn truncates long posts with "… Read More" / "… See more". The full text lives
+    // in div.feed-shared-inline-show-more-text (or similar); CSS hides overflow. Prefer
+    // that container before the expandable box so innerText matches the analyzed body.
+    const showMore = postNode.querySelector<HTMLElement>(
+      '[class*="feed-shared-inline-show-more-text"]:not(button)',
+    );
+    if (showMore) return showMore;
+
     // Current feed exposes main copy on this node (obfuscated classes elsewhere).
     const expandable = postNode.querySelector<HTMLElement>(
       '[data-testid="expandable-text-box"]',
     );
     if (expandable) return expandable;
-
-    // LinkedIn truncates long posts with "… Read More" / "… See more". The full text lives
-    // in div.feed-shared-inline-show-more-text (or similar); CSS hides overflow. Prefer
-    // that container so we analyze the full post, not just the preview.
-    const showMore = postNode.querySelector<HTMLElement>(
-      '[class*="feed-shared-inline-show-more-text"]:not(button)',
-    );
-    if (showMore) return showMore;
 
     // Fallback: main post body via span[dir="auto"], div[data-urn], etc.
     return (

@@ -44,11 +44,17 @@ export interface DetectionSettings {
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
   badgeSize: 'small' | 'medium' | 'large';
+  badgePosition: 'top_right' | 'top_left' | 'bottom_right';
   detectionTheme: 'default' | 'high_contrast' | 'minimal';
   accessibilityMode: boolean;
   highlightSegments: boolean;
   /** Show Fact check next to Detect Now on posts (manual / eligible feeds). */
   factCheck: boolean;
+  /**
+   * When on, detection hover tooltips include server-reported Detect / Fact-check milliseconds
+   * (when available). Off keeps the default tooltip (model line + client round-trip ms).
+   */
+  powerUserTiming: boolean;
   /**
    * Manual power-saving: when on, automatic scanning is forced off and the Automatic Scanning
    * toggle is disabled until you turn this off. The extension does not overwrite this when it
@@ -73,6 +79,8 @@ export interface DetectionStats {
   postsScanned: number;
   aiDetected: number;
   postsProcessing: number;
+  /** Detection count keyed by platform hostname, e.g. { "reddit.com": 12 }. */
+  platformCounts: Record<string, number>;
 }
 
 /** Root document shape stored at `users/{uid}` in Firestore. */
@@ -111,10 +119,12 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanComments: 'auto_top_n',
     uiMode: 'simple',
     badgeSize: 'medium',
+    badgePosition: 'top_right',
     detectionTheme: 'default',
     accessibilityMode: false,
     highlightSegments: true,
     factCheck: true,
+    powerUserTiming: false,
     lowBatteryMode: false,
     lowBatteryModeAutoWhenBatteryLow: false,
     detectionLanguages: ['eng', 'spa', 'fra'],
@@ -123,6 +133,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     postsScanned: 0,
     aiDetected: 0,
     postsProcessing: 0,
+    platformCounts: {},
   },
 };
 

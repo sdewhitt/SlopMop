@@ -37,6 +37,12 @@ const THEME_LABELS: Record<Settings['detectionTheme'], string> = {
   minimal: 'Minimal',
 };
 
+const POSITION_LABELS: Record<Settings['badgePosition'], string> = {
+  top_right: 'Top-right',
+  top_left: 'Top-left',
+  bottom_right: 'Bottom-right',
+};
+
 export default function DetectionSettings({
   settings,
   onUpdateSetting,
@@ -48,20 +54,33 @@ export default function DetectionSettings({
   return (
     <section>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Detection</p>
-      <div className="bg-white dark:bg-gray-800 rounded-lg px-3 space-y-0 divide-y divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-transparent">
-        <Toggle
-          checked={settings.showNotifications}
-          onChange={(v) => onUpdateSetting('showNotifications', v)}
-          label="Show Notifications"
-          description="Alert when AI content is detected"
-        />
-        <Toggle
-          checked={settings.scanText}
-          onChange={(v) => onUpdateSetting('scanText', v)}
-          label="Scan Text"
-          description="Analyze text content in posts"
-        />
-        <div className="py-2.5">
+      <div className="bg-white dark:bg-gray-800 rounded-lg px-3 border border-gray-200 dark:border-transparent overflow-hidden">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 first:border-t-0"
+          data-search="notifications notify alerts banner toast"
+        >
+          <Toggle
+            checked={settings.showNotifications}
+            onChange={(v) => onUpdateSetting('showNotifications', v)}
+            label="Show Notifications"
+            description="Alert when AI content is detected"
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="scan text posts content body"
+        >
+          <Toggle
+            checked={settings.scanText}
+            onChange={(v) => onUpdateSetting('scanText', v)}
+            label="Scan Text"
+            description="Analyze text content in posts"
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="language languages english spanish french eng spa fra locale multilingual"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">Text detection languages</p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
             Only run text detection for checked languages (auto-detected). Uncheck all to skip text detection.
@@ -88,20 +107,33 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <Toggle
-          checked={settings.scanImages}
-          onChange={(v) => onUpdateSetting('scanImages', v)}
-          label="Scan Images"
-          description="Analyze images in posts (coming soon)"
-        />
-        <Toggle
-          checked={effectiveLowBattery}
-          disabled={batteryAutoLowBatteryActive && !settings.lowBatteryMode}
-          onChange={(v) => onUpdateSetting('lowBatteryMode', v)}
-          label="Low battery mode"
-          description="Manual power saving: turns off automatic scanning until you turn this off. Separate from automatic pause when the battery is low (see banner below)."
-        />
-        <div className="px-3 py-2 -mt-1 border-b border-gray-200 dark:border-gray-700">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="scan images picture photo vision multimodal"
+        >
+          <Toggle
+            checked={settings.scanImages}
+            onChange={(v) => onUpdateSetting('scanImages', v)}
+            label="Scan Images"
+            description="Analyze images in posts (coming soon)"
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="low battery power saving manual charge unplugged"
+        >
+          <Toggle
+            checked={effectiveLowBattery}
+            disabled={batteryAutoLowBatteryActive && !settings.lowBatteryMode}
+            onChange={(v) => onUpdateSetting('lowBatteryMode', v)}
+            label="Low battery mode"
+            description="Manual power saving: turns off automatic scanning until you turn this off. Separate from automatic pause when the battery is low (see banner below)."
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 px-3 py-2 -mx-3"
+          data-search="battery automatic low threshold pause resume plug charge"
+        >
           <label className="flex items-start gap-2 cursor-pointer text-sm text-gray-800 dark:text-gray-200">
             <input
               type="checkbox"
@@ -124,16 +156,22 @@ export default function DetectionSettings({
             </p>
           )}
         </div>
-        <Toggle
-          checked={effectiveLowBattery ? false : settings.automaticScanning}
-          disabled={effectiveLowBattery}
-          onChange={(v) => onUpdateSetting('automaticScanning', v)}
-          label="Automatic Scanning"
-          description="When off, posts show a Detect Now button"
-        />
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="automatic scanning manual detect now feed posts queue"
+        >
+          <Toggle
+            checked={effectiveLowBattery ? false : settings.automaticScanning}
+            disabled={effectiveLowBattery}
+            onChange={(v) => onUpdateSetting('automaticScanning', v)}
+            label="Automatic Scanning"
+            description="When off, posts show a Detect Now button"
+          />
+        </div>
         {batteryThrottleActive && settings.automaticScanning && !effectiveLowBattery && (
           <div
-            className="px-3 py-2.5 bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200/80 dark:border-amber-600/40"
+            className="settings-search-block px-3 py-2.5 -mx-3 bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200/80 dark:border-amber-600/40"
+            data-search="power saving battery pause charging unplugged low automatic detection"
             role="status"
             aria-live="polite"
           >
@@ -154,18 +192,38 @@ export default function DetectionSettings({
             </div>
           </div>
         )}
-        <Toggle
-          checked={settings.factCheck}
-          onChange={(v) => onUpdateSetting('factCheck', v)}
-          label="Show Fact check"
-          description="When on, Fact check appears beside Detect Now on posts (uses your API)"
-        />
-        <div className="py-2.5">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="fact check claim review verify wikipedia sources backend"
+        >
+          <Toggle
+            checked={settings.factCheck}
+            onChange={(v) => onUpdateSetting('factCheck', v)}
+            label="Show Fact check"
+            description="When on, Fact check appears beside Detect Now on posts (uses your API)"
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="power user timing milliseconds detect fact check server latency"
+        >
+          <Toggle
+            checked={settings.powerUserTiming}
+            onChange={(v) => onUpdateSetting('powerUserTiming', v)}
+            label="Power user timing"
+            description="Show server Detect / Fact-check milliseconds in detection tooltips when available"
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="comments replies scanning manual auto"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Comment Scanning</p>
           <div className="flex gap-1.5">
             {(['off', 'user_triggered', 'auto_top_n'] as const).map((mode) => (
               <button
                 key={mode}
+                type="button"
                 onClick={() => onUpdateSetting('scanComments', mode)}
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   settings.scanComments === mode
@@ -178,7 +236,10 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <div className="py-2.5">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="badge size indicator zoom readability"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Badge Size</p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
             Controls the in-page indicator size across supported platforms.
@@ -187,6 +248,7 @@ export default function DetectionSettings({
             {(['small', 'medium', 'large'] as const).map((size) => (
               <button
                 key={size}
+                type="button"
                 onClick={() => onUpdateSetting('badgeSize', size)}
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   settings.badgeSize === size
@@ -199,7 +261,35 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <div className="py-2.5">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="badge position corner top bottom left right placement indicator"
+        >
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Badge Position</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Choose where detection badges appear on posts.
+          </p>
+          <div className="flex gap-1.5">
+            {(['top_right', 'top_left', 'bottom_right'] as const).map((pos) => (
+              <button
+                key={pos}
+                type="button"
+                onClick={() => onUpdateSetting('badgePosition', pos)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  settings.badgePosition === pos
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200'
+                }`}
+              >
+                {POSITION_LABELS[pos]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="indicator theme appearance color style default minimal contrast dark light"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Indicator Theme</p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
             Choose how detection indicators are colored.
@@ -208,6 +298,7 @@ export default function DetectionSettings({
             {(['default', 'high_contrast', 'minimal'] as const).map((theme) => (
               <button
                 key={theme}
+                type="button"
                 onClick={() => onUpdateSetting('detectionTheme', theme)}
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   settings.detectionTheme === theme
@@ -220,12 +311,16 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <div className="py-2.5">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="sensitivity threshold false positive strict lenient low medium high"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Sensitivity</p>
           <div className="flex gap-1.5">
             {(['low', 'medium', 'high'] as const).map((level) => (
               <button
                 key={level}
+                type="button"
                 onClick={() => onUpdateSetting('sensitivity', level)}
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                   settings.sensitivity === level
@@ -238,12 +333,16 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <div className="py-2.5">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="highlight style border dim underline mark flagged overlay"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Highlight Style</p>
           <div className="flex gap-1.5">
             {(['badge', 'border', 'dim'] as const).map((style) => (
               <button
                 key={style}
+                type="button"
                 onClick={() => onUpdateSetting('highlightStyle', style)}
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                   settings.highlightStyle === style
@@ -256,18 +355,27 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <Toggle
-          checked={settings.highlightSegments}
-          onChange={(v) => onUpdateSetting('highlightSegments', v)}
-          label="Highlight segments that triggered detection"
-          description="Show which parts of the text contributed most to the AI score"
-        />
-        <div className="py-2.5">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700"
+          data-search="highlight segments explain attribution score text span"
+        >
+          <Toggle
+            checked={settings.highlightSegments}
+            onChange={(v) => onUpdateSetting('highlightSegments', v)}
+            label="Highlight segments that triggered detection"
+            description="Show which parts of the text contributed most to the AI score"
+          />
+        </div>
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="detail mode simple detailed ui layout"
+        >
           <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1.5">Detail Mode</p>
           <div className="flex gap-1.5">
             {(['simple', 'detailed'] as const).map((mode) => (
               <button
                 key={mode}
+                type="button"
                 onClick={() => onUpdateSetting('uiMode', mode)}
                 className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                   settings.uiMode === mode
@@ -280,7 +388,10 @@ export default function DetectionSettings({
             ))}
           </div>
         </div>
-        <div className="py-2.5 border-t border-gray-200 dark:border-gray-700">
+        <div
+          className="settings-search-block border-t border-gray-200 dark:border-gray-700 py-2.5"
+          data-search="appearance dark light theme system color scheme"
+        >
           <ThemeToggle embedded />
         </div>
       </div>

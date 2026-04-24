@@ -25,6 +25,14 @@ import type {
 
 export const HISTORY_KEY = 'detectionHistory';
 
+/**
+ * Returns the namespaced storage key for a specific user.
+ * Each user's history is isolated under 'detectionHistory:<uid>'.
+ */
+export function historyKey(uid: string): string {
+  return `${HISTORY_KEY}:${uid}`;
+}
+
 /** Maximum number of entries retained after pruning (safety cap). */
 const MAX_HISTORY_ENTRIES = 1000;
 
@@ -88,14 +96,17 @@ export function pruneHistory(entries: HistoryEntry[]): HistoryEntry[] {
  * Reads the history from local storage, prunes expired entries, and
  * returns the live list. The pruned list is written back only when
  * entries were actually removed, avoiding unnecessary writes.
+ *
+ * @param uid - The logged-in user's UID. History is isolated per account.
  */
-export async function getHistory(): Promise<HistoryEntry[]> {
-  const result = await browser.storage.local.get(HISTORY_KEY);
-  const raw = (result[HISTORY_KEY] as HistoryEntry[] | undefined) ?? [];
+export async function getHistory(uid: string): Promise<HistoryEntry[]> {
+  const key = historyKey(uid);
+  const result = await browser.storage.local.get(key);
+  const raw = (result[key] as HistoryEntry[] | undefined) ?? [];
   const pruned = pruneHistory(raw);
 
   if (pruned.length !== raw.length) {
-    await browser.storage.local.set({ [HISTORY_KEY]: pruned });
+    await browser.storage.local.set({ [key]: pruned });
   }
 
   return pruned;
@@ -105,27 +116,29 @@ export async function getHistory(): Promise<HistoryEntry[]> {
  * Overwrites the stored history with the provided array.
  * Pruning and the MAX_HISTORY_ENTRIES cap are applied before writing.
  */
-async function setHistory(entries: HistoryEntry[]): Promise<void> {
+async function setHistory(uid: string, entries: HistoryEntry[]): Promise<void> {
   const pruned = pruneHistory(entries);
   const capped = pruned.slice(-MAX_HISTORY_ENTRIES);
-  await browser.storage.local.set({ [HISTORY_KEY]: capped });
+  await browser.storage.local.set({ [historyKey(uid)]: capped });
 }
 
 // ── Public API ────────────────────────────────────────────────────
 
 /**
- * Saves a detection result to history.
+ * Saves a detection result to history, namespaced by the user's UID.
  *
  * If an entry with the same postId already exists it is updated in place
  * (confidence, verdict, snippet, and savedAtMs are refreshed) rather than
  * creating a duplicate.
  *
+ * @param uid   - The logged-in user's UID.
  * @param entry - The entry to save. `pinned` defaults to false if omitted.
  */
 export async function saveHistoryEntry(
+  uid: string,
   entry: Omit<HistoryEntry, 'pinned'> & { pinned?: boolean },
 ): Promise<void> {
-  const current = await getHistory();
+  const current = await getHistory(uid);
   const normalizedEntry: HistoryEntry = { pinned: false, ...entry };
 
   const existingIndex = current.findIndex((e) => e.postId === entry.postId);
@@ -167,29 +180,34 @@ export async function saveHistoryEntry(
     current.push(normalizedEntry);
   }
 
-  await setHistory(current);
+  await setHistory(uid, current);
 }
 
 /**
- * Removes all unpinned history entries.
+ * Removes all unpinned history entries for the given user.
  * Pinned entries are preserved and must be unpinned explicitly before deletion.
+ *
+ * @param uid - The logged-in user's UID.
  */
-export async function clearHistory(): Promise<void> {
-  const current = await getHistory();
+export async function clearHistory(uid: string): Promise<void> {
+  const current = await getHistory(uid);
   const pinned = current.filter((e) => e.pinned);
-  await browser.storage.local.set({ [HISTORY_KEY]: pinned });
+  await browser.storage.local.set({ [historyKey(uid)]: pinned });
 }
 
 /**
  * Toggles the pinned state of the entry with the given postId.
  * No-op if the postId is not found.
+ *
+ * @param uid    - The logged-in user's UID.
+ * @param postId - The post to pin/unpin.
  */
-export async function togglePin(postId: PostId): Promise<void> {
-  const current = await getHistory();
+export async function togglePin(uid: string, postId: PostId): Promise<void> {
+  const current = await getHistory(uid);
   const index = current.findIndex((e) => e.postId === postId);
   if (index === -1) return;
   current[index] = { ...current[index], pinned: !current[index].pinned };
-  await setHistory(current);
+  await setHistory(uid, current);
 }
 
 /**

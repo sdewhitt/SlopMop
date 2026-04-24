@@ -81,7 +81,7 @@ describe('Reddit extraction pipeline', () => {
       url: 'https://www.reddit.com/r/test/comments/abc123/title/',
       contentType: ContentType.TEXT,
       text: {
-        plain: 'First line\n\nsecond line',
+        plain: 'First line second line',
         languageHint: '',
       },
       images: [],
@@ -304,6 +304,37 @@ describe('Reddit extraction pipeline', () => {
 
     const badge = postNode.lastElementChild as HTMLElement;
     expect(badge.style.backgroundColor).toBe('rgb(255, 31, 31)');
+  });
+
+  it('positions badges according to selected corner', () => {
+    const topLeftHost = document.createElement('article');
+    const bottomRightHost = document.createElement('article');
+    document.body.append(topLeftHost, bottomRightHost);
+
+    const topLeftRenderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      badgePosition: 'top_left',
+    });
+    const bottomRightRenderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      badgePosition: 'bottom_right',
+    });
+
+    topLeftRenderer.renderPending('t3_pos_left', topLeftHost, 'left');
+    bottomRightRenderer.renderPending('t3_pos_bottom', bottomRightHost, 'bottom');
+
+    const topLeftBadge = topLeftHost.lastElementChild as HTMLElement;
+    const bottomRightBadge = bottomRightHost.lastElementChild as HTMLElement;
+
+    expect(topLeftBadge.style.top).toBe('8px');
+    expect(topLeftBadge.style.left).toBe('8px');
+    expect(topLeftBadge.style.right).toBe('');
+    expect(topLeftBadge.style.bottom).toBe('');
+
+    expect(bottomRightBadge.style.bottom).toBe('8px');
+    expect(bottomRightBadge.style.right).toBe('8px');
+    expect(bottomRightBadge.style.left).toBe('');
+    expect(bottomRightBadge.style.top).toBe('');
   });
 
   it('renders dual text + image results on the badge for mixed posts', () => {

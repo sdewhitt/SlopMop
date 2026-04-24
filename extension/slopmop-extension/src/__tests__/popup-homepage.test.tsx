@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act, within } from '@testing-library/react';
+import { render, screen, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import browser from 'webextension-polyfill';
 
@@ -89,12 +89,19 @@ import React from 'react';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+const TEST_UID = 'test-uid';
+
+/** Base storage values shared by all signed-in renders. */
+const BASE_STORAGE = {
+  slopmopUser: { uid: TEST_UID, email: 'test@example.com' },
+  // Mark onboarding as already seen so the modal doesn't overlay the popup UI.
+  onboardingSeenByUser: { [TEST_UID]: true },
+};
+
 /** Render Popup signed in with default (empty) storage. */
 function renderHome() {
   // Return slopmopUser from storage.local.get to simulate signed-in
-  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
-    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
-  });
+  (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...BASE_STORAGE });
 
   const result = render(
     <ThemeProvider>
@@ -110,7 +117,7 @@ function renderHome() {
 function renderHomeWithStorage(storageValues: Record<string, unknown>) {
   // Merge slopmopUser with custom storage values
   (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
-    slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
+    ...BASE_STORAGE,
     ...storageValues,
   });
   const result = render(
@@ -129,10 +136,8 @@ describe('Popup Homepage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storageChangedCallbacks = [];
-    // Default: signed-in user for most tests
-    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({
-      slopmopUser: { uid: 'test-uid', email: 'test@example.com' },
-    });
+    // Default: signed-in user for most tests (onboarding already seen)
+    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...BASE_STORAGE });
     // Re-capture storage listener
     (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
       (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
@@ -280,15 +285,17 @@ describe('Popup Homepage', () => {
         factCheck: true,
         detectionLanguages: ['eng', 'spa', 'fra'],
       },
-      stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 3 },
+      stats: { postsScanned: 42, aiDetected: 7, postsProcessing: 0 },
       ignoredSites: [],
     });
-    renderHomeWithStorage({ postsProcessing: 3 });
+    renderHome();
 
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(await screen.findByText('42')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
-    expect(screen.getByText('3')).toBeInTheDocument();
+    // postsProcessing is always reset to 0 on load (in-flight scans don't survive reloads)
+    const zeroes = screen.getAllByText('0');
+    expect(zeroes.length).toBeGreaterThanOrEqual(1);
   });
 
   it('should update scanner stats when local storage changes', async () => {
@@ -297,13 +304,14 @@ describe('Popup Homepage', () => {
     expect(await screen.findByText('SlopMop')).toBeInTheDocument();
     expect(storageChangedCallbacks.length).toBeGreaterThan(0);
 
+    // Stats are namespaced by UID — listeners watch `postsScanned:${uid}` keys.
     await act(async () => {
       for (const callback of storageChangedCallbacks) {
         callback(
           {
-            postsScanned: { newValue: 5 },
-            aiDetected: { newValue: 2 },
-            postsProcessing: { newValue: 1 },
+            [`postsScanned:${TEST_UID}`]: { newValue: 5 },
+            [`aiDetected:${TEST_UID}`]: { newValue: 2 },
+            [`postsProcessing:${TEST_UID}`]: { newValue: 1 },
           },
           'local',
         );
@@ -379,5 +387,73 @@ describe('Popup Homepage', () => {
     // Settings header appears, home-specific elements disappear
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.queryByText('Pause Detection')).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Auth State Transitions
+// ─────────────────────────────────────────────────────────────────
+
+describe('Auth State Transitions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storageChangedCallbacks = [];
+    (browser.storage.local.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...BASE_STORAGE });
+    (browser.storage.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+        storageChangedCallbacks.push(cb);
+      },
+    );
+    (browser.storage.onChanged.removeListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (cb: (changes: Record<string, unknown>, areaName?: string) => void) => {
+        storageChangedCallbacks = storageChangedCallbacks.filter((l) => l !== cb);
+      },
+    );
+  });
+
+  it('logging out clears the popup back to the sign-in view', async () => {
+    renderHome();
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    // Confirm we're on the home view (not already on sign-in)
+    expect(screen.queryByText('Sign in to continue')).not.toBeInTheDocument();
+
+    // Simulate the background clearing slopmopUser on logout
+    act(() => {
+      storageChangedCallbacks.forEach((cb) =>
+        cb({ slopmopUser: { newValue: undefined } }, 'local'),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sign in to continue')).toBeInTheDocument();
+    });
+  });
+
+  it('account-specific simpleMode preference is applied on login', async () => {
+    const user = userEvent.setup();
+
+    // Existing account: simpleMode=true stored under both the flat key (read by
+    // initial effect) and the namespaced key (read by loadSettings).
+    renderHomeWithStorage({
+      simpleMode: true,
+      [`simpleMode:${TEST_UID}`]: true,
+    });
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Settings'));
+    await waitFor(() => {
+      expect(screen.getByText('Simple mode is on')).toBeInTheDocument();
+    });
+  });
+
+  it('new account falls back to simpleMode=false default when no preference is stored', async () => {
+    const user = userEvent.setup();
+
+    // New account: no simpleMode key → defaults to false → advanced settings visible
+    renderHomeWithStorage({});
+    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Settings'));
+    await waitFor(() => {
+      expect(screen.queryByText('Simple mode is on')).not.toBeInTheDocument();
+    });
   });
 });

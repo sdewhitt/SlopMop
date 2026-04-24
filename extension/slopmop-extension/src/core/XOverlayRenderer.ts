@@ -13,7 +13,7 @@ export class XOverlayRenderer extends OverlayRenderer {
   }
 
   protected override getBadgePosition(): Record<string, string> {
-    return { top: "6px", right: "88px" };
+    return this.resolveBadgePosition({ top: "6px", right: "88px" });
   }
 
   protected override getPendingBadgeContainerStyle(isSimple: boolean): Record<string, string> {

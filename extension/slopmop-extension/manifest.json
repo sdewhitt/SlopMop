@@ -4,10 +4,10 @@
   "description": "Browser extension to detect AI-generated content in social media feeds.",
   "incognito": "spanning",
   "options_ui": {
-    "page": "src/pages/options/index.html"
+    "page": "src/pages/options/index.html",
+    "open_in_tab": true
   },
   "action": {
-    "default_popup": "src/pages/popup/index.html",
     "default_icon": {
       "32": "icon-32.png"
     }
@@ -18,11 +18,15 @@
   "permissions": [
     "activeTab",
     "tabs",
+    "scripting",
     "storage",
     "identity",
+    "alarms",
     "offscreen"
   ],
   "host_permissions": [
+    "https://pkrmvpzmnk.us-east-2.awsapprunner.com/*",
+    "http://127.0.0.1:8000/*",
     "https://i.redd.it/*",
     "https://preview.redd.it/*",
     "https://external-preview.redd.it/*",
