@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OverlayRenderer } from '../core/OverlayRenderer';
 import type { DetectionResponse } from '../types/domain';
+import { modelPreprocessText } from '../utils/modelPreprocessText';
 import { defaultUserSettings } from '../utils/userSettings';
 
 function mockInnerText(el: HTMLElement, value: string): void {
@@ -50,13 +51,14 @@ function setupPendingHighlightCase(
     uiMode: 'simple',
   });
 
-  renderer.renderPending(postId, host, plain, () => {}, textBody);
+  renderer.renderPending(postId, host, modelPreprocessText(plain), () => {}, textBody);
 
   const detectSurface = host.querySelector('[data-slopmop-overlay="1"]') as HTMLElement;
   expect(detectSurface).not.toBeNull();
   return { renderer, detectSurface };
 }
 
+/** In-post highlights run through prepareHighlightSpans (word snap + single-space bridge) before innerHTML or rich DOM. */
 describe('OverlayRenderer + highlightedSpans', () => {
   const postId = 'post-highlight-1';
 
@@ -68,7 +70,7 @@ describe('OverlayRenderer + highlightedSpans', () => {
     document.body.innerHTML = '';
   });
 
-  it('innerHTML path: wraps exact range in post body and keeps verdict text on detect badge', () => {
+  it('innerHTML path: full-word range unchanged; verdict text on detect badge', () => {
     const plain = 'Hello world today.';
     const host = document.createElement('div');
     const textBody = document.createElement('div');
@@ -88,7 +90,7 @@ describe('OverlayRenderer + highlightedSpans', () => {
     expect(detectSurface.textContent).not.toContain('Detect Now');
   });
 
-  it('rich DOM path (<a> in body): highlight targets correct range; verdict badge unchanged', () => {
+  it('rich DOM path (<a> in body): full-word span wraps link text; verdict badge unchanged', () => {
     const plain = 'Hello world today.';
     const host = document.createElement('div');
     const textBody = document.createElement('div');
@@ -149,6 +151,39 @@ describe('OverlayRenderer + highlightedSpans', () => {
     expect(mark).not.toBeNull();
     expect(mark?.textContent).toBe('world');
     expect(detectSurface.textContent).toContain('likely_ai');
+  });
+
+  it('partial-word span snaps to full word in innerHTML path', () => {
+    const plain = 'Hello world today.';
+    const host = document.createElement('div');
+    const textBody = document.createElement('div');
+    const pid = 'post-partial-word';
+    const { renderer } = setupPendingHighlightCase(pid, plain, textBody, host);
+
+    const res = makeResponse(pid, [{ start: 7, end: 10, score: 0.85 }]);
+    renderer.renderResult(pid, res);
+
+    const mark = textBody.querySelector('mark.slopmop-highlight');
+    expect(mark).not.toBeNull();
+    expect(mark?.textContent).toBe('world');
+  });
+
+  it('two adjacent words with one space between become one continuous highlight', () => {
+    const plain = 'Hello world today.';
+    const host = document.createElement('div');
+    const textBody = document.createElement('div');
+    const pid = 'post-bridge-space';
+    const { renderer } = setupPendingHighlightCase(pid, plain, textBody, host);
+
+    const res = makeResponse(pid, [
+      { start: 6, end: 11, score: 0.9 },
+      { start: 12, end: 17, score: 0.7 },
+    ]);
+    renderer.renderResult(pid, res);
+
+    const marks = textBody.querySelectorAll('mark.slopmop-highlight');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.textContent).toBe('world today');
   });
 
   it('only invalid spans: no marks; no throw', () => {

@@ -19,7 +19,7 @@ export interface NormalizedPostContent {
     postId: PostId;
     url: string;
     capturedAtMs: number;
-    contentType: ContentType;
+    contentType: ContentType | string;
     text: {
       plain: string;
       languageHint: string;
@@ -34,6 +34,7 @@ export interface NormalizedPostContent {
     domContext: {
       authorHandle: string;
       timestampText: string;
+      subreddit?: string;
     };
     // visible comment bodies under this post (feed analysis) — sent to /detect for satire heuristics on the main score.
     commentTexts?: string[];
@@ -76,6 +77,8 @@ export interface ImageDetectionResult {
     summary: string;
     model: { name: string; version: string };
     timingMs: number;
+    /** When present, `/detect-image` wall-clock detect span (ms). */
+    serverDetectMs?: number;
   mediaType?: MediaType;
 }
 
@@ -84,6 +87,8 @@ export interface DetectionResponse {
     postId: PostId;
     verdict: Verdict;
     confidence: number;
+    // false for preliminary updates that should not stop timeout/finalization handling.
+    isFinal?: boolean;
   detectionSource?: "text" | MediaType;
     explanation: {
         summary: string;
@@ -104,7 +109,12 @@ export interface DetectionResponse {
         timing: {
             totalMs: number;
             inferenceMs: number;
-        }
+        };
+        /** Backend wall-clock timings from `/detect` (or `/detect-image` when text-only path is image). */
+        serverTiming?: {
+            detectMs?: number;
+            totalServerMs?: number;
+        };
     };
     imageResult?: ImageDetectionResult;
 }
@@ -154,11 +164,53 @@ export interface FactCheckItem {
     url: string;
 }
 
+/**
+ * Satire signal used to *downrank* or *soften* fact-check / misinformation UX.
+ * This should never hard-block results; treat as a probabilistic hint.
+ */
+export type SatireLabel = 'satire' | 'non_satire' | 'unknown';
+export type SatireSignalSource = 'model' | 'heuristic' | 'none' | 'unknown';
+
+export interface SatireSignal {
+  /** Probability in [0, 1] that the text is satire/parody. */
+  score: number;
+  /** Discrete label derived from `score` (and/or model output). */
+  label: SatireLabel;
+  /** Where this signal came from (neural model vs keyword / crowd heuristic). */
+  source: SatireSignalSource;
+  /** Optional: which markers contributed (e.g., "/s", "satire"). */
+  markers?: string[];
+  /** Optional: short explanation for UI/debugging. */
+  explanation?: string;
+  /** Optional: model descriptor when source is `model`. */
+  model?: { name: string; version: string };
+  /** Milliseconds since epoch when computed. */
+  computedAtMs: number;
+}
+
+/**
+ * Fact-check result envelope stored in `browser.storage.local.lastFactCheckResult`
+ * and optionally pushed over the message bus to the active tab.
+ */
+export interface FactCheckResultPayload {
+  postId: PostId;
+  items: FactCheckItem[];
+  /** Optional satire context to reduce false positives in UX. */
+  satire?: SatireSignal;
+  /** Optional: stable text-only fingerprint used for caching/replay debugging. */
+  contentFingerprint?: string;
+  /** Optional: platform hostname used for caching/debug. */
+  site?: SiteId;
+  updatedAtMs?: number;
+  /** Wall-clock `/fact-check` handler time when returned from the network (not cached). */
+  factCheckMs?: number;
+}
+
 // similar idea, but from background script to content script
 export type BackgroundToContentMessage =
     | { type: "DETECTION_RESULT"; payload: DetectionResponse }
     | { type: "DETECTION_ERROR"; payload: { postId: PostId; message: string } }
     | { type: "DETECTION_LANGUAGE_UNSUPPORTED"; payload: DetectionLanguageUnsupportedPayload }
-    | { type: "FACT_CHECK_RESULT"; payload: { postId: PostId; items: FactCheckItem[] } }
+    | { type: "FACT_CHECK_RESULT"; payload: FactCheckResultPayload }
     | { type: "FACT_CHECK_ERROR"; payload: { postId: PostId; message: string; code?: string } };
   

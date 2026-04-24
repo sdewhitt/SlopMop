@@ -57,12 +57,17 @@ import {
   saveHistoryEntry,
   clearHistory,
   buildHistoryEntry,
+  findMatchingHistoryEntry,
+  findMatchingHistoryByFingerprint,
+  normalizeAuthorHandle,
   HISTORY_KEY,
   type HistoryEntry,
 } from '@src/utils/detectionHistory';
+import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
 import HistoryPage from '@src/pages/options/HistoryPage';
 
 const HOUR_MS = 60 * 60 * 1000;
+const TEST_UID = 'test-user-123';
 
 /** Minimal valid HistoryEntry with optional overrides. */
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -71,6 +76,8 @@ function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     url: 'https://reddit.com/r/test/comments/abc123',
     platform: 'reddit.com',
     snippet: "In today's fast-paced world, AI is everywhere.",
+    authorHandle: 'someuser',
+    contentFingerprint: 'fp-default',
     confidence: 0.91,
     verdict: 'likely_ai',
     savedAtMs: Date.now(),
@@ -97,10 +104,12 @@ describe('History Storage', () => {
       'This is a long post with lots of content to save.',
       0.87,
       'likely_ai',
+      'coolauthor',
+      'fp-cool',
     );
-    await saveHistoryEntry(entry);
+    await saveHistoryEntry(TEST_UID, entry);
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     const saved = history.find((e) => e.postId === 'post-abc');
 
     expect(saved).toBeDefined();
@@ -110,6 +119,8 @@ describe('History Storage', () => {
     expect(saved!.snippet).toBeTruthy();                   // snippet
     expect(saved!.confidence).toBe(0.87);                  // confidence
     expect(saved!.verdict).toBe('likely_ai');              // verdict
+    expect(saved!.authorHandle).toBe('coolauthor');
+    expect(saved!.contentFingerprint).toBe('fp-cool');
   });
 
   it('auto-deletes entries older than 24 hours', () => {
@@ -122,15 +133,45 @@ describe('History Storage', () => {
   });
 
   it('duplicate detection updates existing entry rather than creating a new one', async () => {
-    await saveHistoryEntry(makeEntry({ postId: 'dup-post', confidence: 0.5,  verdict: 'unknown'   }));
-    await saveHistoryEntry(makeEntry({ postId: 'dup-post', confidence: 0.92, verdict: 'likely_ai' }));
+    await saveHistoryEntry(
+      TEST_UID,
+      makeEntry({
+        postId: 'dup-post',
+        confidence: 0.5,
+        verdict: 'unknown',
+        detectionSource: 'image',
+        textExplanationSummary: undefined,
+        imageResult: {
+          verdict: 'likely_ai',
+          confidence: 0.99,
+          mediaType: 'image',
+          summary: 'image says AI',
+          model: { name: 'test', version: '1' },
+          timingMs: 12,
+        },
+      }),
+    );
+    await saveHistoryEntry(
+      TEST_UID,
+      makeEntry({
+        postId: 'dup-post',
+        confidence: 0.92,
+        verdict: 'likely_ai',
+        detectionSource: 'text',
+        textExplanationSummary: 'Saved summary',
+      }),
+    );
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     const entries = history.filter((e) => e.postId === 'dup-post');
 
     expect(entries).toHaveLength(1);
     expect(entries[0].confidence).toBe(0.92);
     expect(entries[0].verdict).toBe('likely_ai');
+    expect(entries[0].detectionSource).toBe('text');
+    expect(entries[0].textExplanationSummary).toBe('Saved summary');
+    // should preserve previously-saved image result when not overwritten
+    expect(entries[0].imageResult).toBeDefined();
   });
 });
 
@@ -242,6 +283,76 @@ describe('History Page UI', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// History replay matching (author + snippet)
+// ─────────────────────────────────────────────────────────────────
+
+describe('History match for replay', () => {
+  it('normalizeAuthorHandle strips u/ and @ and lowercases', () => {
+    expect(normalizeAuthorHandle('u/Hello')).toBe('hello');
+    expect(normalizeAuthorHandle('@World')).toBe('world');
+    expect(normalizeAuthorHandle('  MixEd  ')).toBe('mixed');
+  });
+
+  it('findMatchingHistoryEntry returns the latest matching entry', () => {
+    const text = 'Hello world same content';
+    const snippet = text.trim().slice(0, 200);
+    const entries: HistoryEntry[] = [
+      makeEntry({
+        postId: 'older',
+        snippet,
+        authorHandle: 'user1',
+        savedAtMs: 100,
+        platform: 'reddit.com',
+      }),
+      makeEntry({
+        postId: 'newer',
+        snippet,
+        authorHandle: 'user1',
+        savedAtMs: 200,
+        platform: 'reddit.com',
+      }),
+    ];
+    const m = findMatchingHistoryEntry(entries, 'reddit.com', 'u/user1', text);
+    expect(m?.postId).toBe('newer');
+  });
+
+  it('findMatchingHistoryEntry returns null when platform differs', () => {
+    const text = 'Hello';
+    const entries: HistoryEntry[] = [makeEntry({ snippet: text, authorHandle: 'u1', platform: 'reddit.com' })];
+    expect(findMatchingHistoryEntry(entries, 'x.com', 'u1', text)).toBeNull();
+  });
+
+  it('findMatchingHistoryEntry returns null for legacy entries without authorHandle', () => {
+    const text = 'Hello';
+    const entries: HistoryEntry[] = [
+      { ...makeEntry(), authorHandle: undefined, snippet: text, postId: 'legacy' },
+    ];
+    expect(findMatchingHistoryEntry(entries, 'reddit.com', 'someuser', text)).toBeNull();
+  });
+
+  it('findMatchingHistoryByFingerprint returns the newest matching entry', () => {
+    const fp = 'same-fp';
+    const entries: HistoryEntry[] = [
+      makeEntry({ postId: 'a', contentFingerprint: fp, savedAtMs: 10 }),
+      makeEntry({ postId: 'b', contentFingerprint: fp, savedAtMs: 99 }),
+    ];
+    expect(findMatchingHistoryByFingerprint(entries, 'reddit.com', fp)?.postId).toBe('b');
+  });
+
+  it('computePostContentFingerprint is stable for same post shape', () => {
+    const post = {
+      site: 'reddit.com' as const,
+      text: { plain: '  hello world  ', languageHint: 'eng' },
+      images: [{ srcUrl: 'https://x/img.jpg', bytesBase64: '', mimeType: 'image/jpeg', imageId: '1' }],
+    };
+    const a = computePostContentFingerprint(post);
+    const b = computePostContentFingerprint(post);
+    expect(a).toBe(b);
+    expect(a.length).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // Privacy Compliance
 // ─────────────────────────────────────────────────────────────────
 
@@ -258,21 +369,57 @@ describe('Privacy Compliance', () => {
     // Replicate the maybeSaveToHistory guard from the background script
     const tab = await browser.tabs.get(1);
     if (!tab.incognito) {
-      await saveHistoryEntry(makeEntry({ postId: 'incognito-post' }));
+      await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'incognito-post' }));
     }
 
-    const history = await getHistory();
+    const history = await getHistory(TEST_UID);
     expect(history.find((e) => e.postId === 'incognito-post')).toBeUndefined();
   });
 
   it('"Clear History" removes all entries from storage', async () => {
-    await saveHistoryEntry(makeEntry({ postId: 'post-a', pinned: false }));
-    await saveHistoryEntry(makeEntry({ postId: 'post-b', pinned: false }));
-    await saveHistoryEntry(makeEntry({ postId: 'post-c', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-a', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-b', pinned: false }));
+    await saveHistoryEntry(TEST_UID, makeEntry({ postId: 'post-c', pinned: false }));
 
-    await clearHistory();
-    const history = await getHistory();
+    await clearHistory(TEST_UID);
+    const history = await getHistory(TEST_UID);
 
     expect(history).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// History UID Namespacing
+// ─────────────────────────────────────────────────────────────────
+
+describe('History UID Namespacing', () => {
+  beforeEach(() => {
+    store = {};
+    vi.clearAllMocks();
+  });
+
+  it('uses detectionHistory:<uid> storage key, not bare detectionHistory', async () => {
+    await saveHistoryEntry(TEST_UID, makeEntry());
+
+    // Namespaced key must exist with the entry
+    expect(store[`${HISTORY_KEY}:${TEST_UID}`]).toBeDefined();
+    expect((store[`${HISTORY_KEY}:${TEST_UID}`] as unknown[]).length).toBe(1);
+
+    // Bare un-namespaced key must NOT exist
+    expect(store[HISTORY_KEY]).toBeUndefined();
+  });
+
+  it('getHistory for account A returns empty when only account B has entries', async () => {
+    const UID_A = 'account-a-uid';
+    const UID_B = 'account-b-uid';
+
+    await saveHistoryEntry(UID_B, makeEntry({ postId: 'b-post-1' }));
+    await saveHistoryEntry(UID_B, makeEntry({ postId: 'b-post-2' }));
+
+    const historyA = await getHistory(UID_A);
+    expect(historyA).toHaveLength(0);
+
+    const historyB = await getHistory(UID_B);
+    expect(historyB).toHaveLength(2);
   });
 });

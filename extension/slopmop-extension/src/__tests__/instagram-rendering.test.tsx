@@ -101,10 +101,8 @@ describe('Instagram overlay rendering', () => {
 
     const overlay = commentNode.lastElementChild as HTMLElement | null;
     expect(overlay).not.toBeNull();
-    //expect(overlay?.style.top).toBe('calc(100% + 4px)');
-    expect(overlay?.style.top).toBe('48px')
-    //expect(overlay?.style.right).toBe('4px');
-    expect(overlay?.style.right).toBe('8px');
+    expect(overlay?.style.top).toBe('calc(100% + 4px)');
+    expect(overlay?.style.right).toBe('4px');
     expect(overlay?.style.bottom).toBe('');
   });
 
@@ -396,6 +394,7 @@ describe('Instagram overlay rendering', () => {
     expect(tooltip?.style.zIndex).toBe('2147483647');
 
     leftOverlay?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+    vi.advanceTimersByTime(500);
     const tooltipAfterLeave = Array.from(document.body.querySelectorAll('div')).find((el) =>
       (el as HTMLElement).textContent?.includes('Tooltip should be top layer.'),
     );
@@ -442,6 +441,7 @@ describe('Instagram overlay rendering', () => {
       expect(tooltip).toBeDefined();
 
       overlay?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+      vi.advanceTimersByTime(500);
 
       const tooltipAfterLeave = Array.from(document.body.querySelectorAll('div')).find((el) =>
         (el as HTMLElement).textContent?.includes('Hover bridge behavior test.'),

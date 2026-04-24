@@ -8,7 +8,7 @@ export class InstagramOverlayRenderer extends OverlayRenderer {
     }
 
     protected override getBadgePosition(): Record<string, string> {
-        return { top: "48px", right: "8px" };
+        return this.resolveBadgePosition({ top: "48px", right: "8px" });
     }
 
     protected override getBadgePositionForHost(hostNode: HTMLElement): Record<string, string> {
@@ -31,9 +31,9 @@ export class InstagramOverlayRenderer extends OverlayRenderer {
     ): Partial<CSSStyleDeclaration> {
         return {
             border: "none",
-            borderRadius: "4px",
-            padding: isSimple ? "3px 6px" : "2px 6px",
-            fontSize: isSimple ? "11px" : "10px",
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            padding: this.scaleByBadgeSize(isSimple ? "3px 6px" : "2px 6px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "11px" : "10px", "font"),
             fontWeight: "600",
             color: "#fff",
             cursor: "pointer",

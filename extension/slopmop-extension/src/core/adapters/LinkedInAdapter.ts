@@ -1,4 +1,5 @@
 import type { SiteAdapter } from "./SiteAdapter";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
 
 const MAIN_FEED_COMPONENTKEY = "MAIN_FEED";
 /** Substring in componentkey for comment rows (modern feed). */
@@ -120,14 +121,14 @@ export class LinkedInAdapter implements SiteAdapter {
 
     // 3) Modern feed: stable-ish id from componentkey (see findModernFeedPostRoots).
     const ck = this.getPostSurfaceComponentKey(postNode);
-    if (ck) return `linkedin-ck-${this.fnv1a(ck)}`;
+    if (ck) return `linkedin-ck-${fnv1a32Hex(ck)}`;
 
     // 4) Deterministic fallback hash when URN not in DOM.
     const author = this.getAuthorHandle(postNode);
     const timestamp = this.getTimestampText(postNode);
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
     const base = `${permalink ?? ""}|${author}|${timestamp}|${text}`;
-    return base ? `linkedin-fallback-${this.fnv1a(base)}` : null;
+    return base ? `linkedin-fallback-${fnv1a32Hex(base)}` : null;
   }
 
   getPermalink(postNode: Element): string | null {
@@ -140,19 +141,19 @@ export class LinkedInAdapter implements SiteAdapter {
   }
 
   getTextNode(postNode: Element): HTMLElement | null {
+    // LinkedIn truncates long posts with "… Read More" / "… See more". The full text lives
+    // in div.feed-shared-inline-show-more-text (or similar); CSS hides overflow. Prefer
+    // that container before the expandable box so innerText matches the analyzed body.
+    const showMore = postNode.querySelector<HTMLElement>(
+      '[class*="feed-shared-inline-show-more-text"]:not(button)',
+    );
+    if (showMore) return showMore;
+
     // Current feed exposes main copy on this node (obfuscated classes elsewhere).
     const expandable = postNode.querySelector<HTMLElement>(
       '[data-testid="expandable-text-box"]',
     );
     if (expandable) return expandable;
-
-    // LinkedIn truncates long posts with "… Read More" / "… See more". The full text lives
-    // in div.feed-shared-inline-show-more-text (or similar); CSS hides overflow. Prefer
-    // that container so we analyze the full post, not just the preview.
-    const showMore = postNode.querySelector<HTMLElement>(
-      '[class*="feed-shared-inline-show-more-text"]:not(button)',
-    );
-    if (showMore) return showMore;
 
     // Fallback: main post body via span[dir="auto"], div[data-urn], etc.
     return (
@@ -688,7 +689,7 @@ export class LinkedInAdapter implements SiteAdapter {
     // 4) Deterministic fallback hash when no stable ID available.
     const text =
       this.getCommentTextNode(commentNode)?.innerText?.slice(0, 300).trim() ?? "";
-    return text ? `linkedin-comment-${this.fnv1a(text)}` : null;
+    return text ? `linkedin-comment-${fnv1a32Hex(text)}` : null;
   }
 
   getCommentTextNode(commentNode: Element): HTMLElement | null {
@@ -812,12 +813,4 @@ export class LinkedInAdapter implements SiteAdapter {
     );
   }
 
-  private fnv1a(input: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16);
-  }
 }

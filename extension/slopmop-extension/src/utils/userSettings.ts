@@ -44,9 +44,30 @@ export interface DetectionSettings {
   scanImages: boolean;
   scanComments: 'off' | 'user_triggered' | 'auto_top_n';
   uiMode: 'simple' | 'detailed';
+  badgeSize: 'small' | 'medium' | 'large';
+  badgePosition: 'top_right' | 'top_left' | 'bottom_right';
+  detectionTheme: 'default' | 'high_contrast' | 'minimal';
+  accessibilityMode: boolean;
   highlightSegments: boolean;
   /** Show Fact check next to Detect Now on posts (manual / eligible feeds). */
   factCheck: boolean;
+  /**
+   * When on, detection hover tooltips include server-reported Detect / Fact-check milliseconds
+   * (when available). Off keeps the default tooltip (model line + client round-trip ms).
+   */
+  powerUserTiming: boolean;
+  /**
+   * Manual power-saving: when on, automatic scanning is forced off and the Automatic Scanning
+   * toggle is disabled until you turn this off. The extension does not overwrite this when it
+   * automatically pauses scanning for low battery while unplugged.
+   */
+  lowBatteryMode: boolean;
+  /**
+   * When on, low-battery mode behavior applies automatically while unplugged and below the low
+   * battery threshold; clears when charging or above the resume threshold. Saved scanning prefs
+   * are not overwritten (same pattern as automatic low-battery pause).
+   */
+  lowBatteryModeAutoWhenBatteryLow: boolean;
   /**
    * Text detection runs only when franc's top guess is among these (plus Scots when English is on).
    * Default all three. Empty disables all text detection.
@@ -61,6 +82,8 @@ export interface DetectionStats {
   postsScanned: number;
   aiDetected: number;
   postsProcessing: number;
+  /** Detection count keyed by platform hostname, e.g. { "reddit.com": 12 }. */
+  platformCounts: Record<string, number>;
 }
 
 /** Root document shape stored at `users/{uid}` in Firestore. */
@@ -99,8 +122,15 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     scanImages: true,
     scanComments: 'auto_top_n',
     uiMode: 'simple',
+    badgeSize: 'medium',
+    badgePosition: 'top_right',
+    detectionTheme: 'default',
+    accessibilityMode: false,
     highlightSegments: true,
     factCheck: true,
+    powerUserTiming: false,
+    lowBatteryMode: false,
+    lowBatteryModeAutoWhenBatteryLow: false,
     detectionLanguages: ['eng', 'spa', 'fra'],
     cacheRecentResults: true,
   },
@@ -108,5 +138,20 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     postsScanned: 0,
     aiDetected: 0,
     postsProcessing: 0,
+    platformCounts: {},
   },
 };
+
+/** Merge partial stored settings with defaults (used by background, content, battery sync). */
+export function mergeDetectionSettingsFromStored(raw: unknown): DetectionSettings {
+  const saved = (raw ?? {}) as Partial<DetectionSettings>;
+  return {
+    ...defaultUserSettings.settings,
+    ...saved,
+    platforms: {
+      ...defaultUserSettings.settings.platforms,
+      ...(saved.platforms ?? {}),
+    },
+    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
+  };
+}

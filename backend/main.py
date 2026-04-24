@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
+import time
 import base64
 import io
 from PIL import Image
@@ -42,29 +43,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Load image detection model once at startup ─────────────────
-IMAGE_MODEL_FILENAME = os.environ.get("HF_IMAGE_MODEL_FILENAME", "nonescape-mini-v0.safetensors").strip() or "nonescape-mini-v0.safetensors"
+# ── Load image detection models once at startup ────────────────
+IMAGE_MODEL_MINI_FILENAME = (
+    os.environ.get("HF_IMAGE_MODEL_FILENAME", "nonescape-mini-v0.safetensors").strip()
+    or "nonescape-mini-v0.safetensors"
+)
+IMAGE_MODEL_FULL_FILENAME = (
+    os.environ.get("HF_IMAGE_MODEL_FULL_FILENAME", "nonescape-v0.safetensors").strip()
+    or "nonescape-v0.safetensors"
+)
 HF_IMAGE_MODEL_REPO = os.environ.get("HF_IMAGE_MODEL_REPO", "").strip()
+HF_IMAGE_MODEL_FULL_REPO = (
+    os.environ.get("HF_IMAGE_MODEL_FULL_REPO", "").strip() or HF_IMAGE_MODEL_REPO
+)
 
-if HF_IMAGE_MODEL_REPO:
-    from huggingface_hub import hf_hub_download
-    print(f"[SlopMop] Downloading image model from Hugging Face ({HF_IMAGE_MODEL_REPO})...", flush=True)
-    MODEL_PATH = hf_hub_download(
-        repo_id=HF_IMAGE_MODEL_REPO,
-        filename=IMAGE_MODEL_FILENAME,
-        local_dir=os.path.join(_THIS_DIR, "nonescape"),
-    )
-    print(f"[SlopMop] Image model downloaded: {MODEL_PATH}", flush=True)
-else:
-    MODEL_PATH = os.path.join(
-        _THIS_DIR,
-        "nonescape",
-        IMAGE_MODEL_FILENAME,
-    )
 
-image_model = NonescapeClassifierMini.from_pretrained(MODEL_PATH)
-image_model.eval()
-print(f"[SlopMop] Loaded image model: {IMAGE_MODEL_FILENAME} ({MODEL_PATH})", flush=True)
+def _resolve_image_model_path(filename: str, repo_id: str) -> str:
+    if repo_id:
+        from huggingface_hub import hf_hub_download
+
+        print(
+            f"[SlopMop] Downloading image model from Hugging Face ({repo_id})...",
+            flush=True,
+        )
+        model_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            local_dir=os.path.join(_THIS_DIR, "nonescape"),
+        )
+        print(f"[SlopMop] Image model downloaded: {model_path}", flush=True)
+        return model_path
+
+    return os.path.join(_THIS_DIR, "nonescape", filename)
+
+
+MINI_MODEL_PATH = _resolve_image_model_path(IMAGE_MODEL_MINI_FILENAME, HF_IMAGE_MODEL_REPO)
+image_model_mini = NonescapeClassifierMini.from_pretrained(MINI_MODEL_PATH)
+image_model_mini.eval()
+print(
+    f"[SlopMop] Loaded image model (mini): {IMAGE_MODEL_MINI_FILENAME} ({MINI_MODEL_PATH})",
+    flush=True,
+)
+
+image_model_full: Optional[NonescapeClassifier] = None
+FULL_MODEL_PATH = ""
+try:
+    FULL_MODEL_PATH = _resolve_image_model_path(IMAGE_MODEL_FULL_FILENAME, HF_IMAGE_MODEL_FULL_REPO)
+    full_model = NonescapeClassifier.from_pretrained(FULL_MODEL_PATH)
+    full_model.eval()
+    image_model_full = full_model
+    print(
+        f"[SlopMop] Loaded image model (full): {IMAGE_MODEL_FULL_FILENAME} ({FULL_MODEL_PATH})",
+        flush=True,
+    )
+except Exception as exc:
+    print(
+        f"[SlopMop] WARNING: Full image model unavailable ({IMAGE_MODEL_FULL_FILENAME}): {exc}",
+        flush=True,
+    )
 
 # ── Load text detection model once at startup ──────────────────
 TEXT_MODEL_FILENAME = "best_text_detector_smaller.pt"
@@ -120,10 +156,26 @@ print(
 )
 
 
+def _span_attribution_method() -> str:
+    """mask = leave-one-token-out (slower); gradient = embedding saliency, one backward (faster)."""
+    raw = os.environ.get("SPAN_ATTRIBUTION_METHOD", "mask").strip().lower()
+    return raw if raw in ("mask", "gradient") else "mask"
+
+
+SPAN_ATTRIBUTION_METHOD = _span_attribution_method()
+print(
+    f"[SlopMop] Span attribution method: {SPAN_ATTRIBUTION_METHOD} "
+    "(env SPAN_ATTRIBUTION_METHOD=mask|gradient)",
+    flush=True,
+)
+
+
 class DetectRequest(BaseModel):
     text: str
     # optional visible comment bodies (same post) for satire keyword / consensus heuristics on the main post score.
     comment_texts: Optional[List[str]] = None
+    # optional: reddit community name (e.g. "shitposting") for hard satire allowlist overrides.
+    subreddit: Optional[str] = None
 
 
 class HighlightSpan(BaseModel):
@@ -138,17 +190,30 @@ class DetectResponse(BaseModel):
     label: str  # "ai" or "human"
     explanation: str  # explanation for the detection
     highlights: List[HighlightSpan] = []  # spans for segment highlighting
+    # Wall-clock timing (ms), optional for backward compatibility. Omitted when None (exclude_none).
+    # /detect sets detect_ms + total_server_ms; fact_check_ms is for combined flows elsewhere only.
+    detect_ms: Optional[int] = None
+    fact_check_ms: Optional[int] = None
+    total_server_ms: Optional[int] = None
+    # Optional satire signal (from satire model and/or comment consensus heuristics).
+    satire_score: Optional[float] = None
+    satire_label: Optional[str] = None
 
 
 class DetectImageRequest(BaseModel):
     image_base64: str          # raw base64-encoded image bytes
     mime_type: str = "image/jpeg"
+    model_variant: Literal["mini", "full"] = "mini"
 
 
 class DetectImageResponse(BaseModel):
     confidence: float          # 0.0 = authentic, 1.0 = AI-generated
     label: str                 # "ai" or "human"
     explanation: str
+    model_variant: Literal["mini", "full"]
+    detect_ms: Optional[int] = None
+    fact_check_ms: Optional[int] = None
+    total_server_ms: Optional[int] = None
 
 
 class FactCheckRequest(BaseModel):
@@ -166,6 +231,9 @@ class FactCheckItem(BaseModel):
 
 class FactCheckResponse(BaseModel):
     items: List[FactCheckItem]
+    detect_ms: Optional[int] = None
+    fact_check_ms: Optional[int] = None
+    total_server_ms: Optional[int] = None
 
 
 @app.get("/")
@@ -195,12 +263,19 @@ def _normalize_comment_texts(raw: Optional[List[str]]) -> Optional[List[str]]:
 def score_text_with_spans(
     text: str, comment_texts: Optional[List[str]] = None
 ) -> tuple[float, str, List[HighlightSpan]]:
-    confidence, label, spans = text_detector.score_text_with_spans(
-        text,
-        clean=True,
-        max_tokens_to_evaluate=SPAN_MASK_EVAL_CAP,
-        comment_texts=comment_texts,
-    )
+    if SPAN_ATTRIBUTION_METHOD == "gradient":
+        confidence, label, spans = text_detector.score_text_with_gradient_spans(
+            text,
+            clean=True,
+            comment_texts=comment_texts,
+        )
+    else:
+        confidence, label, spans = text_detector.score_text_with_spans(
+            text,
+            clean=True,
+            max_tokens_to_evaluate=SPAN_MASK_EVAL_CAP,
+            comment_texts=comment_texts,
+        )
     if label == "mixed":
         label = "ai" if confidence >= 0.5 else "human"
     highlights = [HighlightSpan(start=s, end=e, score=sc) for s, e, sc in spans]
@@ -231,13 +306,13 @@ def generate_explanation(confidence: float, label: str, text_char_len: int = 0) 
     if label == "ai":
         return (
             f"SlopMop text classifier: {pct}% estimated AI-like (transformer + optional satire nudge).{short_note} "
-            "Highlight segments show token-level influence (leave-one-token-out), not keyword mock rules."
+            "Highlight segments show which tokens most affect the model score (attribution), not keyword rules."
         )
     return (
         f"SlopMop text classifier: {pct}% estimated AI-like; labeled human/mixed (below likely-AI band).{short_note}"
     )
 
-@app.post("/detect", response_model=DetectResponse)
+@app.post("/detect", response_model=DetectResponse, response_model_exclude_none=True)
 def detect(
     request: DetectRequest,
     include_spans: bool = Query(
@@ -245,6 +320,7 @@ def detect(
         description="If false, skip segment attribution (one forward pass only).",
     ),
 ):
+    t0 = time.perf_counter()
     # strip spaces from head and tail of text
     clean_text = request.text.strip()
 
@@ -261,18 +337,73 @@ def detect(
 
     comment_texts = _normalize_comment_texts(request.comment_texts)
 
+    t_detect_start = time.perf_counter()
     if include_spans:
         confidence, label, highlights = score_text_with_spans(clean_text, comment_texts)
     else:
         confidence, label = score_text_without_spans(clean_text, comment_texts)
         highlights = []
+    t_detect_end = time.perf_counter()
+
+    detect_ms = max(0, int((t_detect_end - t_detect_start) * 1000))
+    total_server_ms = max(0, int((t_detect_end - t0) * 1000))
 
     explanation = generate_explanation(confidence, label, len(clean_text))
-    return DetectResponse(confidence=confidence, label=label, explanation=explanation, highlights=highlights)
+
+    # Satire metadata: if top comments confirm satire, force satire label.
+    satire_score = None
+    satire_label = None
+    try:
+        # 0) subreddit allowlist override (hard rule)
+        sub = (request.subreddit or "").strip().lower()
+        satire_subs = {
+            "satire",
+            "shitpost",
+            "shitposts",
+            "shitposting",
+            "circlejerk",
+            "copypasta",
+            "parody",
+        }
+        if sub in satire_subs:
+            satire_score = 1.0
+            satire_label = "satire"
+            print(f"[SlopMop Satire] subreddit override: r/{sub} -> satire", flush=True)
+
+        scan = getattr(text_detector, "_get_satire_heuristic_scan", None)
+        scan_fn = scan() if callable(scan) else None
+        if callable(scan_fn):
+            r = scan_fn(clean_text, comment_texts)
+            reason = getattr(r, "consensus_reason", None)
+            if reason == "top3_2of3":
+                satire_score = 1.0
+                satire_label = "satire"
+                print(f"[SlopMop Satire] top comments: confirmed satire (reason={reason})", flush=True)
+        # If not confirmed by comments, expose neural satire probability when available.
+        if satire_label is None:
+            ps = getattr(text_detector, "_satire_prob_satire", None)
+            ps_val = ps(clean_text) if callable(ps) else None
+            if ps_val is not None:
+                satire_score = float(ps_val)
+                satire_label = "satire" if satire_score >= 0.5 else "non_satire"
+    except Exception as e:
+        print(f"[SlopMop Satire] failed to attach satire metadata: {e}", flush=True)
+
+    return DetectResponse(
+        confidence=confidence,
+        label=label,
+        explanation=explanation,
+        highlights=highlights,
+        detect_ms=detect_ms,
+        total_server_ms=total_server_ms,
+        satire_score=satire_score,
+        satire_label=satire_label,
+    )
 
 
-@app.post("/detect-image", response_model=DetectImageResponse)
+@app.post("/detect-image", response_model=DetectImageResponse, response_model_exclude_none=True)
 def detect_image(request: DetectImageRequest):
+    t0 = time.perf_counter()
     raw = request.image_base64.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="image_base64 is required")
@@ -285,19 +416,48 @@ def detect_image(request: DetectImageRequest):
 
     tensor = preprocess_image(image).unsqueeze(0)  # add batch dim
 
+    selected_variant = request.model_variant
+    if selected_variant == "full":
+        if image_model_full is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Full image model is not available on this backend instance. "
+                    "Retry with model_variant='mini' or configure "
+                    "HF_IMAGE_MODEL_FULL_FILENAME/HF_IMAGE_MODEL_FULL_REPO."
+                ),
+            )
+        selected_model = image_model_full
+        model_name = "Nonescape"
+    else:
+        selected_model = image_model_mini
+        model_name = "Nonescape-mini"
+
+    t_detect_start = time.perf_counter()
     with torch.no_grad():
-        probs = image_model(tensor)
+        probs = selected_model(tensor)
         authentic_prob = probs[0][0].item()
         ai_prob = probs[0][1].item()
+    t_detect_end = time.perf_counter()
+
+    detect_ms = max(0, int((t_detect_end - t_detect_start) * 1000))
+    total_server_ms = max(0, int((t_detect_end - t0) * 1000))
 
     label = "ai" if ai_prob > 0.5 else "human"
     confidence = round(ai_prob, 4)
     explanation = (
-        f"Nonescape-mini classified this image as {'AI-generated' if label == 'ai' else 'authentic'} "
+        f"{model_name} classified this image as {'AI-generated' if label == 'ai' else 'authentic'} "
         f"with {confidence:.1%} confidence."
     )
 
-    return DetectImageResponse(confidence=confidence, label=label, explanation=explanation)
+    return DetectImageResponse(
+        confidence=confidence,
+        label=label,
+        explanation=explanation,
+        model_variant=selected_variant,
+        detect_ms=detect_ms,
+        total_server_ms=total_server_ms,
+    )
 
 
 def _fact_check_http_error(err: str) -> HTTPException:
@@ -318,7 +478,7 @@ def _fact_check_http_error(err: str) -> HTTPException:
     return HTTPException(status_code=502, detail=err)
 
 
-@app.post("/fact-check", response_model=FactCheckResponse)
+@app.post("/fact-check", response_model=FactCheckResponse, response_model_exclude_none=True)
 async def fact_check(request: FactCheckRequest):
     """
     Fact-check post text. Backend is selected with FACT_CHECK_MODE:
@@ -326,6 +486,7 @@ async def fact_check(request: FactCheckRequest):
     - ``google`` (default): Claim Search API, chunked queries (see FACT_CHECK.md).
     - ``llm``: OpenAI JSON output; same response shape; not a substitute for real fact databases.
     """
+    t0 = time.perf_counter()
     raw = request.text.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="text is required")
@@ -336,6 +497,7 @@ async def fact_check(request: FactCheckRequest):
         )
 
     mode = os.environ.get("FACT_CHECK_MODE", "google").strip().lower()
+    t_fc_start = time.perf_counter()
     if mode == "llm":
         items_raw, err = await run_llm_fact_check_for_text(raw)
     elif mode in ("gemini_wiki", "gemini-wiki", "gemini"):
@@ -343,9 +505,17 @@ async def fact_check(request: FactCheckRequest):
     else:
         key = os.environ.get("GOOGLE_FACT_CHECK_API_KEY", "").strip()
         items_raw, err = await run_fact_check_for_text(raw, api_key=key or None)
+    t_fc_end = time.perf_counter()
 
     if err:
         raise _fact_check_http_error(err)
 
+    fact_check_ms = max(0, int((t_fc_end - t_fc_start) * 1000))
+    total_server_ms = max(0, int((t_fc_end - t0) * 1000))
+
     items = [FactCheckItem(**row) for row in items_raw]
-    return FactCheckResponse(items=items)
+    return FactCheckResponse(
+        items=items,
+        fact_check_ms=fact_check_ms,
+        total_server_ms=total_server_ms,
+    )

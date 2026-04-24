@@ -107,4 +107,31 @@ describe('LinkedInOverlayRenderer UI', () => {
     // likely_ai uses red (#ef4444); jsdom normalizes to rgb.
     expect(badge?.style.backgroundColor).toBe('rgb(239, 68, 68)');
   });
+
+  it('applies configured badge size on LinkedIn badges', () => {
+    const smallNode = document.createElement('article');
+    const largeNode = document.createElement('article');
+    smallNode.style.position = 'relative';
+    largeNode.style.position = 'relative';
+    document.body.append(smallNode, largeNode);
+
+    const adapter = createAdapter();
+    const smallRenderer = new LinkedInOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'small',
+    });
+    const largeRenderer = new LinkedInOverlayRenderer(adapter, {
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      badgeSize: 'large',
+    });
+
+    smallRenderer.renderPending('li-size-small', smallNode, 'small', () => {});
+    largeRenderer.renderPending('li-size-large', largeNode, 'large', () => {});
+
+    const smallBadge = smallNode.querySelector('[style*="position: absolute"]') as HTMLElement;
+    const largeBadge = largeNode.querySelector('[style*="position: absolute"]') as HTMLElement;
+    expect(parseFloat(largeBadge.style.fontSize)).toBeGreaterThan(parseFloat(smallBadge.style.fontSize));
+  });
 });

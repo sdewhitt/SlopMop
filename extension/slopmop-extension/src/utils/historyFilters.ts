@@ -20,6 +20,14 @@ export const DEFAULT_FILTER_PREFS: HistoryFilterPrefs = {
 
 export const FILTER_PREFS_KEY = 'historyFilterPrefs';
 
+/**
+ * Returns the namespaced storage key for a specific user's filter preferences.
+ * Keeps each account's UI state isolated from others.
+ */
+export function filterPrefsKey(uid: string): string {
+  return `${FILTER_PREFS_KEY}:${uid}`;
+}
+
 export const PLATFORM_OPTIONS: { key: string; label: string; match: (p: string) => boolean }[] = [
   { key: 'reddit',    label: 'Reddit',    match: (p) => p.includes('reddit') },
   { key: 'twitter',   label: 'X',         match: (p) => p.includes('twitter') || p.includes('x.com') },

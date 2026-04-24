@@ -9,9 +9,14 @@ import {
     applyRichDomHighlightSpans,
     buildHighlightedHtml,
     canApplyInnerHtmlHighlights,
-    normalizePlainText,
+    prepareHighlightSpans,
     sanitizeHighlightSpans,
 } from "@src/utils/highlightSpans";
+import { modelPreprocessText } from "@src/utils/modelPreprocessText";
+import {
+    SATIRE_SCORE_HIGH_BANNER_THRESHOLD,
+    SATIRE_SCORE_SOFTEN_THRESHOLD,
+} from "@src/utils/factCheckSatire";
  
 
 export class OverlayRenderer {
@@ -41,6 +46,8 @@ export class OverlayRenderer {
             runFactCheck: () => void;
             lastItems: FactCheckItem[] | null;
             lastError: string | null;
+            /** Last `/fact-check` wall-clock ms for this post (from network or cache). */
+            lastFactCheckServerMs: number | undefined;
             /** Removes document capture listener used to dismiss pinned fact-check tooltips. */
             factCheckTooltipCleanup: (() => void) | null;
         }
@@ -49,6 +56,8 @@ export class OverlayRenderer {
     private mapToDetectPanel = new Map<PostId, HTMLElement>();
     /** Tear-down for tooltips mounted on `document.body` (fixed position). */
     private tooltipCleanupByOverlay = new WeakMap<HTMLElement, () => void>();
+    /** Document capture listener for pinned detection-result tooltips (click-outside to dismiss). */
+    private mapToDetectTooltipDocCleanup = new Map<PostId, () => void>();
     private settings: DetectionSettings;
 
 
@@ -56,20 +65,78 @@ export class OverlayRenderer {
         this.settings = settings;
     }
 
+    private getEffectiveBadgeSize(): DetectionSettings["badgeSize"] {
+        const requested = this.settings.badgeSize ?? "medium";
+        if (this.settings.accessibilityMode && requested === "small") {
+            return "medium";
+        }
+        return requested;
+    }
+
+    private getBadgeScale(target: "spacing" | "font"): number {
+        const size = this.getEffectiveBadgeSize();
+        if (this.settings.accessibilityMode) {
+            const modeScale: Record<DetectionSettings["badgeSize"], number> =
+                target === "font"
+                    ? { small: 1, medium: 1.08, large: 1.18 }
+                    : { small: 1, medium: 1.08, large: 1.18 };
+            return modeScale[size];
+        }
+        const normalScale: Record<DetectionSettings["badgeSize"], number> =
+            target === "font"
+                ? { small: 0.9, medium: 1, large: 1.15 }
+                : { small: 0.88, medium: 1, large: 1.2 };
+        return normalScale[size];
+    }
+
+    protected scaleByBadgeSize(value: string, target: "spacing" | "font" = "spacing"): string {
+        const scale = this.getBadgeScale(target);
+        return value.replace(/(-?\d*\.?\d+)px/g, (_, num) => {
+            const scaled = Math.max(1, Math.round(parseFloat(num) * scale * 100) / 100);
+            return `${scaled}px`;
+        });
+    }
+
     /** Merge new settings and re-apply visible badges/tooltip wiring for completed scans. */
     updateSettings(settings: DetectionSettings): void {
         this.settings = settings;
+        for (const overlay of this.mapToOverlay.values()) {
+            this.updateOverlayPosition(overlay);
+        }
         for (const [postId, res] of this.mapToResponse) {
             this.renderResult(postId, res);
         }
     }
 
     protected getBadgePosition(): Record<string, string> {
-        return { bottom: "8px", right: "8px" };
+        return this.resolveBadgePosition({ top: "8px", right: "8px" });
     }
 
     protected getBadgePositionForHost(_hostNode: HTMLElement): Record<string, string> {
         return this.getBadgePosition();
+    }
+
+    private updateOverlayPosition(overlay: HTMLElement): void {
+        const hostNode = overlay.parentElement;
+        if (!(hostNode instanceof HTMLElement)) return;
+        overlay.style.top = "";
+        overlay.style.right = "";
+        overlay.style.bottom = "";
+        overlay.style.left = "";
+        Object.assign(overlay.style, this.getBadgePositionForHost(hostNode));
+    }
+
+    protected resolveBadgePosition(base: Record<string, string>): Record<string, string> {
+        const position = this.settings.badgePosition ?? "top_right";
+        const top = base.top ?? base.bottom ?? "8px";
+        const right = base.right ?? base.left ?? "8px";
+        if (position === "top_left") {
+            return { top, left: right };
+        }
+        if (position === "bottom_right") {
+            return { bottom: top, right };
+        }
+        return { top, right };
     }
 
     protected getTooltipPosition(): Record<string, string> {
@@ -78,9 +145,9 @@ export class OverlayRenderer {
     /** Padding/font for the pending badge container (before result). Subclasses may tighten for dense UIs. */
     protected getPendingBadgeContainerStyle(isSimple: boolean): Record<string, string> {
         return {
-            padding: isSimple ? "6px 12px" : "4px 8px",
-            borderRadius: "4px",
-            fontSize: isSimple ? "14px" : "12px",
+            padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
         };
     }
 
@@ -88,22 +155,67 @@ export class OverlayRenderer {
     protected getActionButtonStyle(_hostNode: HTMLElement, isSimple: boolean): Partial<CSSStyleDeclaration> {
         return {
             border: "none",
-            borderRadius: "4px",
-            padding: "6px 10px",
-            fontSize: isSimple ? "14px" : "12px",
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            padding: this.scaleByBadgeSize("6px 10px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
             fontWeight: "600",
             color: "#fff",
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             cursor: "pointer",
         };
     }
 
     protected getSimpleVerdictBadgeFontSize(): string {
-        return "14px";
+        return this.scaleByBadgeSize("14px", "font");
     }
 
     protected getSimpleVerdictBadgePadding(): string {
-        return "6px 12px";
+        return this.scaleByBadgeSize("6px 12px", "spacing");
+    }
+
+    protected getDetailedVerdictBadgeFontSize(): string {
+        return this.scaleByBadgeSize("12px", "font");
+    }
+
+    protected getDetailedVerdictBadgePadding(): string {
+        return this.scaleByBadgeSize("4px 8px", "spacing");
+    }
+
+    private getIndicatorTheme(): DetectionSettings["detectionTheme"] {
+        return this.settings.detectionTheme ?? "default";
+    }
+
+    private getNeutralIndicatorColor(): string {
+        const theme = this.getIndicatorTheme();
+        if (theme === "high_contrast") return "#111827";
+        if (theme === "minimal") return "#4b5563";
+        return "#6b7280";
+    }
+
+    private getVerdictIndicatorColor(verdict: DetectionResponse["verdict"]): string {
+        const theme = this.getIndicatorTheme();
+        if (theme === "high_contrast") {
+            const colorMap: Record<DetectionResponse["verdict"], string> = {
+                likely_ai: "#ff1f1f",
+                likely_human: "#00ff66",
+                unknown: "#111827",
+            };
+            return colorMap[verdict];
+        }
+        if (theme === "minimal") {
+            const colorMap: Record<DetectionResponse["verdict"], string> = {
+                likely_ai: "#f87171",
+                likely_human: "#86efac",
+                unknown: "#4b5563",
+            };
+            return colorMap[verdict];
+        }
+        const colorMap: Record<DetectionResponse["verdict"], string> = {
+            likely_ai: "#ef4444",
+            likely_human: "#22c55e",
+            unknown: "#6b7280",
+        };
+        return colorMap[verdict];
     }
 
     // render DetectionResponse as a badge on the page
@@ -131,22 +243,21 @@ export class OverlayRenderer {
 
         this.restorePostBodyHtml(postId);
         this.mapToResponse.set(postId, res);
+        this.clearDetectTooltipDocListeners(postId);
         this.resetOverlayInteractions(surface);
         surface.style.whiteSpace = "normal";
 
         const isSimple = this.settings.uiMode === "simple";
 
-        const colorMap: Record<DetectionResponse["verdict"], string> = {
-            likely_ai: "#ef4444",
-            likely_human: "#22c55e",
-            unknown: "#6b7280",
-        };
-        surface.style.backgroundColor = colorMap[res.verdict];
+        surface.style.backgroundColor = this.getVerdictIndicatorColor(res.verdict);
         surface.style.cursor = "pointer";
 
         if (isSimple) {
             surface.style.fontSize = this.getSimpleVerdictBadgeFontSize();
             surface.style.padding = this.getSimpleVerdictBadgePadding();
+        } else {
+            surface.style.fontSize = this.getDetailedVerdictBadgeFontSize();
+            surface.style.padding = this.getDetailedVerdictBadgePadding();
         }
 
         const textLabel = `${res.verdict} (${Math.round(res.confidence * 100)}%)`;
@@ -159,6 +270,7 @@ export class OverlayRenderer {
         }
 
         let tooltip: HTMLElement | null = null;
+        let pinned = false;
         let hideTooltipTimer: ReturnType<typeof setTimeout> | null = null;
         const postText = this.mapToPostText.get(postId) ?? "";
         const clearHideTimer = () => {
@@ -167,31 +279,82 @@ export class OverlayRenderer {
             hideTooltipTimer = null;
         };
         const removeTooltip = () => {
-            tooltip?.remove();
+            clearHideTimer();
+            this.clearDetectTooltipDocListeners(postId);
+            this.dismissTooltipForOverlay(surface);
             tooltip = null;
+            pinned = false;
             surface.style.zIndex = OverlayRenderer.BADGE_Z_INDEX;
             this.setOverlayLayer(postId, false);
         };
         const scheduleHide = () => {
+            if (pinned) return;
             clearHideTimer();
             hideTooltipTimer = setTimeout(() => {
+                if (pinned) return;
                 removeTooltip();
             }, OverlayRenderer.TOOLTIP_HIDE_DELAY_MS);
         };
-        surface.onmouseenter = () => {
-            clearHideTimer();
+
+        const setPinned = (next: boolean): void => {
+            pinned = next;
+            this.clearDetectTooltipDocListeners(postId);
+            if (!next) return;
+            const onDocClick = (e: MouseEvent): void => {
+                if (!tooltip || !pinned) return;
+                const t = e.target instanceof Node ? e.target : null;
+                if (t && (surface.contains(t) || tooltip.contains(t))) return;
+                removeTooltip();
+            };
+            document.addEventListener("click", onDocClick, true);
+            this.mapToDetectTooltipDocCleanup.set(postId, () => {
+                document.removeEventListener("click", onDocClick, true);
+                this.mapToDetectTooltipDocCleanup.delete(postId);
+            });
+        };
+
+        const wireTooltipHover = (tip: HTMLElement): void => {
+            tip.onclick = (e: MouseEvent) => e.stopPropagation();
+            tip.onmouseenter = () => clearHideTimer();
+            tip.onmouseleave = () => {
+                if (pinned) return;
+                scheduleHide();
+            };
+        };
+
+        const ensureTooltip = (): void => {
             if (tooltip) return;
+            clearHideTimer();
             surface.style.zIndex = OverlayRenderer.ACTIVE_BADGE_Z_INDEX;
             this.setOverlayLayer(postId, true);
             tooltip = isSimple
                 ? this.createSimpleTooltip(res, postText)
                 : this.createTooltip(res, postText);
+            wireTooltipHover(tooltip);
             this.mountTooltipOnBody(surface, tooltip);
         };
 
+        surface.onmouseenter = () => {
+            clearHideTimer();
+            ensureTooltip();
+        };
+
         surface.onmouseleave = () => {
-            this.dismissTooltipForOverlay(surface);
-            tooltip = null;
+            if (pinned) return;
+            scheduleHide();
+        };
+
+        surface.onclick = (e: MouseEvent): void => {
+            e.stopPropagation();
+            const t = e.target instanceof Node ? e.target : null;
+            if (t && tooltip?.contains(t)) return;
+            if (pinned && tooltip) {
+                removeTooltip();
+                return;
+            }
+            clearHideTimer();
+            ensureTooltip();
+            setPinned(true);
         };
 
         this.applyInPostHighlights(postId, res);
@@ -226,18 +389,18 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
+            ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             color: "#fff",
         });
         if (!onDetectNow) {
             // automatic mode: single grey “Scanning…” pill.
             Object.assign(overlay.style, {
-                padding: isSimple ? "6px 12px" : "4px 8px",
-                borderRadius: "4px",
-                backgroundColor: "#6b7280",
+                padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+                borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+                backgroundColor: this.getNeutralIndicatorColor(),
                 color: "#fff",
             });
             overlay.textContent = "Scanning...";
@@ -249,9 +412,9 @@ export class OverlayRenderer {
         const greyBoxStyle = (el: HTMLElement): void => {
             Object.assign(el.style, {
                 position: "relative",
-                padding: isSimple ? "6px 12px" : "4px 8px",
-                borderRadius: "4px",
-                backgroundColor: "#6b7280",
+                padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+                borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+                backgroundColor: this.getNeutralIndicatorColor(),
                 color: "#fff",
                 display: "flex",
                 flexDirection: "column",
@@ -288,7 +451,7 @@ export class OverlayRenderer {
             factButton.textContent = "Fact check";
             Object.assign(factButton.style, {
                 ...buttonStyle,
-                backgroundColor: "#6b7280",
+                backgroundColor: this.getNeutralIndicatorColor(),
                 width: "100%",
             });
 
@@ -300,6 +463,7 @@ export class OverlayRenderer {
                 runFactCheck: run,
                 lastItems: null,
                 lastError: null,
+                lastFactCheckServerMs: undefined,
                 factCheckTooltipCleanup: null,
             });
             factButton.onclick = (event) => {
@@ -319,7 +483,7 @@ export class OverlayRenderer {
             detectNowButton.textContent = "Detect Now";
             Object.assign(detectNowButton.style, {
                 ...buttonStyle,
-                backgroundColor: "#6b7280",
+                backgroundColor: this.getNeutralIndicatorColor(),
                 width: "100%",
             });
             detectNowButton.onclick = (event) => {
@@ -339,16 +503,19 @@ export class OverlayRenderer {
 
         // manual, no fact check: original single grey box + Detect Now.
         Object.assign(overlay.style, {
-            padding: isSimple ? "6px 12px" : "4px 8px",
-            borderRadius: "4px",
-            fontSize: isSimple ? "14px" : "12px",
-            backgroundColor: "#6b7280",
+            padding: this.scaleByBadgeSize(isSimple ? "6px 12px" : "4px 8px", "spacing"),
+            borderRadius: this.scaleByBadgeSize("4px", "spacing"),
+            fontSize: this.scaleByBadgeSize(isSimple ? "14px" : "12px", "font"),
+            backgroundColor: this.getNeutralIndicatorColor(),
             color: "#fff",
         });
         const detectNowButton = document.createElement("button");
         detectNowButton.type = "button";
         detectNowButton.textContent = "Detect Now";
-        Object.assign(detectNowButton.style, this.getActionButtonStyle(hostNode, isSimple));
+        Object.assign(detectNowButton.style, {
+            backgroundColor: this.getNeutralIndicatorColor(),
+            ...this.getActionButtonStyle(hostNode, isSimple),
+        });
         detectNowButton.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -377,6 +544,7 @@ export class OverlayRenderer {
             this.mapToOriginalBodyHtml.delete(existingPostId);
             this.mapToFactCheckUi.delete(existingPostId);
             this.mapToDetectPanel.delete(existingPostId);
+            this.clearDetectTooltipDocListeners(existingPostId);
         }
 
         for (const overlay of existingOverlays) {
@@ -394,6 +562,7 @@ export class OverlayRenderer {
         const surface = this.getDetectSurface(postId);
         if (!surface) return;
         this.restorePostBodyHtml(postId);
+        this.mapToResponse.delete(postId);
         this.mapToErrorMessage.delete(postId);
         this.resetOverlayInteractions(surface);
         surface.removeAttribute("title");
@@ -427,6 +596,7 @@ export class OverlayRenderer {
         const surface = this.getDetectSurface(postId);
         if (!surface) return;
         this.restorePostBodyHtml(postId);
+        this.mapToResponse.delete(postId);
         console.error("[OverlayRenderer] detection error", { postId, message });
         this.mapToErrorMessage.set(postId, message);
         surface.removeAttribute("title");
@@ -499,7 +669,9 @@ export class OverlayRenderer {
         const overlay = this.mapToOverlay.get(postId);
         if (!overlay) return;
         this.restorePostBodyHtml(postId);
-        this.dismissTooltipForOverlay(overlay);
+        this.clearDetectTooltipDocListeners(postId);
+        const tipSurface = this.mapToDetectPanel.get(postId) ?? overlay;
+        this.dismissTooltipForOverlay(tipSurface);
         overlay.remove();
         this.mapToOverlay.delete(postId);
         this.mapToResponse.delete(postId);
@@ -519,6 +691,12 @@ export class OverlayRenderer {
         }
     }
 
+    private clearDetectTooltipDocListeners(postId: PostId): void {
+        const fn = this.mapToDetectTooltipDocCleanup.get(postId);
+        fn?.();
+        this.mapToDetectTooltipDocCleanup.delete(postId);
+    }
+
     private restorePostBodyHtml(postId: PostId): void {
         const el = this.mapToTextBody.get(postId);
         const snapshot = this.mapToOriginalBodyHtml.get(postId);
@@ -529,12 +707,20 @@ export class OverlayRenderer {
     }
 
     /** Fact panel becomes a verdict-style badge; details live in hover tooltips like AI detection. */
-    renderFactCheckResult(postId: PostId, items: FactCheckItem[]): void {
+    renderFactCheckResult(
+        postId: PostId,
+        items: FactCheckItem[],
+        meta?: { factCheckMs?: number },
+    ): void {
         const ui = this.mapToFactCheckUi.get(postId);
         if (!ui) return;
         const { factPanel } = ui;
         ui.lastItems = items;
         ui.lastError = null;
+        ui.lastFactCheckServerMs =
+            typeof meta?.factCheckMs === "number" && Number.isFinite(meta.factCheckMs) && meta.factCheckMs >= 0
+                ? Math.round(meta.factCheckMs)
+                : undefined;
         factPanel.removeAttribute("title");
         this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
@@ -550,7 +736,9 @@ export class OverlayRenderer {
         }
 
         const hasHits = items.length > 0;
-        factPanel.style.backgroundColor = hasHits ? "#22c55e" : "#6b7280";
+        factPanel.style.backgroundColor = hasHits
+            ? this.getVerdictIndicatorColor("likely_human")
+            : this.getNeutralIndicatorColor();
         factPanel.style.cursor = "pointer";
         factPanel.textContent = hasHits
             ? `${items.length} fact check${items.length !== 1 ? "s" : ""}`
@@ -577,9 +765,10 @@ export class OverlayRenderer {
         const showTooltip = (): void => {
             if (tooltip) return;
             this.setOverlayLayer(postId, true);
+            const fcMs = ui.lastFactCheckServerMs;
             tooltip = isSimple
-                ? this.createSimpleFactCheckTooltip(items)
-                : this.createFactCheckTooltipDetailed(items);
+                ? this.createSimpleFactCheckTooltip(items, fcMs)
+                : this.createFactCheckTooltipDetailed(items, fcMs);
             this.mountTooltipOnBody(factPanel, tooltip);
         };
 
@@ -627,6 +816,7 @@ export class OverlayRenderer {
         const { factPanel, runFactCheck } = ui;
         ui.lastError = message;
         ui.lastItems = null;
+        ui.lastFactCheckServerMs = undefined;
         factPanel.removeAttribute("title");
         this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
@@ -738,9 +928,12 @@ export class OverlayRenderer {
         const plain = this.mapToPostText.get(postId) ?? "";
         const el = this.mapToTextBody.get(postId);
         if (!plain || !el) return;
-        if (normalizePlainText(el.innerText ?? "") !== plain) return;
+        if (modelPreprocessText(el.innerText ?? "") !== plain) return;
 
-        const usable = sanitizeHighlightSpans(spans, plain.length);
+        let usable = prepareHighlightSpans(plain, spans);
+        if (usable.length === 0) {
+            usable = sanitizeHighlightSpans(spans, plain.length);
+        }
         if (usable.length === 0) return;
 
         if (canApplyInnerHtmlHighlights(el)) {
@@ -778,11 +971,15 @@ export class OverlayRenderer {
 
     private showScanningStateForPost(postId: PostId): void {
         this.restorePostBodyHtml(postId);
+        const fc = this.mapToFactCheckUi.get(postId);
+        if (fc) {
+            fc.lastFactCheckServerMs = undefined;
+        }
         const surface = this.mapToDetectPanel.get(postId) ?? this.mapToOverlay.get(postId);
         if (!surface) return;
         this.resetOverlayInteractions(surface);
         surface.style.whiteSpace = "normal";
-        surface.style.backgroundColor = "#6b7280";
+        surface.style.backgroundColor = this.getNeutralIndicatorColor();
         surface.style.cursor = "default";
         surface.textContent = "Scanning...";
     }
@@ -791,16 +988,29 @@ export class OverlayRenderer {
         const ui = this.mapToFactCheckUi.get(postId);
         if (!ui) return;
         const { factPanel } = ui;
+        ui.lastFactCheckServerMs = undefined;
         factPanel.removeAttribute("title");
         this.clearFactCheckTooltipListeners(postId);
         this.resetOverlayInteractions(factPanel);
         factPanel.style.whiteSpace = "normal";
-        factPanel.style.backgroundColor = "#6b7280";
+        factPanel.style.backgroundColor = this.getNeutralIndicatorColor();
         factPanel.style.cursor = "default";
         factPanel.textContent = "Checking…";
     }
 
-    private createSimpleFactCheckTooltip(items: FactCheckItem[]): HTMLElement {
+    private appendPowerUserFactCheckTimingRow(tip: HTMLElement, factCheckMs: number | undefined): void {
+        if (!this.settings.powerUserTiming) return;
+        const row = document.createElement("div");
+        Object.assign(row.style, {
+            fontSize: "11px",
+            color: "#9ca3af",
+            marginTop: "10px",
+        });
+        row.textContent = `Fact check: ${this.formatOptionalServerMs(factCheckMs)}`;
+        tip.appendChild(row);
+    }
+
+    private createSimpleFactCheckTooltip(items: FactCheckItem[], factCheckMs?: number): HTMLElement {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
             position: "absolute",
@@ -835,6 +1045,7 @@ export class OverlayRenderer {
                 "Google’s fact-check index had no ClaimReview entries for these excerpts. " +
                 "Index coverage depends on what publishers have reviewed.";
             tip.appendChild(p);
+            this.appendPowerUserFactCheckTimingRow(tip, factCheckMs);
             return tip;
         }
 
@@ -847,10 +1058,11 @@ export class OverlayRenderer {
             .join("\n\n");
         tip.appendChild(body);
 
+        this.appendPowerUserFactCheckTimingRow(tip, factCheckMs);
         return tip;
     }
 
-    private createFactCheckTooltipDetailed(items: FactCheckItem[]): HTMLElement {
+    private createFactCheckTooltipDetailed(items: FactCheckItem[], factCheckMs?: number): HTMLElement {
         const tip = document.createElement("div");
         Object.assign(tip.style, {
             position: "absolute",
@@ -886,6 +1098,7 @@ export class OverlayRenderer {
             p.textContent =
                 "No ClaimReview matches for these excerpts. Fact checks only exist for claims publishers have reviewed.";
             tip.appendChild(p);
+            this.appendPowerUserFactCheckTimingRow(tip, factCheckMs);
             return tip;
         }
 
@@ -902,6 +1115,7 @@ export class OverlayRenderer {
             tip.appendChild(block);
         });
 
+        this.appendPowerUserFactCheckTimingRow(tip, factCheckMs);
         return tip;
     }
 
@@ -996,6 +1210,10 @@ export class OverlayRenderer {
         if (el.isConnected) return;
         this.dismissTooltipForOverlay(el);
         this.mapToOverlay.delete(postId);
+        this.clearFactCheckTooltipListeners(postId);
+        this.clearDetectTooltipDocListeners(postId);
+        this.mapToFactCheckUi.delete(postId);
+        this.mapToDetectPanel.delete(postId);
     }
 
     /**
@@ -1022,6 +1240,12 @@ export class OverlayRenderer {
         } else {
             this.mapToTextBody.delete(postId);
         }
+        // Pending manual UI stores detect vs fact in separate elements; getDetectSurface prefers
+        // mapToDetectPanel. Clear those before remounting so renderResult targets this overlay.
+        this.clearFactCheckTooltipListeners(postId);
+        this.mapToFactCheckUi.delete(postId);
+        this.mapToDetectPanel.delete(postId);
+        this.removeExistingHostOverlays(hostNode);
         const overlay = document.createElement("div");
         overlay.setAttribute(OverlayRenderer.OVERLAY_ATTR, "1");
         hostNode.style.position = "relative";
@@ -1029,10 +1253,10 @@ export class OverlayRenderer {
         const isSimple = this.settings.uiMode === "simple";
         Object.assign(overlay.style, {
             position: "absolute",
-            ...this.getBadgePosition(),
+            ...this.getBadgePositionForHost(hostNode),
             ...this.getPendingBadgeContainerStyle(isSimple),
             zIndex: "9999",
-            backgroundColor: "#6b7280",
+            backgroundColor: this.getNeutralIndicatorColor(),
             color: "#fff",
         });
         this.mapToOverlay.set(postId, overlay);
@@ -1052,6 +1276,8 @@ export class OverlayRenderer {
         Object.assign(tip.style, {
             minWidth: "200px",
             maxWidth: "300px",
+            maxHeight: "400px",
+            overflowY: "auto",
             padding: "14px",
             borderRadius: "8px",
             backgroundColor: "#1f2937",
@@ -1060,7 +1286,7 @@ export class OverlayRenderer {
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
-            pointerEvents: "none",
+            pointerEvents: "auto",
         });
 
         const header = document.createElement("div");
@@ -1086,6 +1312,64 @@ export class OverlayRenderer {
         );
         if (langLineSimple) {
             tip.appendChild(this.makeTooltipLanguageRow(langLineSimple, "13px", "#9ca3af"));
+        }
+
+        if (this.settings.powerUserTiming) {
+            const timingEarly = document.createElement("div");
+            Object.assign(timingEarly.style, {
+                fontSize: "11px",
+                color: "#9ca3af",
+                marginTop: "4px",
+                marginBottom: "6px",
+            });
+            timingEarly.textContent = this.buildDetectTimingLineOnly(res);
+            tip.appendChild(timingEarly);
+        }
+
+        const satireScore = (res as any)?.satire_score;
+        const satireLabelRaw = (res as any)?.satire_label;
+        const satireLabel =
+            typeof satireLabelRaw === "string" && satireLabelRaw.toLowerCase() === "satire"
+                ? "satire"
+                : typeof satireLabelRaw === "string" &&
+                    (satireLabelRaw.toLowerCase() === "non_satire" ||
+                        satireLabelRaw.toLowerCase() === "non-satire")
+                    ? "non_satire"
+                    : null;
+        if (typeof satireScore === "number" || satireLabel !== null) {
+            const line = document.createElement("div");
+            Object.assign(line.style, {
+                marginTop: "6px",
+                marginBottom: "8px",
+                fontSize: "12px",
+                color: "#d1d5db",
+                fontWeight: "600",
+            });
+            const pct = typeof satireScore === "number" ? ` (${Math.round(satireScore * 100)}%)` : "";
+            line.textContent =
+                "Satire: " +
+                (satireLabel === "satire" ? "Yes" : satireLabel === "non_satire" ? "No" : "Unknown") +
+                pct;
+            tip.appendChild(line);
+        }
+        if (typeof satireScore === "number" && satireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD) {
+            const banner = document.createElement("div");
+            Object.assign(banner.style, {
+                marginTop: "8px",
+                marginBottom: "8px",
+                padding: "8px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(251, 191, 36, 0.12)",
+                border: "1px solid rgba(251, 191, 36, 0.45)",
+                color: "#fde68a",
+                fontSize: "12px",
+                lineHeight: "1.45",
+            });
+            banner.textContent =
+                satireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                    ? "Satire/parody detected. AI scores may be lowered on satirical posts to reduce false positives."
+                    : "Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.";
+            tip.appendChild(banner);
         }
 
         const summary = document.createElement("div");
@@ -1125,7 +1409,7 @@ export class OverlayRenderer {
             lineHeight: "1.5",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             zIndex: OverlayRenderer.TOOLTIP_Z_INDEX,
-            pointerEvents: "none",
+            pointerEvents: "auto",
         });
 
         // header row: confidence and verdict label 
@@ -1160,6 +1444,50 @@ export class OverlayRenderer {
             tip.appendChild(this.makeTooltipLanguageRow(langLine, "12px", "#9ca3af"));
         }
 
+        const satireScore = (res as any)?.satire_score;
+        const satireLabelRaw = (res as any)?.satire_label;
+        const satireLabel =
+            typeof satireLabelRaw === "string" && satireLabelRaw.toLowerCase() === "satire"
+                ? "satire"
+                : typeof satireLabelRaw === "string" &&
+                    (satireLabelRaw.toLowerCase() === "non_satire" ||
+                        satireLabelRaw.toLowerCase() === "non-satire")
+                    ? "non_satire"
+                    : null;
+        if (typeof satireScore === "number" || satireLabel !== null) {
+            const line = document.createElement("div");
+            Object.assign(line.style, {
+                marginBottom: "8px",
+                fontSize: "11px",
+                color: "#d1d5db",
+                fontWeight: "600",
+            });
+            const pct = typeof satireScore === "number" ? ` (${Math.round(satireScore * 100)}%)` : "";
+            line.textContent =
+                "Satire: " +
+                (satireLabel === "satire" ? "Yes" : satireLabel === "non_satire" ? "No" : "Unknown") +
+                pct;
+            tip.appendChild(line);
+        }
+        if (typeof satireScore === "number" && satireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD) {
+            const banner = document.createElement("div");
+            Object.assign(banner.style, {
+                marginBottom: "8px",
+                padding: "8px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(251, 191, 36, 0.12)",
+                border: "1px solid rgba(251, 191, 36, 0.45)",
+                color: "#fde68a",
+                fontSize: "11px",
+                lineHeight: "1.45",
+            });
+            banner.textContent =
+                satireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                    ? "Satire/parody detected. AI scores may be lowered on satirical posts to reduce false positives."
+                    : "Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.";
+            tip.appendChild(banner);
+        }
+
         // confidence progress bar
         const pct = Math.round(res.confidence * 100);
         const barColor = pct >= 70 ? "#ef4444" : pct >= 40 ? "#f59e0b" : "#22c55e";
@@ -1182,6 +1510,17 @@ export class OverlayRenderer {
         });
         track.appendChild(fill);
         tip.appendChild(track);
+
+        if (this.settings.powerUserTiming) {
+            const timingEarly = document.createElement("div");
+            Object.assign(timingEarly.style, {
+                fontSize: "10px",
+                color: "#9ca3af",
+                marginBottom: "8px",
+            });
+            timingEarly.textContent = this.buildDetectTimingLineOnly(res);
+            tip.appendChild(timingEarly);
+        }
 
         const showSegmentDetail = this.settings.highlightSegments;
 
@@ -1277,12 +1616,18 @@ export class OverlayRenderer {
             borderTop: "1px solid #374151", // subtle divider
             paddingTop: "6px",
         });
-        meta.textContent =
-            `Model: ${res.explanation.model.name} v${res.explanation.model.version}` +
-            ` · ${res.explanation.timing.totalMs}ms`;
-        // if the result came from cache, note that so the user knows it wasn't a fresh call
-        if (res.explanation.cache.hit) {
-            meta.textContent += " (cached)";
+        if (this.settings.powerUserTiming) {
+            meta.textContent = `Model: ${res.explanation.model.name} v${res.explanation.model.version}`;
+            if (res.explanation.cache.hit) {
+                meta.textContent += " (cached)";
+            }
+        } else {
+            meta.textContent =
+                `Model: ${res.explanation.model.name} v${res.explanation.model.version}` +
+                ` · ${res.explanation.timing.totalMs}ms`;
+            if (res.explanation.cache.hit) {
+                meta.textContent += " (cached)";
+            }
         }
         tip.appendChild(meta);
 
@@ -1469,7 +1814,8 @@ export class OverlayRenderer {
             color: "#9ca3af",
             marginTop: "4px",
         });
-        imgMeta.textContent = `Model: ${imgRes.model.name} v${imgRes.model.version} · ${imgRes.timingMs}ms`;
+        const imgMs = this.formatImageTimingMs(imgRes);
+        imgMeta.textContent = `Model: ${imgRes.model.name} v${imgRes.model.version} · ${imgMs}ms`;
         section.appendChild(imgMeta);
 
         container.appendChild(section);
@@ -1529,5 +1875,41 @@ export class OverlayRenderer {
         if (res.detectionSource === "video") return "Video";
         if (res.detectionSource === "gif") return "GIF";
         return null;
+    }
+
+    private formatOptionalServerMs(n: number | undefined): string {
+        if (n == null || !Number.isFinite(n) || n < 0) return "—";
+        return `${Math.round(n)}ms`;
+    }
+
+    /** Prefer server `detect_ms`; fall back to worker-measured /detect round-trip when API omits it. */
+    private resolveDetectTimingMsForTooltip(res: DetectionResponse): number | undefined {
+        const server = res.explanation.serverTiming?.detectMs;
+        if (typeof server === "number" && Number.isFinite(server) && server >= 0) {
+            return Math.round(server);
+        }
+        const client = res.explanation.timing?.totalMs;
+        if (typeof client === "number" && Number.isFinite(client) && client >= 0) {
+            return Math.round(client);
+        }
+        return undefined;
+    }
+
+    /** Detect / round-trip ms only (fact-check ms lives on the fact-check tooltip). */
+    private buildDetectTimingLineOnly(res: DetectionResponse): string {
+        const detectMs = this.resolveDetectTimingMsForTooltip(res);
+        return `Detect: ${this.formatOptionalServerMs(detectMs)}`;
+    }
+
+    private formatImageTimingMs(imgRes: ImageDetectionResult): number {
+        if (
+            this.settings.powerUserTiming &&
+            typeof imgRes.serverDetectMs === "number" &&
+            Number.isFinite(imgRes.serverDetectMs) &&
+            imgRes.serverDetectMs >= 0
+        ) {
+            return Math.round(imgRes.serverDetectMs);
+        }
+        return imgRes.timingMs;
     }
 }

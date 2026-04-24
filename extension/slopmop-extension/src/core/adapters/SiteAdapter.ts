@@ -7,6 +7,7 @@ export interface SiteAdapter {
   getImageNodes(postNode: Element): HTMLImageElement[];
   getAuthorHandle(postNode: Element): string | null;
   getTimestampText(postNode: Element): string | null;
+  getSubreddit?(postNode: Element): string | null;
   findVisibleCommentNodes(root?: ParentNode, limit?: number): Element[];
   getCommentId(commentNode: Element): string | null;
   getCommentTextNode(commentNode: Element): HTMLElement | null;

@@ -1,4 +1,5 @@
 import type { SiteAdapter } from "./SiteAdapter";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
 
 export class RedditAdapter implements SiteAdapter {
   getSiteId(): string {
@@ -65,7 +66,7 @@ export class RedditAdapter implements SiteAdapter {
     const text = this.getTextNode(postNode)?.innerText?.slice(0, 300).trim() ?? "";
     const base = `${permalink ?? ""}|${author}|${text}`;
 
-    return base ? `reddit-fallback-${this.fnv1a(base)}` : null;
+    return base ? `reddit-fallback-${fnv1a32Hex(base)}` : null;
   }
 
   getAuthorHandle(postNode: Element): string | null {
@@ -102,6 +103,18 @@ export class RedditAdapter implements SiteAdapter {
     if (!href) return null;
 
     return this.normalizeUrl(href);
+  }
+
+  getSubreddit(postNode: Element): string | null {
+    // Prefer parsing from permalink: /r/{sub}/comments/...
+    const permalink = this.getPermalink(postNode) ?? window.location.href;
+    try {
+      const u = new URL(permalink);
+      const m = u.pathname.match(/\/r\/([^/]+)\//i);
+      return m?.[1] ? m[1].trim() : null;
+    } catch {
+      return null;
+    }
   }
 
   getTextNode(postNode: Element): HTMLElement | null {
@@ -194,7 +207,7 @@ export class RedditAdapter implements SiteAdapter {
     if (fromUrl) return fromUrl;
 
     const text = this.getCommentTextNode(commentNode)?.innerText?.slice(0, 300).trim() ?? "";
-    return text ? `reddit-comment-fallback-${this.fnv1a(text)}` : null;
+    return text ? `reddit-comment-fallback-${fnv1a32Hex(text)}` : null;
   }
 
   getCommentPermalink(commentNode: Element): string | null {
@@ -281,14 +294,4 @@ export class RedditAdapter implements SiteAdapter {
 
 
 
-// hash function to get unique identifier for each post node 
-
-  private fnv1a(input: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16);
-  }
 }

@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Class-based dark mode — mirrors the main tailwind.css config */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Shadow DOM host positioning */
 :host {
   all: initial;

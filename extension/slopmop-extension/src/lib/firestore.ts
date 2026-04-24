@@ -95,6 +95,7 @@ export async function resetStats(uid: string): Promise<void> {
     postsScanned: 0,
     aiDetected: 0,
     postsProcessing: 0,
+    platformCounts: {},
   });
 }
 

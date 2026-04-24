@@ -19,6 +19,11 @@ export default function Navbar() {
             </Link>
           </li>
           <li>
+            <Link href="/report" className="hover:underline">
+              Report
+            </Link>
+          </li>
+          <li>
             <a href="/#faq" className="hover:underline">
               FAQ
             </a>
@@ -28,6 +33,11 @@ export default function Navbar() {
               <li>
                 <Link href="/settings" className="hover:underline">
                   Settings
+                </Link>
+              </li>
+              <li>
+                <Link href="/admin/reports" className="hover:underline">
+                  Admin Reports
                 </Link>
               </li>
               <li>

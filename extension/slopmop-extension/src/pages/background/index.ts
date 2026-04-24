@@ -21,9 +21,13 @@ import {
   detectImage,
   detectText,
   factCheckText,
+  satireCheckText,
   FactCheckApiError,
+  submitExtensionReport,
   type DetectImageResponse,
+  type ImageModelVariant,
   type DetectResponse,
+  type SubmitExtensionReportPayload,
 } from '@src/lib/api';
 import {
   isTextLanguageSupported,
@@ -38,6 +42,7 @@ import {
   tryAnalyzePostLanguageUnsupported,
   tryPopupDetectLanguageBlock,
 } from '@src/pages/background/detectLanguageGate';
+
 import type {
   DetectionResponse,
   HighlightSpan,
@@ -47,6 +52,7 @@ import type {
 } from '@src/types/domain';
 import {
   defaultUserSettings,
+  mergeDetectionSettingsFromStored,
   normalizeDetectionLanguages,
   type DetectionSettings,
 } from '@src/utils/userSettings';
@@ -57,12 +63,32 @@ import {
   validateHost,
 } from '@src/utils/disabledWebsites';
 import {
+  applyBatteryThrottleToSettings,
+  applyLowBatteryModeToSettings,
+  BATTERY_THROTTLE_ACTIVE_KEY,
+  BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+} from '@src/utils/batteryThrottle';
+import {
   buildHistoryEntry,
   saveHistoryEntry,
   getHistory,
   clearHistory,
   togglePin,
+  findMatchingHistoryEntry,
+  findMatchingHistoryByFingerprint,
+  explanationHighlightsFromSpans,
+  type HistoryEntry,
 } from '@src/utils/detectionHistory';
+import { computePostContentFingerprint } from '@src/utils/postContentFingerprint';
+import { fnv1a32Hex } from '@src/utils/fnv1aHash';
+import { initBatteryThrottleController } from '@src/pages/background/batteryThrottleController';
+import {
+  syncBatteryAutoLowBatteryFromStatus,
+  syncBatteryThrottleFromStatus,
+} from '@src/pages/background/batteryThrottleController';
+import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
+import { handleFactCheckRequest } from '@src/pages/background/factCheckController';
+import type { SiteId } from '@src/types/domain';
 import {
   getCachedDetectionEntry,
   saveCachedDetection,
@@ -71,54 +97,75 @@ import {
 
 console.log('background script loaded');
 
-// ── Post analysis ────────────────────────────────────────────────
+// -- Post analysis ------------------------------------------------
 // Max number of images to fetch concurrently.
 const IMAGE_FETCH_CONCURRENCY = 3;
 // hardcoded developer toggle. keep true for offline fake responses.
 const USE_FAKE_DETECTION = false;
-const STATS_STORAGE_KEYS = ['postsScanned', 'aiDetected', 'postsProcessing'];
 type StoredStats = {
   postsScanned: number;
   aiDetected: number;
   postsProcessing: number;
+  /** Detection count keyed by platform hostname, e.g. { "reddit.com": 12 }. */
+  platformCounts: Record<string, number>;
 };
+
+/** Returns the namespaced storage keys for a user's scalar stats. */
+function statsKeys(uid: string) {
+  return {
+    postsScanned: `postsScanned:${uid}`,
+    aiDetected: `aiDetected:${uid}`,
+    postsProcessing: `postsProcessing:${uid}`,
+  };
+}
+
+/** Returns the namespaced storage key for a user's per-platform counts JSON blob. */
+function platformCountsKey(uid: string): string {
+  return `platformCounts:${uid}`;
+}
 
 let statsWriteChain: Promise<void> = Promise.resolve();
 
 async function getDetectionSettings(): Promise<DetectionSettings> {
-  const stored = await browser.storage.local.get('settings');
-  const saved = (stored.settings ?? {}) as Partial<DetectionSettings>;
+  const stored = await browser.storage.local.get([
+    'settings',
+    BATTERY_THROTTLE_ACTIVE_KEY,
+    BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY,
+  ]);
+  const base = mergeDetectionSettingsFromStored(stored.settings);
+  const throttleOn = stored[BATTERY_THROTTLE_ACTIVE_KEY] === true;
+  const autoLowBatteryOn = stored[BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY] === true;
+  const withLowBattery = applyLowBatteryModeToSettings(base, base.lowBatteryMode || autoLowBatteryOn);
+  return applyBatteryThrottleToSettings(withLowBattery, throttleOn);
+}
+
+async function readStoredStats(uid: string): Promise<StoredStats> {
+  const keys = statsKeys(uid);
+  const pcKey = platformCountsKey(uid);
+  const stored = await browser.storage.local.get([...Object.values(keys), pcKey]);
   return {
-    ...defaultUserSettings.settings,
-    ...saved,
-    platforms: {
-      ...defaultUserSettings.settings.platforms,
-      ...(saved.platforms ?? {}),
-    },
-    detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
+    postsScanned: typeof stored[keys.postsScanned] === 'number' ? (stored[keys.postsScanned] as number) : 0,
+    aiDetected: typeof stored[keys.aiDetected] === 'number' ? (stored[keys.aiDetected] as number) : 0,
+    postsProcessing: typeof stored[keys.postsProcessing] === 'number' ? (stored[keys.postsProcessing] as number) : 0,
+    platformCounts: (stored[pcKey] as Record<string, number> | undefined) ?? {},
   };
 }
 
-function normalizeStoredStats(stored: Record<string, unknown>): StoredStats {
-  return {
-    postsScanned: typeof stored.postsScanned === 'number' ? stored.postsScanned : 0,
-    aiDetected: typeof stored.aiDetected === 'number' ? stored.aiDetected : 0,
-    postsProcessing: typeof stored.postsProcessing === 'number' ? stored.postsProcessing : 0,
-  };
-}
-
-async function readStoredStats(): Promise<StoredStats> {
-  const stored = await browser.storage.local.get(STATS_STORAGE_KEYS);
-  return normalizeStoredStats(stored);
-}
-
-async function persistStats(stats: StoredStats): Promise<void> {
-  await browser.storage.local.set(stats);
-  const uid = auth?.currentUser?.uid;
-  if (!uid) return;
-
+async function persistStats(uid: string, stats: StoredStats): Promise<void> {
+  const keys = statsKeys(uid);
+  await browser.storage.local.set({
+    [keys.postsScanned]: stats.postsScanned,
+    [keys.aiDetected]: stats.aiDetected,
+    [keys.postsProcessing]: stats.postsProcessing,
+    [platformCountsKey(uid)]: stats.platformCounts,
+  });
   try {
-    await updateDetectionStats(uid, stats);
+    await updateDetectionStats(uid, {
+      postsScanned: stats.postsScanned,
+      aiDetected: stats.aiDetected,
+      postsProcessing: stats.postsProcessing,
+      platformCounts: stats.platformCounts,
+    });
   } catch (error) {
     console.error('[SlopMop] Failed to sync detection stats', error);
   }
@@ -126,9 +173,11 @@ async function persistStats(stats: StoredStats): Promise<void> {
 
 function queueStatsUpdate(mutator: (stats: StoredStats) => StoredStats): Promise<void> {
   const next = statsWriteChain.then(async () => {
-    const current = await readStoredStats();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return; // no user — don't touch any stats
+    const current = await readStoredStats(uid);
     const updated = mutator(current);
-    await persistStats(updated);
+    await persistStats(uid, updated);
   });
 
   statsWriteChain = next.catch((error) => {
@@ -140,39 +189,54 @@ function queueStatsUpdate(mutator: (stats: StoredStats) => StoredStats): Promise
 
 async function markScanStarted(): Promise<void> {
   await queueStatsUpdate((stats) => ({
+    ...stats,
     postsScanned: stats.postsScanned + 1,
-    aiDetected: stats.aiDetected,
     postsProcessing: stats.postsProcessing + 1,
   })).catch((error) => {
     console.error('[SlopMop] Failed to mark scan started', error);
   });
 }
 
-async function markScanFinished(aiDetected: boolean): Promise<void> {
-  await queueStatsUpdate((stats) => ({
-    postsScanned: stats.postsScanned,
-    aiDetected: stats.aiDetected + (aiDetected ? 1 : 0),
-    postsProcessing: Math.max(0, stats.postsProcessing - 1),
-  })).catch((error) => {
+/**
+ * Called when a detection finishes. Increments aiDetected on a positive verdict,
+ * decrements postsProcessing, and bumps the per-platform count.
+ *
+ * @param aiDetected - true when the verdict is 'likely_ai'
+ * @param site       - platform hostname e.g. "reddit.com"
+ */
+async function markScanFinished(aiDetected: boolean, site: string): Promise<void> {
+  await queueStatsUpdate((stats) => {
+    const platformCounts = { ...stats.platformCounts };
+    platformCounts[site] = (platformCounts[site] ?? 0) + 1;
+    return {
+      ...stats,
+      aiDetected: stats.aiDetected + (aiDetected ? 1 : 0),
+      postsProcessing: Math.max(0, stats.postsProcessing - 1),
+      platformCounts,
+    };
+  }).catch((error) => {
     console.error('[SlopMop] Failed to mark scan finished', error);
   });
 }
 
 async function initializeLocalStats(): Promise<void> {
-  const current = await readStoredStats();
-  const next: StoredStats = {
-    postsScanned: current.postsScanned,
-    aiDetected: current.aiDetected,
-    // In-flight scans cannot survive a background-script restart.
-    postsProcessing: 0,
-  };
+  const uid = auth?.currentUser?.uid;
+  if (!uid) return;
+  const current = await readStoredStats(uid);
+  // In-flight scans cannot survive a background-script restart — reset to 0.
+  if (current.postsProcessing !== 0) {
+    await persistStats(uid, { ...current, postsProcessing: 0 });
+  }
+}
 
-  if (
-    current.postsScanned !== next.postsScanned ||
-    current.aiDetected !== next.aiDetected ||
-    current.postsProcessing !== next.postsProcessing
-  ) {
-    await persistStats(next);
+/** Returns true when the given tab is an incognito/private-browsing tab. */
+async function isTabIncognito(tabId: number): Promise<boolean> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    return tab.incognito;
+  } catch {
+    // Tab may already be closed; treat as non-incognito so errors don't silently suppress stats.
+    return false;
   }
 }
 
@@ -205,6 +269,30 @@ async function drainAnalysisQueue(): Promise<void> {
 
 initFirebase();
 
+/** MV3 SW can terminate before `void initBatteryThrottleController()` finishes; schedule via alarms so the async handler runs in an event that keeps the worker alive until completion. */
+const BATTERY_INIT_ALARM = 'slopmopBatteryInit';
+
+function scheduleBatteryInitAlarm(): void {
+  void browser.alarms.create(BATTERY_INIT_ALARM, { when: Date.now() + 1 });
+}
+
+browser.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== BATTERY_INIT_ALARM) return;
+  try {
+    await initBatteryThrottleController();
+  } catch (err) {
+    console.error('[SlopMop] Battery throttle controller failed to start', err);
+  }
+});
+
+browser.runtime.onInstalled.addListener(() => {
+  scheduleBatteryInitAlarm();
+});
+browser.runtime.onStartup.addListener(() => {
+  scheduleBatteryInitAlarm();
+});
+scheduleBatteryInitAlarm();
+
 // Sync the current Firebase user to browser.storage.local so the
 // content-script React tree can read auth state reactively.
 if (auth) {
@@ -213,12 +301,49 @@ if (auth) {
       browser.storage.local.set({
         slopmopUser: { uid: firebaseUser.uid, email: firebaseUser.email },
       });
+
+      // Load this user's settings + stats from Firestore and write them into
+      // namespaced storage keys so the popup always sees this account's data.
       try {
-        const stats = await readStoredStats();
-        await updateDetectionStats(firebaseUser.uid, stats);
+        const userData = await getOrCreateUserSettings(firebaseUser.uid);
+        const keys = statsKeys(firebaseUser.uid);
+
+        // Load per-account UI preferences (simpleMode, accessibilityMode) that are
+        // stored locally under namespaced keys so they don't bleed across accounts.
+        const uiPrefKeys = [
+          `simpleMode:${firebaseUser.uid}`,
+          `accessibilityMode:${firebaseUser.uid}`,
+        ];
+        const uiPrefs = await browser.storage.local.get(uiPrefKeys);
+        const simpleMode =
+          typeof uiPrefs[`simpleMode:${firebaseUser.uid}`] === 'boolean'
+            ? (uiPrefs[`simpleMode:${firebaseUser.uid}`] as boolean)
+            : false;
+        const accessibilityMode =
+          typeof uiPrefs[`accessibilityMode:${firebaseUser.uid}`] === 'boolean'
+            ? (uiPrefs[`accessibilityMode:${firebaseUser.uid}`] as boolean)
+            : false;
+
+        await browser.storage.local.set({
+          settings: {
+            ...defaultUserSettings.settings,
+            ...userData.settings,
+            platforms: {
+              ...defaultUserSettings.settings.platforms,
+              ...(userData.settings.platforms ?? {}),
+            },
+            accessibilityMode,
+          },
+          simpleMode,
+          [keys.postsScanned]: userData.stats.postsScanned ?? 0,
+          [keys.aiDetected]: userData.stats.aiDetected ?? 0,
+          [keys.postsProcessing]: 0,
+          [platformCountsKey(firebaseUser.uid)]: userData.stats.platformCounts ?? {},
+        });
       } catch (e) {
-        console.error('[SlopMop] Failed to sync local stats to Firestore', e);
+        console.error('[SlopMop] Failed to load user settings/stats on login', e);
       }
+
       // Sync ignored sites from Firestore to local storage so the content
       // script can read them synchronously without a Firestore round-trip.
       try {
@@ -228,29 +353,36 @@ if (auth) {
         console.error('[SlopMop] Failed to sync ignoredSites from Firestore', e);
       }
     } else {
-      browser.storage.local.remove('slopmopUser');
+      // On logout: reset the shared settings key and clear transient results.
+      // Namespaced stats (postsScanned:<uid> etc.) are left intact in storage
+      // so they're still there if the user logs back in.
+      // Reset flat UI-preference keys so the next account starts clean.
+      await browser.storage.local.set({
+        settings: defaultUserSettings.settings,
+        simpleMode: false,
+      });
+      await browser.storage.local.remove([
+        'slopmopUser',
+        'detectResponse',
+        'lastDetectResponse',
+        'lastDetectLanguageUnsupported',
+        'lastFactCheckResult',
+        'lastFactCheckError',
+      ]);
     }
   });
 }
 
-// Disable the default popup so that action.onClicked fires.
-// The popup page is kept in the manifest only so CRXJS bundles it;
-// it's actually rendered by the content script directly in the page DOM.
-browser.action.setPopup({ popup: '' });
+// No default_popup in the manifest — action.onClicked fires on every click.
 initializeLocalStats().catch((error) => {
   console.error('[SlopMop] Failed to initialize detection stats', error);
 });
 
 // Initialize default settings on install
 browser.runtime.onInstalled.addListener(async () => {
-  const result = await browser.storage.local.get(['settings', ...STATS_STORAGE_KEYS]);
+  const result = await browser.storage.local.get('settings');
   if (!result.settings) {
-    await browser.storage.local.set({
-      postsScanned: typeof result.postsScanned === 'number' ? result.postsScanned : 0,
-      aiDetected: typeof result.aiDetected === 'number' ? result.aiDetected : 0,
-      postsProcessing: typeof result.postsProcessing === 'number' ? result.postsProcessing : 0,
-      settings: defaultUserSettings.settings,
-    });
+    await browser.storage.local.set({ settings: defaultUserSettings.settings });
   }
 });
 
@@ -262,11 +394,13 @@ interface BackgroundMessage {
   password?: string;
   uid?: string;
   site?: string;
+  contentFingerprint?: string;
   patch?: Partial<DetectionSettings>;
   text?: string;
   url?: string;
   payload?: NormalizedPostContent;
   postId?: string;
+  reportPayload?: SubmitExtensionReportPayload;
 }
 
 interface MessageResponse {
@@ -307,12 +441,44 @@ browser.runtime.onMessage.addListener((message: unknown, sender: browser.Runtime
       return handleResetSettings(msg.uid!);
     case 'SLOPMOP_DETECT':
       return handleDetect(msg.text ?? '');
+    case 'SLOPMOP_SUBMIT_REPORT':
+      return handleSubmitReport(msg.reportPayload);
     case 'SLOPMOP_FACT_CHECK': {
       const tabId = sender.tab?.id;
       if (!tabId) {
         return Promise.resolve({ success: false, error: 'No active tab.' });
       }
-      return handleFactCheck(msg.text ?? '', msg.postId ?? '', tabId);
+      return handleFactCheck(msg.text ?? '', msg.postId ?? '', tabId, {
+        site: msg.site as SiteId | undefined,
+        contentFingerprint: msg.contentFingerprint as string | undefined,
+      });
+    }
+    case 'SLOPMOP_BATTERY_STATUS': {
+      const s = msg.payload as { level?: unknown; charging?: unknown } | undefined;
+      const level = typeof s?.level === 'number' ? s.level : Number(s?.level);
+      const charging = typeof s?.charging === 'boolean' ? s.charging : Boolean(s?.charging);
+      if (!Number.isFinite(level)) return;
+
+      // Heartbeat + latest snapshot for debugging.
+      // (Service worker context supports storage; offscreen does not.)
+      void browser.storage.local.get('slopmopOffscreenBatteryStartedAt').then((r) => {
+        void browser.storage.local.set({
+          slopmopOffscreenBatteryLastPingAt: Date.now(),
+          slopmopOffscreenBatteryStartedAt:
+            (r.slopmopOffscreenBatteryStartedAt as number | undefined) ?? Date.now(),
+          slopmopLastBatterySnapshot: {
+            at: Date.now(),
+            level,
+            charging,
+            source: 'offscreen',
+          },
+        });
+      });
+
+      // Apply thresholds to local-only flags without mutating user settings.
+      void syncBatteryThrottleFromStatus({ level, charging });
+      void syncBatteryAutoLowBatteryFromStatus({ level, charging });
+      return;
     }
     case 'SLOPMOP_GET_IGNORED_SITES':
       return handleGetIgnoredSites(msg.uid);
@@ -450,7 +616,16 @@ async function handleUpdateDetectionSettings(
 
 async function handleResetStats(uid: string): Promise<MessageResponse> {
   try {
+    // Reset Firestore first — if this fails, don't touch local storage.
     await resetStats(uid);
+    // Clear local namespaced stat keys so the popup sees zeroed values immediately.
+    const keys = statsKeys(uid);
+    await browser.storage.local.set({
+      [keys.postsScanned]: 0,
+      [keys.aiDetected]: 0,
+      [keys.postsProcessing]: 0,
+      [platformCountsKey(uid)]: {},
+    });
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -520,7 +695,9 @@ async function handleRemoveIgnoredSite(uid: string | undefined, site: string): P
 
 async function handleGetHistory(): Promise<MessageResponse> {
   try {
-    const entries = await getHistory();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return { success: true, data: [] };
+    const entries = await getHistory(uid);
     return { success: true, data: entries };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -529,7 +706,9 @@ async function handleGetHistory(): Promise<MessageResponse> {
 
 async function handleClearHistory(): Promise<MessageResponse> {
   try {
-    await clearHistory();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return { success: true };
+    await clearHistory(uid);
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -538,7 +717,9 @@ async function handleClearHistory(): Promise<MessageResponse> {
 
 async function handleTogglePin(postId: string): Promise<MessageResponse> {
   try {
-    await togglePin(postId);
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return { success: false, error: 'Not signed in' };
+    await togglePin(uid, postId);
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: (err as Error).message };
@@ -565,6 +746,60 @@ async function handleDetect(text: string): Promise<MessageResponse> {
   }
 }
 
+async function handleSubmitReport(
+  reportPayload: SubmitExtensionReportPayload | undefined,
+): Promise<MessageResponse> {
+  try {
+    if (!reportPayload || typeof reportPayload !== 'object') {
+      return { success: false, error: 'Invalid report payload.' };
+    }
+
+    const validTypes: SubmitExtensionReportPayload['type'][] = [
+      'incorrect_detection',
+      'bug',
+      'other',
+    ];
+
+    if (!validTypes.includes(reportPayload.type)) {
+      return { success: false, error: 'Invalid report type.' };
+    }
+
+    const message = reportPayload.message?.trim();
+    if (!message) {
+      return { success: false, error: 'Report message is required.' };
+    }
+
+    let authToken: string | undefined;
+    if (auth?.currentUser) {
+      try {
+        authToken = await auth.currentUser.getIdToken();
+      } catch {
+        authToken = undefined;
+      }
+    }
+
+    const reportData = await submitExtensionReport(
+      {
+        type: reportPayload.type,
+        message,
+        pageUrl: reportPayload.pageUrl?.trim() || undefined,
+        reporterEmail:
+          reportPayload.reporterEmail?.trim().toLowerCase() ||
+          auth?.currentUser?.email ||
+          undefined,
+        userAgent:
+          reportPayload.userAgent?.trim() ||
+          (typeof navigator !== 'undefined' ? navigator.userAgent : undefined),
+      },
+      authToken,
+    );
+
+    return { success: true, data: reportData };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
 /**
  * Fact-check does not use the same language gate as AI detection so any post text can be checked.
  * Results are pushed to the tab + storage for the popup panel.
@@ -573,20 +808,17 @@ async function handleFactCheck(
   text: string,
   postId: string,
   tabId: number,
+  opts?: { site?: SiteId; contentFingerprint?: string },
 ): Promise<MessageResponse> {
   try {
-    const { items } = await factCheckText(text);
-    await browser.storage.local.set({
-      lastFactCheckResult: { postId, items, updatedAtMs: Date.now() },
-      lastFactCheckError: null,
+    const res = await handleFactCheckRequest({
+      text,
+      postId,
+      tabId,
+      site: opts?.site,
+      contentFingerprint: opts?.contentFingerprint,
     });
-    await browser.tabs
-      .sendMessage(tabId, {
-        type: 'FACT_CHECK_RESULT',
-        payload: { postId, items },
-      })
-      .catch(() => {});
-    return { success: true, data: { items } };
+    return res;
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Fact check failed.';
@@ -610,6 +842,7 @@ async function handleFactCheck(
 
 /**
  * Saves a successful detection result to history, guarded by incognito check.
+ * History is namespaced by the logged-in user's UID — skipped if not signed in.
  * Failures are swallowed — history is best-effort and must never affect detection.
  */
 async function maybeSaveToHistory(
@@ -618,8 +851,11 @@ async function maybeSaveToHistory(
   tabId: number,
 ): Promise<void> {
   try {
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return; // no user logged in — don't save history
     const tab = await browser.tabs.get(tabId);
     if (tab.incognito) return;
+    const contentFingerprint = computePostContentFingerprint(post);
     const entry = buildHistoryEntry(
       post.postId,
       post.url,
@@ -627,14 +863,116 @@ async function maybeSaveToHistory(
       post.text?.plain ?? '',
       response.confidence,
       response.verdict,
+      post.domContext?.authorHandle ?? '',
+      contentFingerprint,
+      {
+        textExplanationSummary: response.explanation.summary,
+        textHighlightedSpans: response.explanation.highlightedSpans,
+        imageResult: response.imageResult,
+        detectionSource: response.detectionSource,
+      },
     );
-    await saveHistoryEntry(entry);
+    await saveHistoryEntry(uid, entry);
   } catch (err) {
     console.error('[SlopMop] Failed to save history entry', err);
   }
 }
 
 /**
+ * If history has the same platform, author handle, and text snippet as a prior detection,
+ * resend that verdict without calling the API (no stats / queue impact).
+ */
+async function tryReplayFromHistory(post: NormalizedPostContent, tabId: number): Promise<boolean> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return false;
+
+    const plainText = post.text?.plain ?? '';
+    if (post.contentType === 'IMAGE' && !plainText.trim()) return false;
+
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return false;
+    const entries = await getHistory(uid);
+    const match = findMatchingHistoryEntry(
+      entries,
+      post.site,
+      post.domContext?.authorHandle ?? '',
+      plainText,
+    );
+    if (!match) return false;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: false });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After media is resolved: replay if content fingerprint matches a prior run (reposts / stolen posts).
+ */
+async function tryReplayFromHistoryByFingerprint(
+  post: NormalizedPostContent,
+  tabId: number,
+): Promise<HistoryEntry | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return null;
+
+    const fp = computePostContentFingerprint(post);
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return null;
+    const entries = await getHistory(uid);
+    const match = findMatchingHistoryByFingerprint(entries, post.site, fp);
+    if (!match) return null;
+
+    const payload = buildDetectionResponseFromHistory(match, post.postId, { fingerprint: true });
+    await browser.tabs.sendMessage(tabId, {
+      type: 'DETECTION_RESULT',
+      payload,
+    });
+    return match;
+  } catch {
+    return null;
+  }
+}
+
+function buildDetectionResponseFromHistory(
+  entry: HistoryEntry,
+  currentPostId: string,
+  opts?: { fingerprint?: boolean },
+): DetectionResponse {
+  const viaFingerprint = opts?.fingerprint === true;
+  const summaryFallback = viaFingerprint
+    ? 'Same content fingerprint as a recent detection in your history — showing the saved result.'
+    : 'Same author and text as a recent detection in your history — showing the saved result.';
+  const hasStoredSummary = Boolean(entry.textExplanationSummary?.trim());
+  const spans = entry.textHighlightedSpans ?? [];
+  const highlights =
+    spans.length > 0 ? explanationHighlightsFromSpans(spans) : undefined;
+
+  return {
+    requestId: `history-replay-${entry.savedAtMs}-${currentPostId}`,
+    postId: currentPostId,
+    verdict: entry.verdict,
+    confidence: entry.confidence,
+    detectionSource: entry.detectionSource ?? 'text',
+    explanation: {
+      summary: hasStoredSummary ? entry.textExplanationSummary! : summaryFallback,
+      ...(highlights ? { highlights } : {}),
+      ...(spans.length > 0 ? { highlightedSpans: spans } : {}),
+      model: { name: 'history', version: '1' },
+      cache: { hit: true, ttlRemainingMs: 0 },
+      timing: { totalMs: 0, inferenceMs: 0 },
+    },
+    ...(entry.imageResult ? { imageResult: entry.imageResult } : {}),
+  };
+}
+
  * Saves a successful detection result to the 24-hour cache, guarded by incognito check.
  * Failures are swallowed — cache is best-effort and must never affect detection.
  */
@@ -653,12 +991,32 @@ async function maybeSaveToCache(
 }
 
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
+  const replayed = await tryReplayFromHistory(post, tabId);
+  if (replayed) return;
+
+  // Kick off the incognito check in parallel so it never blocks detection from starting.
+  // browser.tabs.get can stall in a freshly-awakened MV3 service worker context; by
+  // the time finalizeStats is called the promise will have long since resolved.
+  const incognitoPromise = isTabIncognito(tabId);
+
   await markScanStarted();
+
   let statsFinalized = false;
   const finalizeStats = async (aiDetected: boolean) => {
     if (statsFinalized) return;
     statsFinalized = true;
-    await markScanFinished(aiDetected);
+    const incognito = await incognitoPromise;
+    if (incognito) {
+      // Undo the postsScanned / postsProcessing increments from markScanStarted — incognito
+      // scans must leave no trace in stats.
+      await queueStatsUpdate((s) => ({
+        ...s,
+        postsScanned: Math.max(0, s.postsScanned - 1),
+        postsProcessing: Math.max(0, s.postsProcessing - 1),
+      })).catch(() => {});
+    } else {
+      await markScanFinished(aiDetected, post.site);
+    }
   };
 
   const settings = await getDetectionSettings();
@@ -736,6 +1094,12 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   const plainText = enrichedPost.text?.plain ?? '';
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
+  const fingerprintReplay = await tryReplayFromHistoryByFingerprint(enrichedPost, tabId);
+  if (fingerprintReplay) {
+    await finalizeStats(fingerprintReplay.verdict === 'likely_ai');
+    return;
+  }
+
   const earlyLangUnsupported = tryAnalyzePostLanguageUnsupported(
     enrichedPost.postId,
     plainText,
@@ -781,28 +1145,107 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   if (enrichedPost.contentType === 'IMAGE') {
     const firstImage = enrichedImages.find((img) => img.bytesBase64);
     if (firstImage) {
-      try {
-        const start = performance.now();
-        const imgResult = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
-        const elapsedMs = Math.round(performance.now() - start);
-        const mapped = mapToDetectionResponse(
-          imgResult,
-          enrichedPost.postId,
-          elapsedMs,
-          firstImage.mediaType ?? 'image',
-        );
+      const mediaType = firstImage.mediaType ?? 'image';
+      const runImageDetect = async (
+        modelVariant: ImageModelVariant,
+      ): Promise<{ result: DetectImageResponse; elapsedMs: number } | null> => {
+        try {
+          const start = performance.now();
+          const result = await detectImage(
+            firstImage.bytesBase64,
+            firstImage.mimeType,
+            modelVariant,
+          );
+          return { result, elapsedMs: Math.round(performance.now() - start) };
+        } catch {
+          return null;
+        }
+      };
 
+      const miniPromise = runImageDetect('mini');
+      const fullPromise = runImageDetect('full');
+
+      const miniResult = await miniPromise;
+      if (miniResult) {
+        const preliminary = mapToDetectionResponse(
+          miniResult.result,
+          enrichedPost.postId,
+          miniResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: false,
+            modelVariant: miniResult.result.model_variant ?? 'mini',
+          },
+        );
+        preliminary.explanation.summary =
+          'Preliminary result (mini model): ' + preliminary.explanation.summary;
         await browser.tabs.sendMessage(tabId, {
           type: 'DETECTION_RESULT',
-          payload: mapped,
+          payload: preliminary,
         });
+      }
+
+      const fullResult = await fullPromise;
+      if (fullResult) {
+        const conservativeResult =
+          miniResult && miniResult.result.confidence <= fullResult.result.confidence
+            ? miniResult
+            : fullResult;
+        const finalMapped = mapToDetectionResponse(
+          conservativeResult.result,
+          enrichedPost.postId,
+          conservativeResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: true,
+            modelVariant: conservativeResult.result.model_variant ?? 'full',
+          },
+        );
+        finalMapped.explanation.summary +=
+          ' Final hybrid image score uses the lower AI confidence between mini and full.';
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: finalMapped,
+        });
+        maybeSaveToHistory(enrichedPost, finalMapped, tabId).catch(() => {});
+        await finalizeStats(finalMapped.verdict === 'likely_ai');
+        return;
+      }
+
+      if (miniResult) {
+        const finalMini = mapToDetectionResponse(
+          miniResult.result,
+          enrichedPost.postId,
+          miniResult.elapsedMs,
+          mediaType,
+          {
+            isFinal: true,
+            modelVariant: miniResult.result.model_variant ?? 'mini',
+          },
+        );
+        finalMini.explanation.summary +=
+          ' Full-model refinement is currently unavailable; keeping preliminary result.';
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: finalMini,
+        });
+        maybeSaveToHistory(enrichedPost, finalMini, tabId).catch(() => {});
+        await finalizeStats(finalMini.verdict === 'likely_ai');
         maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
         maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
         await finalizeStats(mapped.verdict === 'likely_ai');
         return;
-      } catch {
-        // No text fallback for image-only posts
       }
+
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_ERROR',
+        payload: {
+          postId: enrichedPost.postId,
+          message: 'image detection failed',
+        },
+      });
+      await finalizeStats(false);
+      return;
     }
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
@@ -850,20 +1293,26 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     // Fire text detection only when language is supported;
     // for MIXED with fetched images, also fire image detection in parallel.
     const firstImage = hasImages ? enrichedImages.find((img) => img.bytesBase64) : undefined;
+    const mediaType = firstImage?.mediaType ?? 'image';
 
     const textPromise = textLangSupported
       ? (async () => {
           const start = performance.now();
-          const result = await detectText(plainText, settings.highlightSegments);
+          const result = await detectText(
+            plainText,
+            settings.highlightSegments,
+            enrichedPost.commentTexts,
+            enrichedPost.domContext?.subreddit,
+          );
           return { result, elapsedMs: Math.round(performance.now() - start) };
         })()
       : Promise.resolve(null);
 
-    const imagePromise = firstImage
+    const imageMiniPromise = firstImage
       ? (async () => {
           try {
             const start = performance.now();
-            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType);
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType, 'mini');
             return { result, elapsedMs: Math.round(performance.now() - start) };
           } catch {
             return null; // image detection is best-effort
@@ -871,7 +1320,47 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         })()
       : Promise.resolve(null);
 
-    const [textResult, imageResult] = await Promise.all([textPromise, imagePromise]);
+    const imageFullPromise = firstImage
+      ? (async () => {
+          try {
+            const start = performance.now();
+            const result = await detectImage(firstImage.bytesBase64, firstImage.mimeType, 'full');
+            return { result, elapsedMs: Math.round(performance.now() - start) };
+          } catch {
+            return null; // image detection is best-effort
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [textResult, imageMiniResult] = await Promise.all([textPromise, imageMiniPromise]);
+
+    if (textResult && imageMiniResult) {
+      const preliminary = mapToDetectionResponse(
+        textResult.result,
+        enrichedPost.postId,
+        textResult.elapsedMs,
+        'text',
+        { isFinal: false },
+      );
+      preliminary.imageResult = mapToImageDetectionResult(
+        imageMiniResult.result,
+        imageMiniResult.elapsedMs,
+        mediaType,
+        imageMiniResult.result.model_variant ?? 'mini',
+      );
+      preliminary.explanation.summary += ' Preliminary image sub-result uses mini model.';
+      await browser.tabs.sendMessage(tabId, {
+        type: 'DETECTION_RESULT',
+        payload: preliminary,
+      });
+    }
+
+    const imageFullResult = await imageFullPromise;
+    const imageResult = imageFullResult
+      ? (imageMiniResult && imageMiniResult.result.confidence <= imageFullResult.result.confidence
+          ? imageMiniResult
+          : imageFullResult)
+      : imageMiniResult;
 
     // If text was skipped (unsupported language) but image succeeded, return image-only result.
     // Use the image result as the primary verdict (don't also set imageResult, which would
@@ -881,8 +1370,19 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         imageResult.result,
         enrichedPost.postId,
         imageResult.elapsedMs,
-        firstImage?.mediaType ?? 'image',
+        mediaType,
+        {
+          isFinal: true,
+          modelVariant: imageResult.result.model_variant,
+        },
       );
+      if (!imageFullResult && imageMiniResult) {
+        imgResponse.explanation.summary +=
+          ' Full-model refinement is currently unavailable; keeping preliminary result.';
+      } else if (imageFullResult && imageMiniResult) {
+        imgResponse.explanation.summary +=
+          ' Final hybrid image score uses the lower AI confidence between mini and full.';
+      }
       await browser.tabs.sendMessage(tabId, {
         type: 'DETECTION_RESULT',
         payload: imgResponse,
@@ -919,22 +1419,31 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       mapped.imageResult = mapToImageDetectionResult(
         imageResult.result,
         imageResult.elapsedMs,
-        firstImage?.mediaType ?? 'image',
+        mediaType,
+        imageResult.result.model_variant,
       );
+      if (!imageFullResult && imageMiniResult) {
+        mapped.explanation.summary += ' Image refinement stayed on mini because full model was unavailable.';
+      } else if (imageFullResult && imageMiniResult) {
+        mapped.explanation.summary +=
+          ' Image refinement uses the lower AI confidence between mini and full.';
+      }
     }
 
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_RESULT',
-      payload: mapped,
+      payload: {
+        ...mapped,
+        isFinal: true,
+      },
     });
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
     maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'network error';
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
-      payload: { postId: enrichedPost.postId, message },
+      payload: { postId: enrichedPost.postId, message: formatDetectionFetchError(err) },
     });
     await finalizeStats(false);
   }
@@ -965,7 +1474,7 @@ async function fetchInstagramPreviewImageCandidate(
 
     const mediaType: MediaType = url.pathname.includes('/reel/') ? 'video' : 'image';
     return {
-      imageId: `ig-og-${hashString(previewUrl)}`,
+      imageId: `ig-og-${fnv1a32Hex(previewUrl)}`,
       bytesBase64: '',
       srcUrl: previewUrl,
       mimeType: mimeTypeFromImageUrl(previewUrl),
@@ -1005,14 +1514,6 @@ function mimeTypeFromImageUrl(url: string): string {
   return 'image/jpeg';
 }
 
-function hashString(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
-}
 
 // Fetches bytesBase64 for images with at most `concurrency` in flight at a time.
 async function fetchImagesThrottled(
@@ -1131,6 +1632,15 @@ function isTextDetectApiResult(
   return 'highlights' in result;
 }
 
+function resolveImageModelDescriptor(
+  modelVariant: ImageModelVariant | undefined,
+): { name: string; version: string } {
+  if (modelVariant === 'full') {
+    return { name: 'nonescape', version: 'v0' };
+  }
+  return { name: 'nonescape-mini', version: 'mini-v0' };
+}
+
 function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
   return raw.filter(
     (s) =>
@@ -1144,11 +1654,31 @@ function normalizeApiHighlightSpans(raw: HighlightSpan[]): HighlightSpan[] {
   );
 }
 
+function extractServerTimingForDomain(
+  apiResult: DetectResponse | DetectImageResponse,
+): NonNullable<DetectionResponse['explanation']['serverTiming']> | undefined {
+  const dm = typeof apiResult.detect_ms === 'number' ? apiResult.detect_ms : undefined;
+  const tm = typeof apiResult.total_server_ms === 'number' ? apiResult.total_server_ms : undefined;
+  if (typeof dm !== 'number' && typeof tm !== 'number') return undefined;
+  const out: NonNullable<DetectionResponse['explanation']['serverTiming']> = {};
+  if (typeof dm === 'number' && Number.isFinite(dm) && dm >= 0) {
+    out.detectMs = Math.round(dm);
+  }
+  if (typeof tm === 'number' && Number.isFinite(tm) && tm >= 0) {
+    out.totalServerMs = Math.round(tm);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function mapToDetectionResponse(
   apiResult: DetectResponse | DetectImageResponse,
   postId: string,
   timingMs: number,
   detectionSource: DetectionResponse['detectionSource'] = 'text',
+  opts?: {
+    isFinal?: boolean;
+    modelVariant?: ImageModelVariant;
+  },
 ): DetectionResponse {
   //console.log('[mapToDetectionResponse] processed DetectResponse', apiResult);
 
@@ -1179,24 +1709,36 @@ function mapToDetectionResponse(
           start: s.start,
           end: s.end,
           reason:
-            'Segment influence (leave-one-token-out): ' +
+            'Segment influence (model attribution): ' +
             `${s.score.toFixed(4)} — larger values correlate with stronger push toward the model’s AI score.`,
         }))
       : [];
+
+  const inferredImageVariant = !isTextDetectApiResult(apiResult)
+    ? apiResult.model_variant
+    : undefined;
+  const imageModel = resolveImageModelDescriptor(opts?.modelVariant ?? inferredImageVariant);
+  const explanationModel = detectionSource === 'text'
+    ? { name: 'slopmop-api', version: '1.0' }
+    : imageModel;
+
+  const serverTiming = extractServerTimingForDomain(apiResult);
 
   return {
     requestId: crypto.randomUUID(),
     postId,
     verdict,
     confidence: apiResult.confidence,
+    isFinal: opts?.isFinal ?? true,
     detectionSource,
     explanation: {
       summary: apiResult.explanation,
       highlights,
       ...(highlightedSpans.length > 0 ? { highlightedSpans } : {}),
-      model: { name: 'slopmop-api', version: '1.0' },
+      model: explanationModel,
       cache: { hit: false, ttlRemainingMs: 0 },
       timing: { totalMs: timingMs, inferenceMs: timingMs },
+      ...(serverTiming ? { serverTiming } : {}),
     },
   };
 }
@@ -1205,6 +1747,7 @@ function mapToImageDetectionResult(
   apiResult: DetectImageResponse,
   timingMs: number,
   mediaType: MediaType = 'image',
+  modelVariant?: ImageModelVariant,
 ): ImageDetectionResult {
   const confidencePercent = apiResult.confidence <= 1
     ? apiResult.confidence * 100
@@ -1216,12 +1759,22 @@ function mapToImageDetectionResult(
       ? 'unknown'
       : 'likely_human';
 
+  const model = resolveImageModelDescriptor(modelVariant ?? apiResult.model_variant);
+
+  const serverDetectMs =
+    typeof apiResult.detect_ms === 'number' &&
+    Number.isFinite(apiResult.detect_ms) &&
+    apiResult.detect_ms >= 0
+      ? Math.round(apiResult.detect_ms)
+      : undefined;
+
   return {
     verdict,
     confidence: apiResult.confidence,
     summary: apiResult.explanation,
-    model: { name: 'nonescape-mini', version: '0.1' },
+    model,
     timingMs,
+    ...(serverDetectMs !== undefined ? { serverDetectMs } : {}),
     mediaType,
   };
 }
@@ -1234,11 +1787,29 @@ function mapToImageDetectionResult(
 browser.action.onClicked.addListener(async (tab) => {
   if (!tab.id) return;
 
+  // Try to send the toggle message to the already-loaded content script.
+  // This works for normal navigation where the content script is injected
+  // on page load. It also handles the case where the extension was reloaded
+  // mid-session (e.g. during development) without the user refreshing the tab.
   try {
     await browser.tabs.sendMessage(tab.id, { type: 'SLOPMOP_TOGGLE_PANEL' });
+    return;
   } catch {
-    // Content script not available on this page — open as a standalone tab
-    const popupUrl = browser.runtime.getURL('src/pages/popup/index.html');
-    await browser.tabs.create({ url: popupUrl });
+    // Content script not present — inject it now, then toggle.
+  }
+
+  // Programmatically inject the content script into the active tab.
+  // This recovers from: extension reloads, service worker restarts,
+  // and any tab that was open before the extension was installed.
+  // Read the file list from the built manifest so we never hardcode a hash.
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const files = manifest.content_scripts?.[0]?.js ?? [];
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+    // Small delay so the content script can register its message listener.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await browser.tabs.sendMessage(tab.id, { type: 'SLOPMOP_TOGGLE_PANEL' });
+  } catch (err) {
+    console.warn('[SlopMop] Could not inject content script on this page:', err);
   }
 });

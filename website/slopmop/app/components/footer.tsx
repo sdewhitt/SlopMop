@@ -15,6 +15,9 @@ export default function Footer() {
           <a href="/#faq" className="hover:underline">
             FAQ
           </a>
+          <Link href="/report" className="hover:underline">
+            Report
+          </Link>
           <Link href="/install" className="hover:underline">
             Install
           </Link>

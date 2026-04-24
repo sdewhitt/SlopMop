@@ -65,7 +65,7 @@ describe('Instagram extraction pipeline', () => {
       url: 'https://www.instagram.com/p/CxAbCdEfG12/',
       contentType: ContentType.TEXT,
       text: {
-        plain: 'Caption with extra spaces\n\nsecond paragraph',
+        plain: 'Caption with extra spaces second paragraph',
         languageHint: '',
       },
       images: [],
@@ -550,7 +550,6 @@ describe('Instagram extraction pipeline', () => {
 
     expect(renderPending).toHaveBeenCalledTimes(25);
   });
-/*
   it('does not render duplicate controls when comment wrappers share the same comment id', () => {
     const extractor = new PostExtractor();
 
@@ -600,7 +599,7 @@ describe('Instagram extraction pipeline', () => {
       expect.any(Function),
     );
   });
-*/
+
   it('extracts top 25 comment nodes at depth 1 via findVisibleCommentNodes', () => {
     const adapter = new InstagramAdapter();
     // Comments must live inside a feed post article (one with a /p/ link)
@@ -818,6 +817,64 @@ describe('Instagram extraction pipeline', () => {
     expect(firstId).toBeTruthy();
     expect(secondId).toBeTruthy();
     expect(firstId).not.toBe(secondId);
+  });
+
+  it('prefers specific comment node when wrapper and child share same comment id', () => {
+    const adapter = new InstagramAdapter();
+
+    const article = document.createElement('article');
+    const postLink = document.createElement('a');
+    postLink.href = '/p/OverlapPost01/';
+    article.appendChild(postLink);
+
+    const ul = document.createElement('ul');
+    ul.setAttribute('role', 'list');
+
+    const wrapper = document.createElement('li');
+    wrapper.setAttribute('role', 'listitem');
+    const wrapperLink = document.createElement('a');
+    wrapperLink.href = '/comment/shared-overlap-id/';
+    wrapper.appendChild(wrapperLink);
+    const wrapperText = document.createElement('span');
+    wrapperText.setAttribute('dir', 'auto');
+    setInnerText(wrapperText, 'First comment text');
+    wrapper.appendChild(wrapperText);
+
+    const nestedSecond = document.createElement('div');
+    nestedSecond.setAttribute('role', 'listitem');
+    const nestedSecondText = document.createElement('span');
+    nestedSecondText.setAttribute('dir', 'auto');
+    setInnerText(nestedSecondText, 'Second comment text');
+    nestedSecond.appendChild(nestedSecondText);
+    wrapper.appendChild(nestedSecond);
+
+    const specificChild = document.createElement('li');
+    specificChild.setAttribute('role', 'listitem');
+    const childLink = document.createElement('a');
+    childLink.href = '/comment/shared-overlap-id/';
+    specificChild.appendChild(childLink);
+    const childText = document.createElement('span');
+    childText.setAttribute('dir', 'auto');
+    setInnerText(childText, 'First comment text');
+    specificChild.appendChild(childText);
+
+    Object.defineProperty(wrapper, 'getBoundingClientRect', {
+      value: () => ({ width: 420, height: 70, top: 20, bottom: 90, left: 0, right: 420 }),
+    });
+    Object.defineProperty(specificChild, 'getBoundingClientRect', {
+      value: () => ({ width: 400, height: 36, top: 22, bottom: 58, left: 0, right: 400 }),
+    });
+
+    ul.appendChild(wrapper);
+    ul.appendChild(specificChild);
+    article.appendChild(ul);
+    document.body.appendChild(article);
+
+    const comments = adapter.findVisibleCommentNodes(document, 25);
+    expect(comments).toHaveLength(1);
+
+    const textNode = adapter.getCommentTextNode(comments[0]);
+    expect(textNode?.innerText).toBe('First comment text');
   });
 
   it('finds explore-page grid items that are not wrapped in <article>', () => {

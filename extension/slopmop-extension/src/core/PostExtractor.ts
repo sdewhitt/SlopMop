@@ -1,6 +1,8 @@
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { NormalizedPostContent, ContentType, MediaType } from "@src/types/domain";
 import { classify } from "./ContentTypeClassifier";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
+import { modelPreprocessText } from "@src/utils/modelPreprocessText";
 
 
 export class PostExtractor {
@@ -27,9 +29,8 @@ export class PostExtractor {
             ? adapter.getTextNode(node)
             : adapter.getCommentTextNode(node);
 
-        const rawText = textNode?.innerText?.trim() ?? '';
-        // normalize before classification so repeated whitespace doesn't skew downstream heuristics.
-        const normalizedText = this.normalizeText(rawText);
+        // Same string the model sees (`preprocess_text` on the backend); span offsets are in this space.
+        const normalizedText = modelPreprocessText(textNode?.innerText ?? "");
 
         const permalink = type === "post"
             ? adapter.getPermalink(node)
@@ -42,7 +43,7 @@ export class PostExtractor {
         const images = imageNodes.map((img) => {
             const srcUrl = img.currentSrc || img.src;
             return {
-                imageId: this.fnv1a(srcUrl),
+                imageId: fnv1a32Hex(srcUrl),
                 bytesBase64: "",            // background will fill bytes in
                 srcUrl,
                 mimeType: this.mimeTypeFromUrl(srcUrl),
@@ -63,7 +64,7 @@ export class PostExtractor {
         if (!normalizedText && images.length === 0 && !hasVisualOnlyReelCandidate) return null;
 
         // classify ContentType
-        const contentType: ContentType = hasVisualOnlyReelCandidate
+        const contentType: ContentType | string = hasVisualOnlyReelCandidate
             ? "IMAGE"
             : classify(normalizedText, images.length);
 
@@ -73,6 +74,10 @@ export class PostExtractor {
         // author and timestamp are currently only implemented for posts in the adapter
         const authorHandle = type === "post" ? adapter.getAuthorHandle(node) : "";
         const timestampText = type === "post" ? adapter.getTimestampText(node) : "";
+        const subreddit =
+            type === "post" && adapter.getSiteId() === "reddit.com" && typeof adapter.getSubreddit === "function"
+                ? adapter.getSubreddit(node)
+                : null;
 
         return {
             site: siteId,
@@ -88,24 +93,10 @@ export class PostExtractor {
             domContext: {
               authorHandle: authorHandle ?? "",
               timestampText: timestampText ?? "",
+              ...(subreddit ? { subreddit } : {}),
             },
           };
     
-    }
-    private normalizeText(raw: string | null): string {
-        if (!raw) return "";
-        let text = raw;
-        // replace whitespace [ \t]+ matches exactly 1 or more space. 
-        // g is global flag to replace all instances
-        text = text.replace(/[ \t]+/g, " ");
-        // normalize paragraph breaks. capture two or more \n and globally
-        text = text.replace(/\n{2,}/g, "\n\n");
-        // replace multiple newlines with single newline
-        text = text.replace(/\n /g, "\n");
-        // trim leading and trailing whitespace
-        text = text.trim();
-
-        return text;
     }
     private mimeTypeFromUrl(url: string): string {
         // mimetype is just image filetype
@@ -146,14 +137,5 @@ export class PostExtractor {
         return "image";
     }
 
-    // hash function for unique postId
-    private fnv1a(input: string): string {
-        let hash = 0x811c9dc5;
-        for (let i = 0; i < input.length; i++) {
-          hash ^= input.charCodeAt(i);
-          hash = Math.imul(hash, 0x01000193);
-        }
-        return (hash >>> 0).toString(16);
-      }
 }
 

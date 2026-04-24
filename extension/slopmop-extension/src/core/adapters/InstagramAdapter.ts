@@ -1,4 +1,5 @@
 import type { SiteAdapter } from "./SiteAdapter";
+import { fnv1a32Hex } from "@src/utils/fnv1aHash";
 
 export class InstagramAdapter implements SiteAdapter {
   getSiteId(): string {
@@ -85,7 +86,7 @@ export class InstagramAdapter implements SiteAdapter {
       ? (mediaEl.currentSrc || mediaEl.src || "")
       : (mediaEl?.currentSrc || mediaEl?.getAttribute("src") || "");
     const base = `${permalink ?? ""}|${author}|${timestamp}|${text}|${mediaSrc}`;
-    return base ? `ig-fallback-${this.fnv1a(base)}` : null;
+    return base ? `ig-fallback-${fnv1a32Hex(base)}` : null;
   }
 
   getPermalink(postNode: Element): string | null {
@@ -223,9 +224,14 @@ export class InstagramAdapter implements SiteAdapter {
 
     const seen = new Set<Element>();
     const out: Element[] = [];
+    const maxCandidates = Math.max(limit * 3, limit);
+
+    let reachedCandidateCap = false;
 
     for (const scope of scopes) {
+      if (reachedCandidateCap) break;
       for (const sel of selectors) {
+        if (reachedCandidateCap) break;
         const nodes = Array.from(scope.querySelectorAll(sel));
         for (const node of nodes) {
           if (seen.has(node)) continue;
@@ -240,12 +246,15 @@ export class InstagramAdapter implements SiteAdapter {
           if (!this.getCommentTextNode(node)) continue;
 
           out.push(node);
-          if (out.length >= limit) return out;
+          if (out.length >= maxCandidates) {
+            reachedCandidateCap = true;
+            break;
+          }
         }
       }
     }
 
-    return out;
+    return this.dedupeOverlappingCommentNodes(out).slice(0, limit);
   }
 
   getCommentId(commentNode: Element): string | null {
@@ -268,14 +277,25 @@ export class InstagramAdapter implements SiteAdapter {
       commentNode.querySelector<HTMLAnchorElement>('a[href^="/"]')?.getAttribute("href") ?? "";
     const localIndex = this.getSiblingIndex(commentNode);
 
-    return `ig-comment-${this.fnv1a(`${postPermalink}|${authorHref}|${text}|${mediaSrc}|${localIndex}`)}`;
+    return `ig-comment-${fnv1a32Hex(`${postPermalink}|${authorHref}|${text}|${mediaSrc}|${localIndex}`)}`;
   }
 
   getCommentTextNode(commentNode: Element): HTMLElement | null {
-    return (
-      commentNode.querySelector<HTMLElement>('span[dir="auto"]') ??
-      commentNode.querySelector<HTMLElement>("span")
-    );
+    const candidates = Array.from(
+      commentNode.querySelectorAll<HTMLElement>('span[dir="auto"], span'),
+    ).filter((el) => (el.innerText || "").trim().length > 0);
+    if (candidates.length === 0) return null;
+
+    const ownCandidates = candidates.filter((candidate) => {
+      const nestedCommentLike = candidate.closest(
+        'li[role="listitem"], div[role="listitem"], li',
+      );
+      if (!nestedCommentLike) return true;
+      if (nestedCommentLike === commentNode) return true;
+      return false;
+    });
+
+    return ownCandidates[0] ?? candidates[0];
   }
 
   getCommentPermalink(commentNode: Element): string | null {
@@ -476,6 +496,58 @@ export class InstagramAdapter implements SiteAdapter {
     return siblings.indexOf(node);
   }
 
+  private dedupeOverlappingCommentNodes(nodes: Element[]): Element[] {
+    if (nodes.length <= 1) return nodes;
+
+    const selectedById = new Map<string, Element>();
+    const output: Element[] = [];
+
+    for (const node of nodes) {
+      const id = this.getCommentId(node);
+      if (!id) {
+        output.push(node);
+        continue;
+      }
+
+      const existing = selectedById.get(id);
+      if (!existing) {
+        selectedById.set(id, node);
+        output.push(node);
+        continue;
+      }
+
+      const preferred = this.preferMoreSpecificCommentNode(existing, node);
+      if (preferred === existing) continue;
+
+      selectedById.set(id, preferred);
+      const idx = output.indexOf(existing);
+      if (idx >= 0) output[idx] = preferred;
+    }
+
+    return output;
+  }
+
+  private preferMoreSpecificCommentNode(a: Element, b: Element): Element {
+    if (a.contains(b)) return b;
+    if (b.contains(a)) return a;
+
+    const aText = this.getCommentTextNode(a)?.innerText?.trim() ?? "";
+    const bText = this.getCommentTextNode(b)?.innerText?.trim() ?? "";
+    if (aText.length !== bText.length) {
+      return aText.length <= bText.length ? a : b;
+    }
+
+    const score = (node: Element): number => {
+      let s = 0;
+      if (node.matches('li[role="listitem"], div[role="listitem"]')) s += 4;
+      if (node.matches("li")) s += 2;
+      if (node.matches("div")) s += 1;
+      return s;
+    };
+
+    return score(a) >= score(b) ? a : b;
+  }
+
   private isElementVisibleInViewport(element: Element): boolean {
     const rect = element.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return false;
@@ -499,12 +571,4 @@ export class InstagramAdapter implements SiteAdapter {
     );
   }
 
-  private fnv1a(input: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16);
-  }
 }

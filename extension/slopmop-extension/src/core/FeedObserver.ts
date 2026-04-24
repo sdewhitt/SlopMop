@@ -8,6 +8,7 @@ import {
     getLanguageUnsupportedCopy,
     isTextLanguageSupported,
 } from "@src/utils/languageSupport";
+import { computeFactCheckFingerprint } from "@src/utils/factCheckFingerprint";
 import {
     computeTtlRemainingMs,
     getAllCachedDetections,
@@ -435,6 +436,16 @@ export class FeedObserver {
                     this.postsById.delete(extracted.postId);
                 }
             } else {
+                // Re-render on a new host only for posts. Comment lists can expose
+                // duplicate wrappers for the same comment id (notably first comments),
+                // which would otherwise create duplicate Detect/Fact-check controls.
+                if (
+                    type === "post" &&
+                    !this.settings.automaticScanning &&
+                    !this.renderedHosts.has(node)
+                ) {
+                    this.renderManualEntry(extracted, node as HTMLElement, textContainer);
+                    this.renderedHosts.add(node);
                 if (type === "post" && !this.renderedHosts.has(node)) {
                     // A second DOM host appeared for an already-seen post
                     // (common on Reddit: subreddit feed + opened post detail
@@ -589,7 +600,12 @@ export class FeedObserver {
         const onFactCheck =
             this.settings.factCheck && extracted.text.plain.trim().length > 0
                 ? () => {
-                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain);
+                      // Use a text-only fingerprint so caching is stable across image hydration.
+                      const contentFingerprint = computeFactCheckFingerprint(extracted.site, extracted.text.plain);
+                      void this.bus.sendFactCheck(extracted.postId, extracted.text.plain, {
+                          site: extracted.site,
+                          contentFingerprint,
+                      });
                   }
                 : undefined;
         this.overlay.renderPending(
@@ -659,6 +675,13 @@ export class FeedObserver {
         if (!timer) return;
         clearTimeout(timer);
         this.pendingAnalyzeTimers.delete(postId);
+    }
+
+    // Keep the post in-flight but refresh timeout after a preliminary update.
+    noteAnalyzeProgress(postId: string): void {
+        if (!this.inFlightAnalyzePostIds.has(postId)) return;
+        if (this.timedOutPostIds.has(postId)) return;
+        this.startAnalyzeTimeout(postId);
     }
 
     // returns true when the caller should render result/error for this post.
