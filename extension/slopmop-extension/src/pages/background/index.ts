@@ -89,6 +89,11 @@ import {
 import { formatDetectionFetchError } from '@src/utils/detectionFetchErrors';
 import { handleFactCheckRequest } from '@src/pages/background/factCheckController';
 import type { SiteId } from '@src/types/domain';
+import {
+  getCachedDetectionEntry,
+  saveCachedDetection,
+  computeTtlRemainingMs,
+} from '@src/utils/detectionCache';
 
 console.log('background script loaded');
 
@@ -968,6 +973,23 @@ function buildDetectionResponseFromHistory(
   };
 }
 
+ * Saves a successful detection result to the 24-hour cache, guarded by incognito check.
+ * Failures are swallowed — cache is best-effort and must never affect detection.
+ */
+async function maybeSaveToCache(
+  postId: string,
+  response: DetectionResponse,
+  tabId: number,
+): Promise<void> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (tab.incognito) return;
+    await saveCachedDetection(postId, response);
+  } catch (err) {
+    console.error('[SlopMop] Failed to save cache entry', err);
+  }
+}
+
 async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Promise<void> {
   const replayed = await tryReplayFromHistory(post, tabId);
   if (replayed) return;
@@ -998,6 +1020,36 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
   };
 
   const settings = await getDetectionSettings();
+
+  if (settings.cacheRecentResults) {
+    try {
+      const cachedEntry = await getCachedDetectionEntry(post.postId);
+      if (cachedEntry) {
+        const cachedResponse: DetectionResponse = {
+          ...cachedEntry.response,
+          explanation: {
+            ...cachedEntry.response.explanation,
+            cache: {
+              hit: true,
+              ttlRemainingMs: computeTtlRemainingMs(cachedEntry.savedAtMs),
+            },
+          },
+        };
+        await browser.tabs.sendMessage(tabId, {
+          type: 'DETECTION_RESULT',
+          payload: cachedResponse,
+        });
+        // Parity with the API success paths: record cache hits in history so
+        // the user's history tab reflects every surfaced verdict.
+        maybeSaveToHistory(post, cachedResponse, tabId).catch(() => {});
+        await finalizeStats(cachedResponse.verdict === 'likely_ai');
+        return;
+      }
+    } catch {
+      // Cache read failure — proceed with normal detection
+    }
+  }
+
   const enabledIso = expandUserDetectionLanguages(settings.detectionLanguages);
   const enabledLabel = formatDetectionLanguagesForUi(settings.detectionLanguages);
   let enrichedImages = post.images;
@@ -1077,6 +1129,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         payload: fakeResponse,
       });
       maybeSaveToHistory(enrichedPost, fakeResponse, tabId).catch(() => {});
+      maybeSaveToCache(enrichedPost.postId, fakeResponse, tabId).catch(() => {});
       await finalizeStats(fakeResponse.verdict === 'likely_ai');
     } else {
       await browser.tabs.sendMessage(tabId, {
@@ -1178,6 +1231,9 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         });
         maybeSaveToHistory(enrichedPost, finalMini, tabId).catch(() => {});
         await finalizeStats(finalMini.verdict === 'likely_ai');
+        maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
+        maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
+        await finalizeStats(mapped.verdict === 'likely_ai');
         return;
       }
 
@@ -1332,6 +1388,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
         payload: imgResponse,
       });
       maybeSaveToHistory(enrichedPost, imgResponse, tabId).catch(() => {});
+      maybeSaveToCache(enrichedPost.postId, imgResponse, tabId).catch(() => {});
       await finalizeStats(imgResponse.verdict === 'likely_ai');
       return;
     }
@@ -1381,6 +1438,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       },
     });
     maybeSaveToHistory(enrichedPost, mapped, tabId).catch(() => {});
+    maybeSaveToCache(enrichedPost.postId, mapped, tabId).catch(() => {});
     await finalizeStats(mapped.verdict === 'likely_ai');
   } catch (err) {
     await browser.tabs.sendMessage(tabId, {

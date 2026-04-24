@@ -698,6 +698,94 @@ describe('Reddit extraction pipeline', () => {
     );
   });
 
+  it('prefers a cached verdict on a second host for the same post (feed + detail view)', () => {
+    // Reddit keeps both the feed's `shreddit-post` and the opened detail
+    // view's `shreddit-post` in the DOM for the same post id. Without this
+    // safeguard the re-render branch rendered a "Detect Now" button on the
+    // second host even though a cached verdict was already available on the
+    // first, producing both UIs side by side.
+    const extractor = new PostExtractor();
+    const feedNode = document.createElement('article');
+    const feedTextBody = document.createElement('div');
+    setInnerText(feedTextBody, 'Shared post body');
+    feedNode.appendChild(feedTextBody);
+    feedNode.setAttribute('data-post-id', 't3_shared');
+
+    const detailNode = document.createElement('article');
+    const detailTextBody = document.createElement('div');
+    setInnerText(detailTextBody, 'Shared post body');
+    detailNode.appendChild(detailTextBody);
+    detailNode.setAttribute('data-post-id', 't3_shared');
+
+    document.body.appendChild(feedNode);
+    document.body.appendChild(detailNode);
+
+    const visibleNodes: HTMLElement[] = [feedNode];
+    const adapter = createAdapter({
+      findPostNodes: () => visibleNodes,
+      findVisibleCommentNodes: () => [],
+      getStablePostId: (node) => node.getAttribute('data-post-id'),
+      getPermalink: () => 'https://www.reddit.com/r/test/comments/shared/title/',
+      getTextNode: (node) => node.querySelector('div'),
+      getAuthorHandle: () => 'u/test',
+      getTimestampText: () => '1h ago',
+    });
+
+    const renderer = new OverlayRenderer({
+      ...defaultUserSettings.settings,
+      uiMode: 'simple',
+      automaticScanning: false,
+    });
+
+    const observer = new FeedObserver(
+      adapter,
+      extractor,
+      renderer,
+      { sendAnalyze: vi.fn() } as unknown as ExtensionMessageBus,
+      {
+        ...defaultUserSettings.settings,
+        uiMode: 'simple',
+        automaticScanning: false,
+        scanComments: 'off',
+      },
+    );
+
+    (observer as any).scanAndProcess();
+
+    expect(feedNode.querySelector('[data-slopmop-overlay="1"]')?.textContent).toContain(
+      'Detect Now',
+    );
+
+    const cachedResponse: DetectionResponse = {
+      requestId: 'req-shared',
+      postId: 't3_shared',
+      verdict: 'likely_ai',
+      confidence: 0.88,
+      explanation: {
+        summary: 'Cached verdict',
+        model: { name: 'test-model', version: '1.0' },
+        cache: { hit: true, ttlRemainingMs: 60_000 },
+        timing: { totalMs: 10, inferenceMs: 5 },
+      },
+    };
+    renderer.mountResultBadgeOnHost(
+      't3_shared',
+      feedNode,
+      'Shared post body',
+      cachedResponse,
+      feedTextBody,
+    );
+    expect(feedNode.lastElementChild?.textContent).toContain('likely_ai');
+
+    visibleNodes.push(detailNode);
+    (observer as any).scanAndProcess();
+
+    const detailBadge = detailNode.querySelector('[data-slopmop-overlay="1"]');
+    expect(detailBadge).not.toBeNull();
+    expect(detailBadge?.textContent).not.toContain('Detect Now');
+    expect(detailBadge?.textContent).toContain('likely_ai');
+  });
+
   it('includes the root node when scanning a comment subtree', () => {
     const adapter = new RedditAdapter();
     const rootComment = document.createElement('article');

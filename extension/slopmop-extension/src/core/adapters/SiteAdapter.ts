@@ -12,4 +12,12 @@ export interface SiteAdapter {
   getCommentId(commentNode: Element): string | null;
   getCommentTextNode(commentNode: Element): HTMLElement | null;
   getCommentPermalink(commentNode: Element): string | null;
+  /** Narrower host element for badge positioning on comments whose container nests children (e.g. Reddit shreddit-comment). */
+  getCommentOverlayHost?(commentNode: Element): HTMLElement | null;
+  /**
+   * Alternate host element for the post badge when the post node itself clips
+   * its contents (overflow:hidden / max-height animation — e.g. Google AI
+   * Overview's collapsed state). Return `null` to keep default behavior.
+   */
+  getPostOverlayHost?(postNode: Element): HTMLElement | null;
 }

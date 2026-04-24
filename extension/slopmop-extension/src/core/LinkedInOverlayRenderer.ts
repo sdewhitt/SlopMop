@@ -2,8 +2,12 @@ import { OverlayRenderer } from "./OverlayRenderer";
 import type { SiteAdapter } from "./adapters/SiteAdapter";
 import type { DetectionSettings } from "@src/utils/userSettings";
 
+/**
+ * LinkedIn feed badges: intentionally matches XOverlayRenderer (top row, inset from the right).
+ * Duplicated here so LinkedIn can diverge without changing X.
+ */
 export class LinkedInOverlayRenderer extends OverlayRenderer {
-  constructor(adapter: SiteAdapter, settings: DetectionSettings) {
+  constructor(_adapter: SiteAdapter, settings: DetectionSettings) {
     super(settings);
   }
 

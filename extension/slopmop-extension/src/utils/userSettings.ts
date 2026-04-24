@@ -16,6 +16,7 @@ export interface PlatformToggles {
   youtube: boolean;
   linkedin: boolean;
   instagram: boolean;
+  google: boolean;
 }
 
 /** Languages the user allows for **text** AI detection (subset of model-capable langs). */
@@ -72,6 +73,8 @@ export interface DetectionSettings {
    * Default all three. Empty disables all text detection.
    */
   detectionLanguages: DetectionLanguageCode[];
+  /** Cache recent detection results for up to 24 hours to avoid redundant /detect calls. */
+  cacheRecentResults: boolean;
 }
 
 /** Aggregate stats the extension reports back. */
@@ -112,6 +115,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
       youtube: true,
       linkedin: true,
       instagram: true,
+      google: true,
     },
     enabled: true,
     scanText: true,
@@ -128,6 +132,7 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
     lowBatteryMode: false,
     lowBatteryModeAutoWhenBatteryLow: false,
     detectionLanguages: ['eng', 'spa', 'fra'],
+    cacheRecentResults: true,
   },
   stats: {
     postsScanned: 0,
