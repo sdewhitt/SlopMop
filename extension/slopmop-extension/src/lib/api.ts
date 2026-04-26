@@ -15,6 +15,52 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function extractDetailMessage(value: unknown): string | null {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed || null;
+    }
+
+    if (value === null || value === undefined) return null;
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const msg = extractDetailMessage(item);
+            if (msg) return msg;
+        }
+        return null;
+    }
+
+    if (typeof value === 'object') {
+        const asRecord = value as Record<string, unknown>;
+        const detail = extractDetailMessage(asRecord.detail);
+        if (detail) return detail;
+        const error = extractDetailMessage(asRecord.error);
+        if (error) return error;
+        const message = extractDetailMessage(asRecord.message);
+        if (message) return message;
+    }
+
+    return null;
+}
+
+async function getHttpErrorMessage(response: Response): Promise<string> {
+    const statusText = typeof response.statusText === 'string' ? response.statusText.trim() : '';
+    const defaultMessage = statusText
+        ? `HTTP ${response.status} ${statusText}`
+        : `HTTP ${response.status}`;
+
+    try {
+        const data = await response.json();
+        const detailMessage = extractDetailMessage(data);
+        if (detailMessage) return detailMessage;
+    } catch {
+        // Non-JSON responses are common for gateway/proxy failures.
+    }
+
+    return defaultMessage;
+}
+
 const getBaseUrl = (): string => {
     const url = import.meta.env.VITE_API_BASE_URL as string | undefined;
 
@@ -165,20 +211,7 @@ async function detectTextOnce(
     });
 
     if (response.ok === false) {
-        let message: string = 'HTTP ' + response.status;
-
-        try {
-            const data = await response.json();
-            if (data !== null && data !== undefined) {
-                if (typeof data.detail === 'string') {
-                    message = data.detail;
-                }
-            }
-        } catch {
-            // response is not JSON, keep default message
-        }
-
-        throw new Error(message);
+        throw new Error(await getHttpErrorMessage(response));
     }
 
     const result: DetectResponse = await response.json();
@@ -247,20 +280,7 @@ async function detectImageOnce(
     });
 
     if (response.ok === false) {
-        let message: string = "HTTP " + response.status;
-
-        try {
-            const data = await response.json();
-            if (data !== null && data !== undefined) {
-                if (typeof data.detail === "string") {
-                    message = data.detail;
-                }
-            }
-        } catch (error) {
-            // response is not JSON, keep default message
-        }
-
-        throw new Error(message);
+        throw new Error(await getHttpErrorMessage(response));
     }
 
     const result: DetectImageResponse = await response.json();
@@ -299,15 +319,7 @@ export async function factCheckText(text: string): Promise<FactCheckResponse> {
     });
 
     if (response.ok === false) {
-        let message: string = 'HTTP ' + response.status;
-        try {
-            const data = await response.json();
-            if (data !== null && data !== undefined && typeof data.detail === 'string') {
-                message = data.detail;
-            }
-        } catch {
-            /* keep default */
-        }
+        const message = await getHttpErrorMessage(response);
         throw new FactCheckApiError(message, response.status);
     }
 
@@ -332,15 +344,7 @@ export async function satireCheckText(text: string): Promise<SatireCheckResponse
             });
 
             if (response.ok === false) {
-                let message: string = 'HTTP ' + response.status;
-                try {
-                    const data = await response.json();
-                    if (data !== null && data !== undefined && typeof data.detail === 'string') {
-                        message = data.detail;
-                    }
-                } catch {
-                    /* keep default */
-                }
+                const message = await getHttpErrorMessage(response);
 
                 // Do not retry "model unavailable" style errors.
                 if (response.status === 503) {

@@ -7,6 +7,12 @@ export function formatDetectionFetchError(err: unknown): string {
     if (!message) return 'detection request failed';
 
     const lower = message.toLowerCase();
+    if (lower === 'http 502' || lower.startsWith('http 502 ')) {
+      return 'detection backend returned 502 (bad gateway): upstream model/service failed or was unreachable';
+    }
+    if (lower === 'http 503' || lower.startsWith('http 503 ')) {
+      return 'detection backend returned 503 (service unavailable): backend is starting, overloaded, or model is unavailable';
+    }
     if (lower.includes('failed to fetch') || lower.includes('networkerror')) {
       return 'network error while contacting detection API';
     }
