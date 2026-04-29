@@ -10,10 +10,10 @@ export const BATTERY_THROTTLE_ACTIVE_KEY = 'batteryThrottleActive' as const;
 export const BATTERY_AUTO_LOW_BATTERY_ACTIVE_KEY = 'batteryAutoLowBatteryActive' as const;
 
 /** Enter throttle when unplugged and charge fraction is below this (20%). */
-export const LOW_BATTERY_FRACTION = 0.34;
+export const LOW_BATTERY_FRACTION = 0.20;
 
 /** Exit throttle when plugged in or charge fraction is at/above this (25% hysteresis). */
-export const RESUME_BATTERY_FRACTION = 0.36;
+export const RESUME_BATTERY_FRACTION = 0.25;
 
 export type BatteryThrottleInput = {
   level: number;
