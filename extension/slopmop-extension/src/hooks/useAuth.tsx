@@ -10,6 +10,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
+import { isSkipAuthEnv, SKIP_AUTH_DEV_USER } from '../utils/skipAuth';
 
 /** Serialisable user data stored in browser.storage.local by the background. */
 export interface SlopMopUser {
@@ -33,6 +34,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (isSkipAuthEnv()) {
+      const devUser: SlopMopUser = { uid: SKIP_AUTH_DEV_USER.uid, email: SKIP_AUTH_DEV_USER.email };
+      setUser(devUser);
+      setLoading(false);
+      // Keep the storage shape consistent for code paths that read `slopmopUser` directly.
+      browser.storage.local.set({ slopmopUser: devUser }).catch(() => {});
+      return;
+    }
+
     // Read initial auth state that the background synced to storage
     browser.storage.local.get('slopmopUser').then((result) => {
       if (result.slopmopUser) {
