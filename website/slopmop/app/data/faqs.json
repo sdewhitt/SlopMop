@@ -1,7 +1,7 @@
 [
   {
     "q": "How accurate is SlopMop's detection?",
-    "a": "SlopMop uses a machine learning model trained on AI-generated and human-written content. It is around 70% accurate. Keep in mind no AI detector is 100% reliable. We recommend using it as a helpful indicator and not anything definitive."
+    "a": "SlopMop uses a machine learning model trained on AI-generated and human-written content. Keep in mind no AI detector is 100% reliable. We recommend using it as a helpful indicator and not anything definitive."
   },
   {
     "q": "What data does SlopMop collect?",
@@ -9,7 +9,7 @@
   },
   {
     "q": "Which browsers and platforms does SlopMop support?",
-    "a": "SlopMop currently supports Chrome and Firefox. It works on Reddit and LinkedIn."
+    "a": "SlopMop currently supports Chrome and Firefox. It works on Reddit, Twitter, LinkedIn, Facebook, Instagram, and Google Searches"
   },
   {
     "q": "I installed the extension but nothing is happening. What do I do?",
