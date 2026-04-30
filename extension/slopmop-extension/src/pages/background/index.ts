@@ -243,6 +243,11 @@ async function isTabIncognito(tabId: number): Promise<boolean> {
 // Backend text length limit (must match backend MAX_TEXT_LENGTH).
 const MAX_TEXT_LENGTH = 5000;
 
+function clampTextForBackend(text: string): string {
+  if (text.length <= MAX_TEXT_LENGTH) return text;
+  return text.slice(0, MAX_TEXT_LENGTH);
+}
+
 // Serialise API calls so we don't overwhelm the backend.
 const analysisQueue: Array<() => Promise<void>> = [];
 let analysisRunning = false;
@@ -728,14 +733,15 @@ async function handleTogglePin(postId: string): Promise<MessageResponse> {
 
 async function handleDetect(text: string): Promise<MessageResponse> {
   const popupSettings = await getDetectionSettings();
-  const gate = tryPopupDetectLanguageBlock(text, popupSettings);
+  const trimmedText = clampTextForBackend(text);
+  const gate = tryPopupDetectLanguageBlock(trimmedText, popupSettings);
   if (gate.blocked) {
     await browser.storage.local.set(gate.storage);
     return { success: false, error: gate.errorMessage };
   }
   await browser.storage.local.remove('lastDetectLanguageUnsupported');
   try {
-    const result = await detectText(text, popupSettings.highlightSegments);
+    const result = await detectText(trimmedText, popupSettings.highlightSegments);
     await browser.storage.local.set({
       detectResponse: result,
       lastDetectResponse: result,
@@ -1093,6 +1099,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   const enrichedPost = { ...post, images: enrichedImages };
   const plainText = enrichedPost.text?.plain ?? '';
+  const detectionText = clampTextForBackend(plainText);
   const hasImages = enrichedImages.some((img) => img.bytesBase64);
 
   const fingerprintReplay = await tryReplayFromHistoryByFingerprint(enrichedPost, tabId);
@@ -1103,7 +1110,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   const earlyLangUnsupported = tryAnalyzePostLanguageUnsupported(
     enrichedPost.postId,
-    plainText,
+    detectionText,
     hasImages,
     settings,
   );
@@ -1113,7 +1120,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  if (!plainText.trim() && !hasImages) {
+  if (!detectionText.trim() && !hasImages) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message: 'empty text and no images' },
@@ -1257,7 +1264,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
 
   // TEXT and MIXED posts: run text detection (primary).
   // For MIXED posts with images, also run image detection in parallel.
-  if (!plainText.trim()) {
+  if (!detectionText.trim()) {
     await browser.tabs.sendMessage(tabId, {
       type: 'DETECTION_ERROR',
       payload: { postId: enrichedPost.postId, message: 'empty text' },
@@ -1266,8 +1273,8 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
     return;
   }
 
-  const textLangSupported = isTextLanguageSupported(plainText, enabledIso);
-  const langInfo = !textLangSupported ? getLanguageSupportInfo(plainText, enabledIso) : null;
+  const textLangSupported = isTextLanguageSupported(detectionText, enabledIso);
+  const langInfo = !textLangSupported ? getLanguageSupportInfo(detectionText, enabledIso) : null;
 
   // TEXT-only posts with unsupported language: block entirely.
   if (!textLangSupported && !hasImages) {
@@ -1299,7 +1306,7 @@ async function handleAnalyzePost(post: NormalizedPostContent, tabId: number): Pr
       ? (async () => {
           const start = performance.now();
           const result = await detectText(
-            plainText,
+            detectionText,
             settings.highlightSegments,
             enrichedPost.commentTexts,
             enrichedPost.domContext?.subreddit,
