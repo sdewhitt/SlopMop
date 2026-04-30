@@ -86,14 +86,18 @@ export default function Popup() {
   );
 
   const mergeSettings = useCallback(
-    (raw?: Partial<Settings>): Settings => ({
-      ...defaultSettings,
-      ...(raw ?? {}),
-      platforms: sanitizePlatforms(raw?.platforms),
-      detectionLanguages: normalizeDetectionLanguages(
-        raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
-      ),
-    }),
+    (raw?: Partial<Settings>): Settings => {
+      const savedRaw = (raw ?? {}) as Partial<Settings> & { sensitivity?: unknown };
+      const { sensitivity: _ignored, ...saved } = savedRaw;
+      return {
+        ...defaultSettings,
+        ...saved,
+        platforms: sanitizePlatforms(saved.platforms),
+        detectionLanguages: normalizeDetectionLanguages(
+          saved.detectionLanguages !== undefined ? saved.detectionLanguages : undefined,
+        ),
+      };
+    },
     [sanitizePlatforms],
   );
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
@@ -235,7 +239,6 @@ export default function Popup() {
         postsProcessing: 0,
       };
       const merged: Settings = {
-        sensitivity: remote.settings.sensitivity,
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
         automaticScanning: remote.settings.automaticScanning ?? defaultSettings.automaticScanning,
@@ -630,7 +633,6 @@ export default function Popup() {
 
   const handleResetSettings = () => {
     const defaults: Settings = {
-      sensitivity: defaultUserSettings.settings.sensitivity,
       highlightStyle: defaultUserSettings.settings.highlightStyle,
       showNotifications: defaultUserSettings.settings.showNotifications,
       automaticScanning: defaultUserSettings.settings.automaticScanning,
@@ -822,7 +824,7 @@ export default function Popup() {
             >
               <p className="font-semibold mb-1">Simple mode is on</p>
               <p className="text-amber-900/90 dark:text-amber-200/90 mb-2 leading-snug">
-                Badge size, platforms, sensitivity, and other details are on the full options page. Turn off Simple
+                Badge size, platforms, and other details are on the full options page. Turn off Simple
                 mode there to show them here too.
               </p>
               <button

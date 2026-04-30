@@ -7,7 +7,6 @@ export interface Stats {
 }
 
 export interface Settings {
-  sensitivity: 'low' | 'medium' | 'high';
   highlightStyle: 'badge' | 'border' | 'dim';
   automaticScanning: boolean;
   platforms: {
@@ -46,7 +45,6 @@ export interface Settings {
 }
 
 export const defaultSettings: Settings = {
-  sensitivity: 'medium',
   highlightStyle: 'badge',
   automaticScanning: false,
   platforms: { twitter: true, reddit: true, facebook: true, instagram: true, linkedin: true, google: true },

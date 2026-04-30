@@ -61,7 +61,6 @@ vi.mock('firebase/auth', () => ({
 vi.mock('../lib/firestoreProxy', () => ({
   getOrCreateUserSettings: vi.fn().mockResolvedValue({
     settings: {
-      sensitivity: 'medium',
       highlightStyle: 'badge',
       showNotifications: true,
       automaticScanning: false,

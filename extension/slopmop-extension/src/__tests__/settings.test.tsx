@@ -54,7 +54,6 @@ vi.mock('firebase/auth', () => ({
 vi.mock('../lib/firestoreProxy', () => ({
   getOrCreateUserSettings: vi.fn().mockResolvedValue({
     settings: {
-      sensitivity: 'medium',
       highlightStyle: 'badge',
       showNotifications: true,
       automaticScanning: false,
@@ -229,22 +228,6 @@ describe('Popup Settings Rendering', () => {
     // Check for Show Notifications toggle
     expect(screen.getByText('Show Notifications')).toBeInTheDocument();
     expect(screen.getByText('Alert when AI content is detected')).toBeInTheDocument();
-  });
-
-  it('should render sensitivity options', async () => {
-    const user = userEvent.setup();
-    renderPopupSignedIn();
-    expect(await screen.findByText('SlopMop')).toBeInTheDocument();
-
-    // Navigate to settings
-    const settingsButton = screen.getByLabelText('Settings');
-    await user.click(settingsButton);
-
-    // Check for Sensitivity options
-    expect(screen.getByText('Sensitivity')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /low/i })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /medium/i }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('button', { name: /high/i }).length).toBeGreaterThan(0);
   });
 
   it('should render badge size options', async () => {

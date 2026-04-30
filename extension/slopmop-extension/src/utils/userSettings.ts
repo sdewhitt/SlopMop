@@ -42,7 +42,6 @@ export function normalizeDetectionLanguages(raw: unknown): DetectionLanguageCode
 
 /** Extension detection preferences persisted to Firestore. */
 export interface DetectionSettings {
-  sensitivity: 'low' | 'medium' | 'high';
   highlightStyle: 'badge' | 'border' | 'dim';
   showNotifications: boolean;
   automaticScanning: boolean;
@@ -112,7 +111,6 @@ export interface UserSettings {
 export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> = {
   ignoredSites: [],
   settings: {
-    sensitivity: 'medium',
     highlightStyle: 'badge',
     showNotifications: true,
     automaticScanning: false,
@@ -162,7 +160,8 @@ function normalizePlatformToggles(raw: unknown): PlatformToggles {
 
 /** Merge partial stored settings with defaults (used by background, content, battery sync). */
 export function mergeDetectionSettingsFromStored(raw: unknown): DetectionSettings {
-  const saved = (raw ?? {}) as Partial<DetectionSettings>;
+  const savedRaw = (raw ?? {}) as Partial<DetectionSettings> & { sensitivity?: unknown };
+  const { sensitivity: _ignored, ...saved } = savedRaw;
   return {
     ...defaultUserSettings.settings,
     ...saved,

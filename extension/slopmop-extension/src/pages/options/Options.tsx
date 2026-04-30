@@ -554,29 +554,6 @@ export default function Options() {
               </div>
               <div
                 className="settings-search-block"
-                data-search="sensitivity threshold false positive strict lenient low medium high"
-              >
-                <label className="text-sm font-medium text-gray-200">Sensitivity</label>
-                <p className="text-xs text-gray-500 mb-2">Higher sensitivity flags more content but may increase false positives</p>
-                <div className="flex gap-2">
-                  {(['low', 'medium', 'high'] as const).map((level) => (
-                    <button
-                      key={level}
-                      onClick={() => update('sensitivity', level)}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
-                        settings.sensitivity === level
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                      }`}
-                    >
-                      {level}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div
-                className="settings-search-block"
                 data-search="highlight style border dim underline mark flagged overlay"
               >
                 <label className="text-sm font-medium text-gray-200">Highlight Style</label>
