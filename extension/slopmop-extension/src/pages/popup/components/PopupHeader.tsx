@@ -1,6 +1,12 @@
 import React from 'react';
 import logo from '@assets/img/logo.svg';
+import browser from 'webextension-polyfill';
 import CloseButton from './CloseButton';
+
+// Vite outputs an absolute path like "/assets/logo-hash.svg" which resolves
+// correctly in the extension popup, but inside a content-script Shadow DOM
+// it would resolve against the host page origin. Use the full extension URL.
+const logoSrc = browser.runtime.getURL(logo.replace(/^\//, ''));
 
 interface PopupHeaderProps {
   enabled: boolean;
@@ -12,7 +18,7 @@ interface PopupHeaderProps {
 export default function PopupHeader({ enabled, onSettingsClick, onHistoryClick, onStatsClick }: PopupHeaderProps) {
   return (
     <div className="flex items-center gap-3">
-      <img src={logo} className="h-9 w-9" alt="SlopMop logo" />
+      <img src={logoSrc} className="h-9 w-9" alt="SlopMop logo" />
       <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">SlopMop</h1>
       <span
         className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
