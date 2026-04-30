@@ -417,9 +417,10 @@ export default function StatsPage({ uid }: StatsPageProps) {
                 {Object.entries(stats.platformCounts)
                   .sort(([, a], [, b]) => b - a)
                   .map(([host, count], i) => {
+                    const totalPlatformScans = Object.values(stats.platformCounts).reduce((a, b) => a + b, 0);
                     const share =
-                      stats.postsScanned > 0
-                        ? Math.round((count / stats.postsScanned) * 100)
+                      totalPlatformScans > 0
+                        ? Math.round((count / totalPlatformScans) * 100)
                         : 0;
                     return (
                       <tr
