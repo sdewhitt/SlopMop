@@ -16,7 +16,7 @@ export default function PlatformSettings({ platforms, onUpdatePlatform }: Platfo
           <div
             key={p}
             className="settings-search-block border-t border-gray-200 dark:border-gray-700 first:border-t-0"
-            data-search={`${p} social network site feed ${p === 'youtube' ? 'video' : ''}`}
+            data-search={`${p} social network site feed`}
           >
             <Toggle
               checked={platforms[p]}

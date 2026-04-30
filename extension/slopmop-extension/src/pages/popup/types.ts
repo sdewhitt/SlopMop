@@ -15,7 +15,6 @@ export interface Settings {
     reddit: boolean;
     facebook: boolean;
     instagram: boolean;
-    youtube: boolean;
     linkedin: boolean;
     google: boolean;
   };
@@ -50,7 +49,7 @@ export const defaultSettings: Settings = {
   sensitivity: 'medium',
   highlightStyle: 'badge',
   automaticScanning: false,
-  platforms: { twitter: true, reddit: true, facebook: true, instagram: true, youtube: true, linkedin: true, google: true },
+  platforms: { twitter: true, reddit: true, facebook: true, instagram: true, linkedin: true, google: true },
   showNotifications: true,
   enabled: true,
   scanText: true,

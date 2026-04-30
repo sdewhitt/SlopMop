@@ -54,13 +54,21 @@ export default function Options() {
   const [settingsSearchNoMatches, setSettingsSearchNoMatches] = useState(false);
   const settingsSearchInputRef = useRef<HTMLInputElement>(null);
 
+  const sanitizePlatforms = (platforms?: Partial<Settings['platforms']> | Record<string, unknown>) => {
+    const next = { ...defaultSettings.platforms };
+    if (!platforms || typeof platforms !== 'object') return next;
+    const source = platforms as Record<string, unknown>;
+    for (const key of Object.keys(defaultSettings.platforms) as Array<keyof Settings['platforms']>) {
+      const value = source[key];
+      if (typeof value === 'boolean') next[key] = value;
+    }
+    return next;
+  };
+
   const mergeSettings = (raw?: Partial<Settings>): Settings => ({
     ...defaultSettings,
     ...(raw ?? {}),
-    platforms: {
-      ...defaultSettings.platforms,
-      ...(raw?.platforms ?? {}),
-    },
+    platforms: sanitizePlatforms(raw?.platforms),
     detectionLanguages: normalizeDetectionLanguages(
       raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
     ),
@@ -638,7 +646,7 @@ export default function Options() {
                 <div
                   key={platform}
                   className="settings-search-block"
-                  data-search={`${platform} social network site feed ${platform === 'youtube' ? 'video' : ''} ${platform === 'linkedin' ? 'professional' : ''}`}
+                  data-search={`${platform} social network site feed ${platform === 'linkedin' ? 'professional' : ''}`}
                 >
                   <Toggle
                     checked={settings.platforms[platform]}

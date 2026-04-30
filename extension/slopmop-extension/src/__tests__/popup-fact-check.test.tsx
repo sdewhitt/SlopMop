@@ -69,7 +69,6 @@ vi.mock('../lib/firestoreProxy', () => ({
         twitter: true,
         reddit: true,
         facebook: true,
-        youtube: true,
         linkedin: true,
         instagram: true,
       },

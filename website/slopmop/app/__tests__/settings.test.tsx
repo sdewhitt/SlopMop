@@ -123,7 +123,6 @@ describe('User Settings – default values', () => {
     expect(platforms.twitter).toBe(true)
     expect(platforms.reddit).toBe(true)
     expect(platforms.facebook).toBe(true)
-    expect(platforms.youtube).toBe(true)
     expect(platforms.linkedin).toBe(true)
   })
 })
@@ -228,7 +227,6 @@ describe('Settings Page – logged-in user', () => {
     expect(screen.getByText('Twitter')).toBeInTheDocument()
     expect(screen.getByText('Reddit')).toBeInTheDocument()
     expect(screen.getByText('Facebook')).toBeInTheDocument()
-    expect(screen.getByText('Youtube')).toBeInTheDocument()
     expect(screen.getByText('Linkedin')).toBeInTheDocument()
   })
 

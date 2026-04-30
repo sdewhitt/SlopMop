@@ -10,7 +10,6 @@ export interface PlatformToggles {
   twitter: boolean;
   reddit: boolean;
   facebook: boolean;
-  youtube: boolean;
   linkedin: boolean;
   instagram: boolean;
 }
@@ -55,7 +54,6 @@ export const defaultUserSettings: Omit<UserSettings, "createdAt" | "updatedAt"> 
       twitter: true,
       reddit: true,
       facebook: true,
-      youtube: true,
       linkedin: true,
       instagram: true,
     },

@@ -32,7 +32,6 @@ function platformLabel(platform: string): string {
   if (platform.includes('twitter') || platform.includes('x.com')) return 'X';
   if (platform.includes('linkedin')) return 'LinkedIn';
   if (platform.includes('facebook')) return 'Facebook';
-  if (platform.includes('youtube')) return 'YouTube';
   return platform;
 }
 
@@ -42,7 +41,6 @@ function platformColor(platform: string): string {
   if (platform.includes('twitter') || platform.includes('x.com')) return 'bg-sky-500/15 text-sky-400';
   if (platform.includes('linkedin')) return 'bg-blue-500/15 text-blue-400';
   if (platform.includes('facebook')) return 'bg-blue-600/15 text-blue-300';
-  if (platform.includes('youtube')) return 'bg-red-500/15 text-red-400';
   return 'bg-gray-500/15 text-gray-400';
 }
 

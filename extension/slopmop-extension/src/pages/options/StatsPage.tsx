@@ -51,7 +51,6 @@ const PLATFORM_LABELS: Record<string, string> = {
   'x.com': 'X',
   'instagram.com': 'Instagram',
   'linkedin.com': 'LinkedIn',
-  'youtube.com': 'YouTube',
   'facebook.com': 'Facebook',
 };
 
