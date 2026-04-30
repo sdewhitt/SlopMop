@@ -13,6 +13,9 @@ export function formatDetectionFetchError(err: unknown): string {
     if (lower === 'http 503' || lower.startsWith('http 503 ')) {
       return 'detection backend returned 503 (service unavailable): backend is starting, overloaded, or model is unavailable';
     }
+    if (lower === 'http 500' || lower.startsWith('http 500 ')) {
+      return 'detection backend returned 500 (internal error): backend bug or oversized request payload';
+    }
     if (lower.includes('failed to fetch') || lower.includes('networkerror')) {
       return 'network error while contacting detection API';
     }

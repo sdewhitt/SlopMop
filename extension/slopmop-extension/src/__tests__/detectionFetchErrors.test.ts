@@ -14,6 +14,12 @@ describe('formatDetectionFetchError', () => {
     expect(message).toContain('model is unavailable');
   });
 
+  it('maps plain 500 errors to an actionable message', () => {
+    const message = formatDetectionFetchError(new Error('HTTP 500'));
+    expect(message).toContain('500');
+    expect(message).toContain('internal error');
+  });
+
   it('preserves detailed backend messages', () => {
     const detailed = 'Full image model is not available on this backend instance.';
     expect(formatDetectionFetchError(new Error(detailed))).toBe(detailed);
