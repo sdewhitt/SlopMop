@@ -1055,131 +1055,133 @@ export default function Popup() {
   // ── Home view ─────────────────────────────────────────────────
   return (
     <div
-      className={`w-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white p-4 flex flex-col gap-4 overflow-hidden overscroll-none ${
+      className={`w-full h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white flex flex-col overflow-hidden ${
         simpleMode ? 'simple-mode' : ''
       } ${settings.accessibilityMode ? 'accessibility-mode' : ''}`}
     >
       {onboardingModal}
-      <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} onStatsClick={() => setView('stats')} />
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 flex flex-col gap-4">
+        <PopupHeader enabled={enabled} onSettingsClick={() => setView('settings')} onHistoryClick={() => setView('history')} onStatsClick={() => setView('stats')} />
 
-      <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
+        <DetectionToggle enabled={enabled} onToggle={toggleEnabled} />
 
-      <StatsGrid stats={stats} />
+        <StatsGrid stats={stats} />
 
-      {isSupportedFeedSite && (
+        {isSupportedFeedSite && (
+          <button
+            type="button"
+            onClick={handleScanEntirePage}
+            className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white transition-colors cursor-pointer"
+          >
+            Scan Entire Page
+          </button>
+        )}
+
+        <DisclaimerBanner />
+
+        {languageUnsupported != null && (
+          <div className="rounded-lg px-3 py-2 text-sm bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/50">
+            {languageUnsupported}
+          </div>
+        )}
+        {confidence != null && !languageUnsupported && <ConfidenceDisplay confidenceScore={confidence} />}
+
         <button
-          type="button"
-          onClick={handleScanEntirePage}
-          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white transition-colors cursor-pointer"
+          onClick={() => logOut()}
+          className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
         >
-          Scan Entire Page
+          Sign Out
         </button>
-      )}
-
-      <DisclaimerBanner />
-
-      {languageUnsupported != null && (
-        <div className="rounded-lg px-3 py-2 text-sm bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/50">
-          {languageUnsupported}
-        </div>
-      )}
-      {confidence != null && !languageUnsupported && <ConfidenceDisplay confidenceScore={confidence} />}
-
-      <button
-        onClick={() => logOut()}
-        className="w-full py-2 rounded-lg text-xs font-medium bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white transition-colors cursor-pointer"
-      >
-        Sign Out
-      </button>
-      {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
-      {detectResponse && !languageUnsupported && (
-        <section className="mt-4 text-left">
-          {mediaSourceLabel && (
-            <p className="text-xs font-medium uppercase tracking-wider text-gray-400 mb-1">
-              Source: {mediaSourceLabel}
-            </p>
-          )}
-          {(detectSatireScore != null || detectSatireLabel != null) && (
-            <p className="mb-2 text-[11px] font-medium text-gray-600 dark:text-gray-300">
-              Satire:{' '}
-              <span
-                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border ${
-                  detectSatireLabel === 'satire'
-                    ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+        {/* Detection result details: confidence + explanation (kept subtle, no layout shifts) */}
+        {detectResponse && !languageUnsupported && (
+          <section className="mt-4 text-left">
+            {mediaSourceLabel && (
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-400 mb-1">
+                Source: {mediaSourceLabel}
+              </p>
+            )}
+            {(detectSatireScore != null || detectSatireLabel != null) && (
+              <p className="mb-2 text-[11px] font-medium text-gray-600 dark:text-gray-300">
+                Satire:{' '}
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border ${
+                    detectSatireLabel === 'satire'
+                      ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+                      : detectSatireLabel === 'non_satire'
+                        ? 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
+                        : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'
+                  }`}
+                >
+                  {detectSatireLabel === 'satire'
+                    ? 'Yes'
                     : detectSatireLabel === 'non_satire'
-                      ? 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
-                      : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'
-                }`}
-              >
-                {detectSatireLabel === 'satire'
-                  ? 'Yes'
-                  : detectSatireLabel === 'non_satire'
-                    ? 'No'
-                    : 'Unknown'}
-                {detectSatireScore != null ? ` (${Math.round(detectSatireScore * 100)}%)` : ''}
-              </span>
-            </p>
-          )}
-          {detectSatireScore != null && detectSatireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD && (
-            <div
-              className={`mb-2 rounded-lg border px-3 py-2 text-xs leading-snug ${
-                detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
-                  ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
-                  : 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
-              }`}
-              role="status"
-            >
-              {detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
-                ? 'Satire/parody detected. The text model may lower AI scores on satirical posts to reduce false positives.'
-                : 'Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.'}
-            </div>
-          )}
-          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
-            Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
-          </p>
-          <p className="confidence-explanation mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-snug">
-            {explanation}
-          </p>
-        </section>
-      )}
-
-      {(factCheckItems != null || factCheckError) && (
-        <section className="mt-4 text-left border-t border-gray-200 dark:border-gray-700 pt-3">
-          <p className="text-xs font-medium uppercase tracking-wider text-gray-500 mb-2">
-            Fact check (ClaimReview search)
-          </p>
-          {factCheckError && (
-            <p className="text-sm text-red-600 dark:text-red-400 mb-2">{factCheckError}</p>
-          )}
-          {factCheckItems != null && factCheckItems.length === 0 && !factCheckError && (
-            <p className="text-xs text-gray-600 dark:text-gray-400">
-              No indexed fact checks matched these excerpts.
-            </p>
-          )}
-          {factCheckItems != null &&
-            factCheckItems.map((it, i) => (
+                      ? 'No'
+                      : 'Unknown'}
+                  {detectSatireScore != null ? ` (${Math.round(detectSatireScore * 100)}%)` : ''}
+                </span>
+              </p>
+            )}
+            {detectSatireScore != null && detectSatireScore >= SATIRE_SCORE_SOFTEN_THRESHOLD && (
               <div
-                key={`${it.url}-${i}`}
-                className="mb-3 rounded-lg border border-gray-200 dark:border-gray-600 p-2 bg-white dark:bg-gray-800/50"
+                className={`mb-2 rounded-lg border px-3 py-2 text-xs leading-snug ${
+                  detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                    ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-600/60 dark:bg-amber-500/15 dark:text-amber-100'
+                    : 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800/80 dark:text-gray-200'
+                }`}
+                role="status"
               >
-                <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{it.claim}</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                  {[it.verdict, it.source].filter(Boolean).join(' · ')}
-                </p>
-                {it.url ? (
-                  <a
-                    href={it.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 dark:text-blue-400 underline mt-1 inline-block"
-                  >
-                    Open source article
-                  </a>
-                ) : null}
+                {detectSatireScore >= SATIRE_SCORE_HIGH_BANNER_THRESHOLD
+                  ? 'Satire/parody detected. The text model may lower AI scores on satirical posts to reduce false positives.'
+                  : 'Satire signal is elevated — interpret AI scores cautiously for humorous/parody content.'}
               </div>
-            ))}
-        </section>
-      )}
+            )}
+            <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+              Confidence: {confidence != null ? `${Math.round(confidence * 100)}%` : '—'}
+            </p>
+            <p className="confidence-explanation mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-snug">
+              {explanation}
+            </p>
+          </section>
+        )}
+
+        {(factCheckItems != null || factCheckError) && (
+          <section className="mt-4 text-left border-t border-gray-200 dark:border-gray-700 pt-3">
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 mb-2">
+              Fact check (ClaimReview search)
+            </p>
+            {factCheckError && (
+              <p className="text-sm text-red-600 dark:text-red-400 mb-2">{factCheckError}</p>
+            )}
+            {factCheckItems != null && factCheckItems.length === 0 && !factCheckError && (
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                No indexed fact checks matched these excerpts.
+              </p>
+            )}
+            {factCheckItems != null &&
+              factCheckItems.map((it, i) => (
+                <div
+                  key={`${it.url}-${i}`}
+                  className="mb-3 rounded-lg border border-gray-200 dark:border-gray-600 p-2 bg-white dark:bg-gray-800/50"
+                >
+                  <p className="text-sm text-gray-900 dark:text-gray-100 font-medium">{it.claim}</p>
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                    {[it.verdict, it.source].filter(Boolean).join(' · ')}
+                  </p>
+                  {it.url ? (
+                    <a
+                      href={it.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 dark:text-blue-400 underline mt-1 inline-block"
+                    >
+                      Open source article
+                    </a>
+                  ) : null}
+                </div>
+              ))}
+          </section>
+        )}
+      </div>
     </div>
   );
 }
