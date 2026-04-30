@@ -54,7 +54,7 @@ vi.mock('../lib/firestoreProxy', () => ({
       highlightStyle: 'badge',
       showNotifications: true,
       automaticScanning: false,
-      platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+      platforms: { twitter: true, reddit: true, facebook: true, linkedin: true },
       enabled: true,
       scanText: true,
       scanImages: false,

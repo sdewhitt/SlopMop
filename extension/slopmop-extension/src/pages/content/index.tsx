@@ -45,6 +45,8 @@ let panelRoot: HTMLElement | null = null;
 let reactRoot: Root | null = null;
 let visible = false;
 let shadowContainer: HTMLElement | null = null;
+let panelObserver: MutationObserver | null = null;
+const PANEL_OPEN_KEY = 'slopmopPanelOpen';
 
 function resolveThemeMode(
   pref: string | undefined,
@@ -73,6 +75,7 @@ function hidePanel() {
     panelRoot.style.display = 'none';
     visible = false;
   }
+  void browser.storage.local.set({ [PANEL_OPEN_KEY]: false });
 }
 
 function showPanel() {
@@ -80,8 +83,25 @@ function showPanel() {
     createPanel();
     return;
   }
+  ensurePanelMounted();
   panelRoot.style.display = '';
   visible = true;
+  void browser.storage.local.set({ [PANEL_OPEN_KEY]: true });
+}
+
+function ensurePanelMounted(): void {
+  if (!panelRoot) return;
+  if (panelRoot.isConnected) return;
+  const host = document.body ?? document.documentElement;
+  host.appendChild(panelRoot);
+}
+
+function watchPanelMount(): void {
+  if (panelObserver) return;
+  panelObserver = new MutationObserver(() => {
+    ensurePanelMounted();
+  });
+  panelObserver.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 function createPanel() {
@@ -104,7 +124,9 @@ function createPanel() {
 
   shadowContainer = container;
 
-  document.body.appendChild(panelRoot);
+  const host = document.body ?? document.documentElement;
+  host.appendChild(panelRoot);
+  watchPanelMount();
 
   // Apply initial theme
   void browser.storage.local.get(['themePreference', 'theme']).then((result) => {
@@ -158,6 +180,13 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
 });
 
+// Restore panel visibility across full page reloads.
+void browser.storage.local.get([PANEL_OPEN_KEY]).then((result) => {
+  if (result[PANEL_OPEN_KEY] === true) {
+    showPanel();
+  }
+});
+
 try {
   console.log('[SlopMop] content script loaded');
 } catch (e) {
@@ -193,7 +222,6 @@ function shouldRunOnCurrentSite(
   if (hostname.includes('instagram.com')) return settings.platforms.instagram;
   if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
   if (hostname.includes('facebook.com')) return settings.platforms.facebook;
-  if (hostname.includes('youtube.com')) return settings.platforms.youtube;
   if (hostname.includes('linkedin.com')) return settings.platforms.linkedin;
   if (isGoogleHost(hostname)) return settings.platforms.google;
 

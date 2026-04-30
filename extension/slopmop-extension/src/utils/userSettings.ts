@@ -13,11 +13,19 @@ export interface PlatformToggles {
   twitter: boolean;
   reddit: boolean;
   facebook: boolean;
-  youtube: boolean;
   linkedin: boolean;
   instagram: boolean;
   google: boolean;
 }
+
+const PLATFORM_KEYS: Array<keyof PlatformToggles> = [
+  'twitter',
+  'reddit',
+  'facebook',
+  'linkedin',
+  'instagram',
+  'google',
+];
 
 /** Languages the user allows for **text** AI detection (subset of model-capable langs). */
 export type DetectionLanguageCode = 'eng' | 'spa' | 'fra';
@@ -112,7 +120,6 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
       twitter: true,
       reddit: true,
       facebook: true,
-      youtube: true,
       linkedin: true,
       instagram: true,
       google: true,
@@ -142,16 +149,24 @@ export const defaultUserSettings: Omit<UserSettings, 'createdAt' | 'updatedAt'> 
   },
 };
 
+function normalizePlatformToggles(raw: unknown): PlatformToggles {
+  const next: PlatformToggles = { ...defaultUserSettings.settings.platforms };
+  if (!raw || typeof raw !== 'object') return next;
+  const source = raw as Record<string, unknown>;
+  for (const key of PLATFORM_KEYS) {
+    const value = source[key];
+    if (typeof value === 'boolean') next[key] = value;
+  }
+  return next;
+}
+
 /** Merge partial stored settings with defaults (used by background, content, battery sync). */
 export function mergeDetectionSettingsFromStored(raw: unknown): DetectionSettings {
   const saved = (raw ?? {}) as Partial<DetectionSettings>;
   return {
     ...defaultUserSettings.settings,
     ...saved,
-    platforms: {
-      ...defaultUserSettings.settings.platforms,
-      ...(saved.platforms ?? {}),
-    },
+    platforms: normalizePlatformToggles(saved.platforms),
     detectionLanguages: normalizeDetectionLanguages(saved.detectionLanguages),
   };
 }

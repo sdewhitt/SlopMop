@@ -58,7 +58,7 @@ vi.mock('../lib/firestoreProxy', () => ({
       highlightStyle: 'badge',
       showNotifications: true,
       automaticScanning: false,
-      platforms: { twitter: true, reddit: true, facebook: true, youtube: true, linkedin: true },
+      platforms: { twitter: true, reddit: true, facebook: true, linkedin: true },
       enabled: true,
       scanText: true,
       scanImages: false,
@@ -373,7 +373,6 @@ describe('Popup Settings Rendering', () => {
     expect(screen.getByText('Twitter')).toBeInTheDocument();
     expect(screen.getByText('Reddit')).toBeInTheDocument();
     expect(screen.getByText('Facebook')).toBeInTheDocument();
-    expect(screen.getByText('Youtube')).toBeInTheDocument();
     expect(screen.getByText('Linkedin')).toBeInTheDocument();
   });
 

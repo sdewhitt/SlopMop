@@ -34,7 +34,6 @@ export const PLATFORM_OPTIONS: { key: string; label: string; match: (p: string) 
   { key: 'instagram', label: 'Instagram', match: (p) => p.includes('instagram') },
   { key: 'linkedin',  label: 'LinkedIn',  match: (p) => p.includes('linkedin') },
   { key: 'facebook',  label: 'Facebook',  match: (p) => p.includes('facebook') },
-  { key: 'youtube',   label: 'YouTube',   match: (p) => p.includes('youtube') },
 ];
 
 // ── Keyword search ────────────────────────────────────────────────

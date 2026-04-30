@@ -59,7 +59,6 @@ describe('applyFiltersAndSort — platform filter', () => {
     makeEntry({ postId: 't', platform: 'twitter.com' }),
     makeEntry({ postId: 'x', platform: 'x.com' }),
     makeEntry({ postId: 'f', platform: 'facebook.com' }),
-    makeEntry({ postId: 'y', platform: 'youtube.com' }),
   ];
 
   it('returns all entries when platforms is empty', () => {
@@ -105,7 +104,7 @@ describe('applyFiltersAndSort — platform filter', () => {
   });
 
   it('returns empty when no entries match selected platform', () => {
-    const prefs: HistoryFilterPrefs = { ...DEFAULT_FILTER_PREFS, platforms: ['youtube'] };
+    const prefs: HistoryFilterPrefs = { ...DEFAULT_FILTER_PREFS, platforms: ['linkedin'] };
     const redditOnly = entries.filter((e) => e.platform === 'reddit.com');
     const result = applyFiltersAndSort(redditOnly, prefs);
     expect(result).toHaveLength(0);

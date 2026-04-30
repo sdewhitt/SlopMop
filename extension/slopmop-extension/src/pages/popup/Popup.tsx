@@ -71,17 +71,31 @@ export default function Popup() {
   const [factCheckItems, setFactCheckItems] = useState<FactCheckItem[] | null>(null);
   const [factCheckError, setFactCheckError] = useState<string | null>(null);
 
-  const mergeSettings = useCallback((raw?: Partial<Settings>): Settings => ({
-    ...defaultSettings,
-    ...(raw ?? {}),
-    platforms: {
-      ...defaultSettings.platforms,
-      ...(raw?.platforms ?? {}),
+  const sanitizePlatforms = useCallback(
+    (platforms?: Partial<Settings['platforms']> | Record<string, unknown>) => {
+      const next = { ...defaultSettings.platforms };
+      if (!platforms || typeof platforms !== 'object') return next;
+      const source = platforms as Record<string, unknown>;
+      for (const key of Object.keys(defaultSettings.platforms) as Array<keyof Settings['platforms']>) {
+        const value = source[key];
+        if (typeof value === 'boolean') next[key] = value;
+      }
+      return next;
     },
-    detectionLanguages: normalizeDetectionLanguages(
-      raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
-    ),
-  }), []);
+    [],
+  );
+
+  const mergeSettings = useCallback(
+    (raw?: Partial<Settings>): Settings => ({
+      ...defaultSettings,
+      ...(raw ?? {}),
+      platforms: sanitizePlatforms(raw?.platforms),
+      detectionLanguages: normalizeDetectionLanguages(
+        raw?.detectionLanguages !== undefined ? raw.detectionLanguages : undefined,
+      ),
+    }),
+    [sanitizePlatforms],
+  );
   const [isSupportedFeedSite, setIsSupportedFeedSite] = useState(false);
   const [batteryThrottleActive, setBatteryThrottleActive] = useState(false);
   const [batteryAutoLowBatteryActive, setBatteryAutoLowBatteryActive] = useState(false);
@@ -225,10 +239,7 @@ export default function Popup() {
         highlightStyle: remote.settings.highlightStyle,
         showNotifications: remote.settings.showNotifications,
         automaticScanning: remote.settings.automaticScanning ?? defaultSettings.automaticScanning,
-        platforms: {
-          ...defaultSettings.platforms,
-          ...remote.settings.platforms,
-        },
+        platforms: sanitizePlatforms(remote.settings.platforms),
         enabled: remote.settings.enabled ?? defaultSettings.enabled,
         scanText: remote.settings.scanText ?? defaultSettings.scanText,
         scanImages: remote.settings.scanImages ?? defaultSettings.scanImages,
@@ -281,7 +292,7 @@ export default function Popup() {
         setEnabled(merged.enabled);
       }
     }
-  }, [mergeSettings, statsKeys, user]);
+  }, [mergeSettings, sanitizePlatforms, statsKeys, user]);
 
   useEffect(() => {
     loadSettings();

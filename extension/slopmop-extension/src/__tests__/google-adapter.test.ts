@@ -31,7 +31,6 @@ function shouldRunOnCurrentSite(hostname: string, settings: DetectionSettings): 
   if (hostname.includes('instagram.com')) return settings.platforms.instagram;
   if (hostname.includes('twitter.com') || hostname.includes('x.com')) return settings.platforms.twitter;
   if (hostname.includes('facebook.com')) return settings.platforms.facebook;
-  if (hostname.includes('youtube.com')) return settings.platforms.youtube;
   if (hostname.includes('linkedin.com')) return settings.platforms.linkedin;
   if (isGoogleHost(hostname)) return settings.platforms.google;
   return false;
