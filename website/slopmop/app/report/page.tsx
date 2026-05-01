@@ -103,25 +103,27 @@ export default function ReportPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-white text-foreground dark:bg-black">
+    <div className="flex min-h-screen flex-col bg-transparent text-slate-950 dark:text-slate-100">
       <Navbar />
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-12">
+      <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-12">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">Report an Issue</h1>
-          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">
+            Report an Issue
+          </h1>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
             Help improve SlopMop by reporting incorrect detections and bugs.
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="space-y-5 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
+          className="space-y-5 rounded-3xl border border-white/70 bg-white/80 p-6 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/70"
         >
           <div>
             <label
               htmlFor="report-type"
-              className="mb-1 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
+              className="mb-1 block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               Report Type
             </label>
@@ -129,7 +131,7 @@ export default function ReportPage() {
               id="report-type"
               value={reportType}
               onChange={(e) => setReportType(e.target.value as ReportType | "")}
-              className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2 dark:border-neutral-700"
+              className="w-full rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700/70 dark:bg-slate-950/70 dark:text-slate-100"
             >
               <option value="">Select report type</option>
               {REPORT_TYPES.map((type) => (
@@ -143,7 +145,7 @@ export default function ReportPage() {
           <div>
             <label
               htmlFor="report-message"
-              className="mb-1 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
+              className="mb-1 block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               Message
             </label>
@@ -153,15 +155,15 @@ export default function ReportPage() {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder="What went wrong? Include what you expected to happen."
-              className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2 dark:border-neutral-700"
+              className="w-full rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700/70 dark:bg-slate-950/70 dark:text-slate-100"
             />
-            <p className="mt-1 text-xs text-neutral-500">{charCount}/2000</p>
+            <p className="mt-1 text-xs text-slate-500">{charCount}/2000</p>
           </div>
 
           <div>
             <label
               htmlFor="report-url"
-              className="mb-1 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
+              className="mb-1 block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               Related Page URL (optional)
             </label>
@@ -171,7 +173,7 @@ export default function ReportPage() {
               value={pageUrl}
               onChange={(e) => setPageUrl(e.target.value)}
               placeholder="https://example.com/post/..."
-              className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2 dark:border-neutral-700"
+              className="w-full rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700/70 dark:bg-slate-950/70 dark:text-slate-100"
             />
           </div>
 
@@ -179,7 +181,7 @@ export default function ReportPage() {
             <div>
               <label
                 htmlFor="report-email"
-                className="mb-1 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
+                className="mb-1 block text-sm font-medium text-slate-800 dark:text-slate-200"
               >
                 Email for follow-up (optional)
               </label>
@@ -189,19 +191,19 @@ export default function ReportPage() {
                 value={reporterEmail}
                 onChange={(e) => setReporterEmail(e.target.value)}
                 placeholder="you@example.com"
-                className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2 dark:border-neutral-700"
+                className="w-full rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700/70 dark:bg-slate-950/70 dark:text-slate-100"
               />
             </div>
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+            <div className="rounded-2xl border border-red-200/70 bg-red-50/70 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
               {error}
             </div>
           )}
 
           {success && (
-            <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300">
+            <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
               {success}
             </div>
           )}
@@ -210,22 +212,22 @@ export default function ReportPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="rounded-full bg-foreground px-6 py-2 text-sm font-semibold text-background transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full bg-slate-900 px-6 py-2 text-sm font-semibold text-white shadow-sm shadow-slate-900/30 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
             >
               {submitting ? "Submitting..." : "Submit Report"}
             </button>
             {!user && (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 Signed-in users can submit with account context for faster triage.
               </p>
             )}
           </div>
         </form>
 
-        <p className="mt-6 text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="mt-6 text-sm text-slate-500 dark:text-slate-400">
           Developer access to report tickets is available in the admin portal.
           <span className="ml-1">
-            <Link href="/admin/reports" className="underline hover:no-underline">
+            <Link href="/admin/reports" className="font-semibold text-slate-700 underline-offset-2 hover:underline dark:text-slate-200">
               Open admin reports
             </Link>
           </span>

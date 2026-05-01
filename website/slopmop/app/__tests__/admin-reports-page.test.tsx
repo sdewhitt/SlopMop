@@ -24,9 +24,10 @@ function restoreAuthDefault() {
   authModule.useAuth = originalUseAuth
 }
 
-function createJsonResponse(body: unknown, ok = true) {
+function createJsonResponse(body: unknown, ok = true, status?: number) {
   return Promise.resolve({
     ok,
+    status: status ?? (ok ? 200 : 500),
     json: async () => body,
   })
 }
@@ -50,6 +51,35 @@ describe('Admin Reports Page', () => {
 
     expect(screen.getByText('Sign in required')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Log In/i })).toHaveAttribute('href', '/login')
+  })
+
+  it('shows admin access required when user is not authorized', async () => {
+    const getIdToken = jest.fn().mockResolvedValue('user-token')
+
+    setAuthUser({
+      uid: 'user-uid',
+      email: 'user@example.com',
+      getIdToken,
+    })
+
+    ;(global.fetch as jest.Mock).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url === '/api/reports/config' || url.startsWith('/api/reports')) {
+        return createJsonResponse(
+          { error: 'You are not authorized to access reports' },
+          false,
+          403
+        )
+      }
+
+      return createJsonResponse({ error: 'Not found' }, false, 404)
+    })
+
+    render(<AdminReportsPage />)
+
+    expect(await screen.findByText('Admin access required')).toBeInTheDocument()
+    expect(screen.getByText(/not authorized/i)).toBeInTheDocument()
   })
 
   it('loads and displays reports for admin users', async () => {

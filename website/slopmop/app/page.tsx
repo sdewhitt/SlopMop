@@ -8,7 +8,7 @@ import Footer from "./components/footer";
 
 export default function Home() {
   return (
-    <div className="flex min-h-screen flex-col bg-white text-foreground dark:bg-black">
+    <div className="flex min-h-screen flex-col bg-transparent text-slate-950 dark:text-slate-100">
         <Navbar />
 
         <Hero />

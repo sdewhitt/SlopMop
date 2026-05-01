@@ -39,46 +39,58 @@ export default function FAQSection() {
     <section
       ref={sectionRef}
       id="faq"
-      className={`border-t border-neutral-200 dark:border-neutral-800 transition-opacity duration-1500 ${
+      className={`border-t border-slate-200/70 py-20 transition-opacity duration-1500 dark:border-slate-800/70 ${
         isVisible ? "opacity-100" : "opacity-0"
       }`}
     >
-      <div className="mx-auto max-w-2xl px-6 py-32">
-        <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-          Frequently Asked Questions
-        </h2>
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <h2 className="font-display text-3xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-4xl">
+              Frequently Asked Questions
+            </h2>
+            <p className="mt-4 text-base text-slate-600 dark:text-slate-300">
+              Quick answers to the most common questions about accuracy, privacy, and installation.
+            </p>
+            <div className="mt-6 rounded-2xl border border-white/70 bg-white/80 p-4 text-sm text-slate-600 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/70 dark:text-slate-300">
+              Still stuck? Visit the install guide or send a report from the extension popup.
+            </div>
+          </div>
 
-        <dl className="mt-10 divide-y divide-neutral-200 dark:divide-neutral-800">
-          {faqs.map(({ q, a }, i) => {
-            const isOpen = openIndices.has(i);
-            return (
-              <div key={q} className="py-5">
-                <dt>
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between text-left text-lg font-semibold"
-                    onClick={() => toggle(i)}
-                    aria-expanded={isOpen}
-                  >
-                    {q}
-                    <span
-                      className={`ml-4 shrink-0 transition-transform duration-200 ${
-                        isOpen ? "rotate-45" : ""
-                      }`}
-                    >
-                      +
-                    </span>
-                  </button>
-                </dt>
-                {isOpen && (
-                  <dd className="mt-3 text-neutral-600 dark:text-neutral-400">
-                    {a}
-                  </dd>
-                )}
-              </div>
-            );
-          })}
-        </dl>
+          <div className="rounded-3xl border border-white/70 bg-white/80 p-6 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/70">
+            <dl className="divide-y divide-slate-200/70 dark:divide-slate-800/70">
+              {faqs.map(({ q, a }, i) => {
+                const isOpen = openIndices.has(i);
+                return (
+                  <div key={q} className="py-5">
+                    <dt>
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between text-left text-base font-semibold text-slate-900 transition hover:text-slate-950 dark:text-white"
+                        onClick={() => toggle(i)}
+                        aria-expanded={isOpen}
+                      >
+                        {q}
+                        <span
+                          className={`ml-4 shrink-0 text-lg transition-transform duration-200 ${
+                            isOpen ? "rotate-45" : ""
+                          }`}
+                        >
+                          +
+                        </span>
+                      </button>
+                    </dt>
+                    {isOpen && (
+                      <dd className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+                        {a}
+                      </dd>
+                    )}
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+        </div>
       </div>
     </section>
   );

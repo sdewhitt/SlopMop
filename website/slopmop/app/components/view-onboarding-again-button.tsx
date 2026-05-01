@@ -14,7 +14,7 @@ export default function ViewOnboardingAgainButton() {
         clearOnboardingStorage();
         window.dispatchEvent(new CustomEvent(ONBOARDING_OPEN_EVENT));
       }}
-      className="text-xs text-neutral-500 underline-offset-2 hover:text-neutral-700 hover:underline dark:text-neutral-400 dark:hover:text-neutral-200"
+      className="text-xs text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200"
     >
       View onboarding again
     </button>

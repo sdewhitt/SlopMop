@@ -29,46 +29,66 @@ const steps = [
 
 export default function InstallStepsSection() {
   return (
-    <section className="border-t border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950">
-      <div className="mx-auto max-w-5xl px-6 py-20">
-        {/* Header */}
-        <div className="max-w-2xl">
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-            Get started in just a few minutes
-          </h2>
-          <p className="mt-4 text-neutral-600 dark:text-neutral-400">
-            Follow the guide below to
-            start detecting AI-generated content in your feed.
-          </p>
+    <section
+      id="install"
+      className="border-t border-slate-200/70 bg-white/70 py-20 backdrop-blur dark:border-slate-800/70 dark:bg-slate-950/40"
+    >
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <h2 className="font-display text-3xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-4xl">
+              Get started in just a few minutes
+            </h2>
+            <p className="mt-4 text-base text-slate-600 dark:text-slate-300">
+              Follow the steps below to install SlopMop and start detecting AI-generated content in your feed.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/70 dark:text-slate-300">
+            Chrome ready
+          </div>
         </div>
 
-        {/* Steps */}
-        <ol className="mt-12 space-y-6">
-          {steps.map((step) => (
+        <ol className="relative mt-12 space-y-6">
+          {steps.map((step, index) => (
             <li
               key={step.number}
-              className="flex gap-5 rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900"
+              className="relative rounded-3xl border border-white/70 bg-white/80 p-6 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/70"
             >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-foreground text-sm font-bold text-background">
-                {step.number}
-              </span>
-              <div>
-                <h3 className="font-semibold">{step.title}</h3>
-                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                  {step.description}
-                </p>
+              <div className="flex items-start gap-4">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-bold text-white shadow-sm shadow-slate-900/30 dark:bg-white dark:text-slate-900">
+                  {step.number}
+                </span>
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                    {step.title}
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                    {step.description}
+                  </p>
+                </div>
               </div>
+              {index !== steps.length - 1 ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-11 top-14 h-[calc(100%+24px)] w-px bg-slate-200/70 dark:bg-slate-700/70"
+                />
+              ) : null}
             </li>
           ))}
         </ol>
 
-        {/* CTA */}
-        <div className="mt-10">
+        <div className="mt-10 flex flex-wrap items-center gap-3">
           <Link
             href="/install"
-            className="inline-block rounded-full bg-foreground px-8 py-3 text-sm font-semibold text-background transition hover:opacity-80"
+            className="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/30 transition hover:-translate-y-0.5 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            Full install guide →
+            Full install guide
+          </Link>
+          <Link
+            href="/signup"
+            className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500"
+          >
+            Create account
           </Link>
         </div>
       </div>

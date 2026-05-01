@@ -40,66 +40,73 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-white text-foreground dark:bg-black">
+    <div className="flex min-h-screen flex-col bg-transparent text-slate-950 dark:text-slate-100">
       <Navbar />
-      <main className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-        <h1 className="text-4xl font-bold tracking-tight">Welcome Back</h1>
+      <main className="flex flex-1 items-center justify-center px-6 py-16">
+        <div className="w-full max-w-lg rounded-3xl border border-white/70 bg-white/80 p-8 text-center shadow-sm dark:border-slate-800/70 dark:bg-slate-950/70">
+          <h1 className="font-display text-4xl font-semibold tracking-tight text-slate-950 dark:text-white">
+            Welcome Back
+          </h1>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+            Sign in to sync your preferences and manage your SlopMop account.
+          </p>
 
-        <form onSubmit={handleSubmit} className="mt-10 flex w-full max-w-sm flex-col gap-4">
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="rounded-lg border border-neutral-300 px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-            required
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="rounded-lg border border-neutral-300 px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-            required
-          />
+          <form onSubmit={handleSubmit} className="mt-8 flex w-full flex-col gap-4">
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="rounded-2xl border border-slate-200/70 bg-white/80 px-4 py-3 text-sm text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700/70 dark:bg-slate-950/70 dark:text-slate-100"
+              required
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="rounded-2xl border border-slate-200/70 bg-white/80 px-4 py-3 text-sm text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700/70 dark:bg-slate-950/70 dark:text-slate-100"
+              required
+            />
 
-          {error && <p className="text-sm text-red-500">{error}</p>}
+            {error && <p className="text-sm text-red-600 dark:text-red-300">{error}</p>}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-full bg-foreground px-6 py-3 font-semibold text-background transition hover:opacity-80 disabled:opacity-50"
-          >
-            {loading ? "Logging in…" : "Log In"}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/30 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+            >
+              {loading ? "Logging in…" : "Log In"}
+            </button>
+          </form>
 
-        <div className="mt-4 flex w-full max-w-sm items-center gap-3">
-          <hr className="flex-1 border-neutral-300 dark:border-neutral-700" />
-          <span className="text-xs text-neutral-400">or</span>
-          <hr className="flex-1 border-neutral-300 dark:border-neutral-700" />
-        </div>
+          <div className="mt-6 flex items-center gap-3">
+            <hr className="flex-1 border-slate-200/70 dark:border-slate-800/70" />
+            <span className="text-xs text-slate-400">or</span>
+            <hr className="flex-1 border-slate-200/70 dark:border-slate-800/70" />
+          </div>
 
-        <div className="mt-4 w-full max-w-sm">
-          <button
-            onClick={handleGoogle}
-            className="flex w-full items-center justify-center gap-3 rounded-full border border-neutral-300 px-6 py-3 text-sm font-semibold transition hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            <GoogleIcon />
-            Continue with Google
-          </button>
-        </div>
+          <div className="mt-4">
+            <button
+              onClick={handleGoogle}
+              className="flex w-full items-center justify-center gap-3 rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
+            >
+              <GoogleIcon />
+              Continue with Google
+            </button>
+          </div>
 
-        <p className="mt-6 text-sm text-neutral-500">
-          Don&apos;t have an account?{" "}
-          <Link href="/signup" className="underline">
-            Sign up
+          <p className="mt-6 text-sm text-slate-500 dark:text-slate-400">
+            Don&apos;t have an account?{" "}
+            <Link href="/signup" className="font-semibold text-slate-700 underline-offset-2 hover:underline dark:text-slate-200">
+              Sign up
+            </Link>
+          </p>
+
+          <Link href="/" className="mt-4 inline-flex text-sm font-semibold text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+            Back to home
           </Link>
-        </p>
-
-        <Link href="/" className="mt-4 text-sm text-neutral-500 hover:underline">
-          ← Back to home
-        </Link>
+        </div>
       </main>
     </div>
   );
