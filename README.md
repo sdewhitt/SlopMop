@@ -1,6 +1,21 @@
 # SlopMop
 
-Browser extension for detecting AI-use in social media feeds.
+SlopMop is a browser extension that flags likely AI-generated text and images directly inside social media feeds, so users do not need to copy and paste content into a separate tool.
+
+## What it does
+
+- Real-time, in-feed detection for text, images, and videos while you scroll
+- Labels AI use (low/medium/high probability) plus a small loading indicator during analysis
+- Provides related sources to help fact-check claims without leaving the feed
+- A popup that includes settings and usage history/stats
+- Incognito mode keeps data within the session (no history saved)
+
+## Architecture overview
+
+- Client-server design so heavy AI inference runs on the backend
+- Asynchronous processing to avoid interrupting the browsing experience
+- Two-layer caching (client cache for repeat views, server cache for popular posts)
+- Backend API built with FastAPI and deployed on AWS
 
 ## Models
 
@@ -65,6 +80,18 @@ npm test
 1. Go to `about:debugging#/runtime/this-firefox`
 2. Click **Load Temporary Add-on**
 3. Select any file inside the `dist_firefox/` folder
+
+### Backend API
+
+The backend API lives in `backend/` and serves text/image detection plus fact-checking helpers.
+
+```bash
+cd backend
+pip install -r requirements.txt
+
+# Start the API (http://localhost:8000)
+uvicorn main:app --reload
+```
 
 ### Website
 
