@@ -56,7 +56,7 @@ export default function PurposeSection() {
               What you get
             </div>
             <h3 className="mt-3 text-2xl font-semibold text-slate-950 dark:text-white">
-              A calmer feed in under a minute.
+              A calmer feed without the noise.
             </h3>
             <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
               Install once and SlopMop stays on in the background. Labels appear next to posts that look synthetic, along with confidence scores and short context hints.
@@ -64,7 +64,7 @@ export default function PurposeSection() {
             <div className="mt-6 space-y-3 text-sm text-slate-700 dark:text-slate-300">
               <div className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 shadow-sm dark:border-slate-800/70 dark:bg-slate-950">
                 <span className="mt-1 h-2 w-2 rounded-full bg-emerald-400" />
-                <span>Instant labels as posts load in your feed.</span>
+                <span>Labels appear after background analysis completes.</span>
               </div>
               <div className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 shadow-sm dark:border-slate-800/70 dark:bg-slate-950">
                 <span className="mt-1 h-2 w-2 rounded-full bg-amber-400" />

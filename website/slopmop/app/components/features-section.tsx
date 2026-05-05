@@ -1,14 +1,14 @@
 const features = [
   {
-    title: "Real-time detection",
-    description: "Signals appear as you scroll so you can judge a post instantly.",
-    tag: "Live",
+    title: "Background detection",
+    description: "Signals appear after analysis completes, so you can keep scrolling without interruptions.",
+    tag: "Async",
     note: "Signals are probability based, not definitive verdicts.",
   },
   {
     title: "Privacy first",
     description:
-      "Detections are removed within 24 hours. No browsing history is stored or sold.",
+      "Detections are removed within 24 hours. No browsing history is stored, sold, or streamed as a live feed.",
     tag: "Private",
   },
   {
